@@ -453,10 +453,10 @@ td{padding:9px 10px;vertical-align:middle}
             ondragover="event.preventDefault();this.classList.add('drag')"
             ondragleave="this.classList.remove('drag')"
             ondrop="handleDrop(event)">
-            <input type="file" accept=".csv,.xlsx,.xls,.json" onchange="handleFile(this.files[0])"/>
+            <input type="file" accept=".csv,.xlsx,.xls" onchange="handleFile(this.files[0])"/>
             <div class="upload-icon">📄</div>
             <div class="upload-label">Upload latest dataset</div>
-            <div class="upload-sub">Drop your .csv, .xlsx or .json here<br/>or click to browse</div>
+            <div class="upload-sub">Drop your .csv or .xlsx here<br/>or click to browse</div>
           </div>
           <div class="upload-status" id="uploadStatus">
             <div class="upload-status-icon" id="uploadIcon">✓</div>
@@ -898,50 +898,15 @@ function handleDrop(e) {
 function handleFile(file) {
   if(!file) return;
   const ext = file.name.split('.').pop().toLowerCase();
-  if(!['csv','xlsx','xls','json'].includes(ext)) {
-    showUploadStatus('err', '⚠', 'Unsupported file type', 'Please upload a .csv, .xlsx or .json file');
+  if(!['csv','xlsx','xls'].includes(ext)) {
+    showUploadStatus('err', '⚠', 'Unsupported file type', 'Please upload a .csv or .xlsx file');
     return;
   }
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
       let rows = [];
-      if(ext === 'json') {
-        const parsed = JSON.parse(e.target.result);
-        const arr = Array.isArray(parsed) ? parsed : (parsed.influencers || parsed.data || []);
-        if(!arr.length) { showUploadStatus('err','⚠','JSON appears empty','Expected an array of influencer objects'); return; }
-        const loaded = arr.map((item, i) => ({
-          num: item.num || item['#'] || (i + 1),
-          handle: item.handle || item.igHandle || item.ttHandle || item.ytHandle || item.xHandle || '',
-          name: item.name || '',
-          platform: item.platform || '',
-          followers: item.followers || '',
-          niche: item.niche || '',
-          location: item.location || '',
-          source: item.source || '',
-          foundBy: item.foundBy || item.foundVia || '',
-          isNew: false,
-          ok: false,
-        }));
-        window.BASE_DATA = loaded;
-        allRows = [...loaded];
-        ran = false; activeFilter = 'all'; searchQ = '';
-        document.getElementById('searchBox').value = '';
-        document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active'));
-        document.querySelectorAll('.fpill')[0].classList.add('active');
-        document.getElementById('reviewBanner').classList.remove('show');
-        document.getElementById('toolbar').classList.remove('show');
-        document.getElementById('selAllBtn').style.display='none';
-        filtered = [...allRows]; currentPage = 1;
-        updateCounts(); renderTable(); renderPagination();
-        document.getElementById('datasetCount').textContent = loaded.length + ' influencers loaded';
-        document.getElementById('sDate').textContent = '—';
-        document.getElementById('sTime').textContent = 'Never';
-        document.getElementById('sNew').textContent = '—';
-        document.getElementById('sApproved').textContent = '—';
-        showUploadStatus('ok', '✓', loaded.length + ' influencers loaded from ' + file.name, 'Dataset updated — ready to run agent');
-        return;
-      } else if(ext === 'csv') {
+      if(ext === 'csv') {
         rows = parseCSV(e.target.result);
       } else {
         // For xlsx, guide user to save as CSV first
@@ -1432,7 +1397,6 @@ function eUpdateStats() {
   document.getElementById('progressFill').style.width = pct + '%';
   document.getElementById('progressLabel').textContent = done + ' / ' + total + ' enriched (' + pct + '%)';
   document.getElementById('exportBtn').disabled = done === 0;
-  document.getElementById('exportXlsxBtn').disabled = done === 0;
 }
 
 function eRenderTable() {
@@ -1639,45 +1603,7 @@ function eDownloadExport() {
   URL.revokeObjectURL(url);
 }
 
-function eExportXlsx() {
-  if (typeof XLSX === 'undefined') {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
-    s.onload = eExportXlsx;
-    document.head.appendChild(s);
-    eLogLine('Loading XLSX library...', 'info');
-    return;
-  }
-  const rows = eTO_ENRICH.map(inf => {
-    const r = eResults[inf.num] || {};
-    const handle = inf.igHandle || inf.ttHandle || inf.ytHandle || inf.xHandle || inf.handle || '';
-    return {
-      '#': inf.num,
-      'Name': inf.name || '',
-      'Platform': inf.platform || '',
-      'Handle': handle,
-      'Followers': inf.followers || '',
-      'Status': r.status === 'done' ? 'Done' : r.status === 'error' ? 'Error' : 'Pending',
-      'Who They Are': r.whoTheyAre || '',
-      'What They Post': r.whatTheyPost || '',
-      'Tone & Style': r.toneStyle || '',
-      'Target Audience': r.targetAudience || '',
-      'Why Follow': r.whyFollow || '',
-      'Content Labels': r.contentLabels || '',
-    };
-  });
-  const ws = XLSX.utils.json_to_sheet(rows);
-  ws['!cols'] = [
-    {wch:6},{wch:28},{wch:20},{wch:24},{wch:12},{wch:10},
-    {wch:36},{wch:32},{wch:28},{wch:28},{wch:28},{wch:36}
-  ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Enriched Profiles');
-  XLSX.writeFile(wb, 'enriched_profiles.xlsx');
-  eLogLine('Downloaded enriched_profiles.xlsx', 'ok');
-}
-
-document.addEventListener('DOMContentLoaded', eInit);
+eInit();
 
 </script>
 <!-- Import modal -->
@@ -1743,7 +1669,6 @@ document.addEventListener('DOMContentLoaded', eInit);
   <button class="btn btn-green" id="startBtn" onclick="eStartEnrichment()">▶ Start Enrichment</button>
   <button class="btn btn-gray" id="pauseBtn" onclick="ePauseEnrichment()" disabled>⏸ Pause</button>
   <button class="btn btn-blue" id="exportBtn" onclick="eExportResults()" disabled>⬇ Export JSON</button>
-  <button class="btn btn-green" id="exportXlsxBtn" onclick="eExportXlsx()" disabled>⬇ Export XLSX</button>
   <button class="btn btn-gray" onclick="eRetryErrors()">↺ Retry Errors</button>
   <label class="batch-size-label">Batch size:
     <select id="batchSize">
