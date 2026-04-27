@@ -904,6 +904,16 @@ function handleFile(file) {
     showUploadStatus('err', '⚠', 'Unsupported file type', 'Please upload a .csv, .xlsx or .json file');
     return;
   }
+  // xlsx needs SheetJS — load it first then re-call
+  if((ext === 'xlsx' || ext === 'xls') && typeof XLSX === 'undefined') {
+    showUploadStatus('ok', '⏳', 'Loading Excel library...', 'Please wait');
+    const s = document.createElement('script');
+    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+    s.onload = () => handleFile(file);
+    s.onerror = () => showUploadStatus('err', '⚠', 'Failed to load Excel library', 'Check your internet connection and try again');
+    document.head.appendChild(s);
+    return;
+  }
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
@@ -943,9 +953,11 @@ function handleFile(file) {
       if(ext === 'csv') {
         rows = parseCSV(e.target.result);
       } else {
-        // For xlsx, guide user to save as CSV first
-        showUploadStatus('err', '⚠', 'Excel file detected', 'Please save your .xlsx as .csv first (File → Save As → CSV), then upload');
-        return;
+        // xlsx / xls — parse with SheetJS
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type: 'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
       }
       if(rows.length < 2) { showUploadStatus('err','⚠','File appears empty','No data rows found'); return; }
       const loaded = csvRowsToInfluencers(rows);
@@ -977,7 +989,11 @@ function handleFile(file) {
       showUploadStatus('err','⚠','Error reading file', err.message || 'Please check the file format');
     }
   };
-  reader.readAsText(file, 'UTF-8');
+  if(ext === 'xlsx' || ext === 'xls') {
+    reader.readAsArrayBuffer(file);
+  } else {
+    reader.readAsText(file, 'UTF-8');
+  }
 }
 
 function showUploadStatus(type, icon, text, sub) {
