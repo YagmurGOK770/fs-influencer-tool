@@ -453,10 +453,10 @@ td{padding:9px 10px;vertical-align:middle}
             ondragover="event.preventDefault();this.classList.add('drag')"
             ondragleave="this.classList.remove('drag')"
             ondrop="handleDrop(event)">
-            <input type="file" accept=".csv,.xlsx,.xls" onchange="handleFile(this.files[0])"/>
+            <input type="file" accept=".csv,.xlsx,.xls,.json" onchange="handleFile(this.files[0])"/>
             <div class="upload-icon">📄</div>
             <div class="upload-label">Upload latest dataset</div>
-            <div class="upload-sub">Drop your .csv or .xlsx here<br/>or click to browse</div>
+            <div class="upload-sub">Drop your .csv, .xlsx or .json here<br/>or click to browse</div>
           </div>
           <div class="upload-status" id="uploadStatus">
             <div class="upload-status-icon" id="uploadIcon">✓</div>
@@ -898,15 +898,50 @@ function handleDrop(e) {
 function handleFile(file) {
   if(!file) return;
   const ext = file.name.split('.').pop().toLowerCase();
-  if(!['csv','xlsx','xls'].includes(ext)) {
-    showUploadStatus('err', '⚠', 'Unsupported file type', 'Please upload a .csv or .xlsx file');
+  if(!['csv','xlsx','xls','json'].includes(ext)) {
+    showUploadStatus('err', '⚠', 'Unsupported file type', 'Please upload a .csv, .xlsx or .json file');
     return;
   }
   const reader = new FileReader();
   reader.onload = function(e) {
     try {
       let rows = [];
-      if(ext === 'csv') {
+      if(ext === 'json') {
+        const parsed = JSON.parse(e.target.result);
+        const arr = Array.isArray(parsed) ? parsed : (parsed.influencers || parsed.data || []);
+        if(!arr.length) { showUploadStatus('err','⚠','JSON appears empty','Expected an array of influencer objects'); return; }
+        const loaded = arr.map((item, i) => ({
+          num: item.num || item['#'] || (i + 1),
+          handle: item.handle || item.igHandle || item.ttHandle || item.ytHandle || item.xHandle || '',
+          name: item.name || '',
+          platform: item.platform || '',
+          followers: item.followers || '',
+          niche: item.niche || '',
+          location: item.location || '',
+          source: item.source || '',
+          foundBy: item.foundBy || item.foundVia || '',
+          isNew: false,
+          ok: false,
+        }));
+        window.BASE_DATA = loaded;
+        allRows = [...loaded];
+        ran = false; activeFilter = 'all'; searchQ = '';
+        document.getElementById('searchBox').value = '';
+        document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active'));
+        document.querySelectorAll('.fpill')[0].classList.add('active');
+        document.getElementById('reviewBanner').classList.remove('show');
+        document.getElementById('toolbar').classList.remove('show');
+        document.getElementById('selAllBtn').style.display='none';
+        filtered = [...allRows]; currentPage = 1;
+        updateCounts(); renderTable(); renderPagination();
+        document.getElementById('datasetCount').textContent = loaded.length + ' influencers loaded';
+        document.getElementById('sDate').textContent = '—';
+        document.getElementById('sTime').textContent = 'Never';
+        document.getElementById('sNew').textContent = '—';
+        document.getElementById('sApproved').textContent = '—';
+        showUploadStatus('ok', '✓', loaded.length + ' influencers loaded from ' + file.name, 'Dataset updated — ready to run agent');
+        return;
+      } else if(ext === 'csv') {
         rows = parseCSV(e.target.result);
       } else {
         // For xlsx, guide user to save as CSV first
@@ -1603,7 +1638,7 @@ function eDownloadExport() {
   URL.revokeObjectURL(url);
 }
 
-eInit();
+document.addEventListener('DOMContentLoaded', eInit);
 
 </script>
 <!-- Import modal -->
