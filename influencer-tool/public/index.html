@@ -1058,6 +1058,12 @@ function csvRowsToInfluencers(rows) {
   const iLoc      = col(['location']);
   const iSource   = col(['source']);
   const iNum      = col(['#','num']);
+  const iWho      = col(['who they are','whotheyare','who_they_are']);
+  const iWhat     = col(['what they post','whattheypost','what_they_post']);
+  const iTone     = col(['tone','tonestyle','tone_style']);
+  const iAudience = col(['target audience','targetaudience','target_audience']);
+  const iWhy      = col(['why follow','whyfollow','why_follow']);
+  const iLabels   = col(['content label','contentlabel']);
   if(iHandle < 0) return [];
   const result = [];
   for(let i=1;i<rows.length;i++){
@@ -1065,14 +1071,20 @@ function csvRowsToInfluencers(rows) {
     const handle = r[iHandle]||'';
     if(!handle || handle.toLowerCase()==='handle') continue;
     result.push({
-      num:      iNum>=0     ? (r[iNum]||'')       : String(i),
-      handle:   handle,
-      name:     iName>=0    ? (r[iName]||'')      : '',
-      platform: iPlatform>=0? (r[iPlatform]||'')  : '',
-      followers:iFollow>=0  ? (r[iFollow]||'')    : '',
-      niche:    iNiche>=0   ? (r[iNiche]||'')     : '',
-      location: iLoc>=0     ? (r[iLoc]||'')       : '',
-      source:   iSource>=0  ? (r[iSource]||'')    : '',
+      num:          iNum>=0     ? (r[iNum]||'')       : String(i),
+      handle:       handle,
+      name:         iName>=0    ? (r[iName]||'')      : '',
+      platform:     iPlatform>=0? (r[iPlatform]||'')  : '',
+      followers:    iFollow>=0  ? (r[iFollow]||'')    : '',
+      niche:        iNiche>=0   ? (r[iNiche]||'')     : '',
+      location:     iLoc>=0     ? (r[iLoc]||'')       : '',
+      source:       iSource>=0  ? (r[iSource]||'')    : '',
+      whoTheyAre:   iWho>=0     ? (r[iWho]||'')       : '',
+      whatTheyPost: iWhat>=0    ? (r[iWhat]||'')      : '',
+      toneStyle:    iTone>=0    ? (r[iTone]||'')      : '',
+      targetAudience: iAudience>=0 ? (r[iAudience]||'') : '',
+      whyFollow:    iWhy>=0     ? (r[iWhy]||'')       : '',
+      contentLabels:iLabels>=0  ? (r[iLabels]||'')    : '',
       foundBy:  '',
       isNew:    false,
       ok:       false
@@ -1409,6 +1421,9 @@ function switchTab(id, btn) {
         num: String(r.num),
         name: r.name || '',
         platform: r.platform || '',
+        niche: r.niche || '',
+        location: r.location || '',
+        source: r.source || '',
         igHandle: r.igHandle || (r.platform && r.platform.toLowerCase().includes('instagram') ? r.handle : '') || '',
         ttHandle: r.ttHandle || (r.platform && r.platform.toLowerCase().includes('tiktok') ? r.handle : '') || '',
         ytHandle: r.ytHandle || (r.platform && r.platform.toLowerCase().includes('youtube') ? r.handle : '') || '',
@@ -1417,6 +1432,21 @@ function switchTab(id, btn) {
       }));
     if (newEntries.length > 0) {
       eTO_ENRICH = [...eTO_ENRICH, ...newEntries];
+      // Pre-populate eResults with enrichment data from uploaded file
+      for (const r of allRows) {
+        const num = String(r.num);
+        if ((r.whoTheyAre || r.whatTheyPost || r.toneStyle || r.targetAudience || r.whyFollow || r.contentLabels) && !eResults[num]) {
+          eResults[num] = {
+            status: 'done',
+            whoTheyAre: r.whoTheyAre || '',
+            whatTheyPost: r.whatTheyPost || '',
+            toneStyle: r.toneStyle || '',
+            targetAudience: r.targetAudience || '',
+            whyFollow: r.whyFollow || '',
+            contentLabels: r.contentLabels || '',
+          };
+        }
+      }
       eRenderTable();
       eUpdateStats();
       eLogLine('↑ ' + newEntries.length + ' new influencer(s) added from dashboard dataset.', 'ok');
@@ -1639,9 +1669,16 @@ function eExportResults() {
   const enriched = eTO_ENRICH.map(inf => {
     const r = eResults[inf.num];
     if (!r || r.status !== 'done') return null;
+    const handle = inf.igHandle || inf.ttHandle || inf.ytHandle || inf.xHandle || inf.handle || '';
     return {
       num: inf.num,
       name: inf.name,
+      handle,
+      platform: inf.platform || '',
+      followers: inf.followers || '',
+      niche: inf.niche || '',
+      location: inf.location || '',
+      source: inf.source || '',
       whoTheyAre: r.whoTheyAre || '',
       whatTheyPost: r.whatTheyPost || '',
       toneStyle: r.toneStyle || '',
