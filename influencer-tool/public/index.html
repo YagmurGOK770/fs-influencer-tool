@@ -4,7 +4,6 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Influencer Discovery Agent</title>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 :root{
   --bg:#f5f4f0;--white:#fff;--surface:#fafaf8;
@@ -1641,6 +1640,14 @@ function eDownloadExport() {
 }
 
 function eExportXlsx() {
+  if (typeof XLSX === 'undefined') {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+    s.onload = eExportXlsx;
+    document.head.appendChild(s);
+    eLogLine('Loading XLSX library...', 'info');
+    return;
+  }
   const rows = eTO_ENRICH.map(inf => {
     const r = eResults[inf.num] || {};
     const handle = inf.igHandle || inf.ttHandle || inf.ytHandle || inf.xHandle || inf.handle || '';
