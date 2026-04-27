@@ -4,6 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Influencer Discovery Agent</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
 :root{
   --bg:#f5f4f0;--white:#fff;--surface:#fafaf8;
@@ -1432,6 +1433,7 @@ function eUpdateStats() {
   document.getElementById('progressFill').style.width = pct + '%';
   document.getElementById('progressLabel').textContent = done + ' / ' + total + ' enriched (' + pct + '%)';
   document.getElementById('exportBtn').disabled = done === 0;
+  document.getElementById('exportXlsxBtn').disabled = done === 0;
 }
 
 function eRenderTable() {
@@ -1638,6 +1640,36 @@ function eDownloadExport() {
   URL.revokeObjectURL(url);
 }
 
+function eExportXlsx() {
+  const rows = eTO_ENRICH.map(inf => {
+    const r = eResults[inf.num] || {};
+    const handle = inf.igHandle || inf.ttHandle || inf.ytHandle || inf.xHandle || inf.handle || '';
+    return {
+      '#': inf.num,
+      'Name': inf.name || '',
+      'Platform': inf.platform || '',
+      'Handle': handle,
+      'Followers': inf.followers || '',
+      'Status': r.status === 'done' ? 'Done' : r.status === 'error' ? 'Error' : 'Pending',
+      'Who They Are': r.whoTheyAre || '',
+      'What They Post': r.whatTheyPost || '',
+      'Tone & Style': r.toneStyle || '',
+      'Target Audience': r.targetAudience || '',
+      'Why Follow': r.whyFollow || '',
+      'Content Labels': r.contentLabels || '',
+    };
+  });
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [
+    {wch:6},{wch:28},{wch:20},{wch:24},{wch:12},{wch:10},
+    {wch:36},{wch:32},{wch:28},{wch:28},{wch:28},{wch:36}
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Enriched Profiles');
+  XLSX.writeFile(wb, 'enriched_profiles.xlsx');
+  eLogLine('Downloaded enriched_profiles.xlsx', 'ok');
+}
+
 document.addEventListener('DOMContentLoaded', eInit);
 
 </script>
@@ -1704,6 +1736,7 @@ document.addEventListener('DOMContentLoaded', eInit);
   <button class="btn btn-green" id="startBtn" onclick="eStartEnrichment()">▶ Start Enrichment</button>
   <button class="btn btn-gray" id="pauseBtn" onclick="ePauseEnrichment()" disabled>⏸ Pause</button>
   <button class="btn btn-blue" id="exportBtn" onclick="eExportResults()" disabled>⬇ Export JSON</button>
+  <button class="btn btn-green" id="exportXlsxBtn" onclick="eExportXlsx()" disabled>⬇ Export XLSX</button>
   <button class="btn btn-gray" onclick="eRetryErrors()">↺ Retry Errors</button>
   <label class="batch-size-label">Batch size:
     <select id="batchSize">
