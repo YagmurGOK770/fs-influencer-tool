@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/search.js": {
+      "maxDuration": 300
+    },
+    "api/enrich.js": {
+      "maxDuration": 60
+    }
+  }
+}

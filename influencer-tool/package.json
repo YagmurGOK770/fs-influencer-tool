@@ -1,0 +1,13 @@
+{
+  "name": "influencer-discovery-tool",
+  "version": "1.0.0",
+  "description": "Live influencer discovery + enrichment tool for FoodStyles",
+  "private": true,
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
