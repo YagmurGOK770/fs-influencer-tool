@@ -1282,127 +1282,203 @@ base.forEach(r => {
   }
 }
 
-function openImportModal() {
-  const cfg = getConfig();
-  const kwList = cfg.keywords.join(', ');
+// ── Search combination helpers ──
 
+// Returns array of {label, platform, keyword, location, minFollowers, sources}
+function buildSearchCombinations(cfg) {
+  const combos = [];
+  const platformSources = cfg.sources.filter(s => !s.url);
   const customSources = cfg.sources.filter(s => s.url);
-  const platformSources = cfg.sources.filter(s => !s.url).map(s => s.name);
 
-  // Build a human-readable summary
-  const summaryParts = [];
-  summaryParts.push(`<strong>Keywords:</strong> ${cfg.keywords.length ? cfg.keywords.join(', ') : '<em style="color:var(--muted)">none</em>'}`);
-  summaryParts.push(`<strong>Location:</strong> ${cfg.location}`);
-  summaryParts.push(`<strong>Platform focus:</strong> ${cfg.platform}`);
-  summaryParts.push(`<strong>Min followers:</strong> ${cfg.minFollowers.toLocaleString()}`);
-  if (platformSources.length) summaryParts.push(`<strong>Platforms:</strong> ${platformSources.join(', ')}`);
-  if (customSources.length) {
-    summaryParts.push(`<strong>Directories:</strong> ${customSources.map(s => `<a href="${s.url}" target="_blank" rel="noopener">${s.name}</a>`).join(', ')}`);
+  // Built-in platform sources × each keyword
+  for (const src of platformSources) {
+    for (const kw of cfg.keywords) {
+      combos.push({
+        label: `${src.name} — "${kw}"`,
+        platform: src.name,
+        keyword: kw,
+        location: cfg.location,
+        minFollowers: cfg.minFollowers,
+        sources: [{ name: src.name, url: src.url || '', desc: src.desc || '' }]
+      });
+    }
   }
-  document.getElementById('searchSummary').innerHTML = summaryParts.join('<br>');
 
-  // Also show the prompt that will be sent (for transparency)
-  let sourcesBlock = '';
-  if (platformSources.length) sourcesBlock += `\nPlatforms to search: ${platformSources.join(', ')}.`;
-  if (customSources.length) {
-    sourcesBlock += `\n\nAlso check these directories:\n` + customSources.map(s => `- ${s.name} — ${s.url}${s.desc ? ' ('+s.desc+')' : ''}`).join('\n');
+  // Custom directory sources × each keyword (grouped under each directory)
+  for (const src of customSources) {
+    for (const kw of cfg.keywords) {
+      combos.push({
+        label: `${src.name} — "${kw}"`,
+        platform: cfg.platform,
+        keyword: kw,
+        location: cfg.location,
+        minFollowers: cfg.minFollowers,
+        sources: [{ name: src.name, url: src.url, desc: src.desc || '' }]
+      });
+    }
   }
-  const previewPrompt = `Find food influencers based in or covering ${cfg.location}.
-Keywords: ${kwList}
-Min followers: ${cfg.minFollowers.toLocaleString()}${sourcesBlock}
 
-(Full system prompt sent to Claude on the server.)`;
-  document.getElementById('generatedPrompt').value = previewPrompt;
-
-  // Reset transient UI bits
-  document.getElementById('searchStatus').style.display = 'none';
-  document.getElementById('searchRawResult').style.display = 'none';
-  document.getElementById('searchAdvanced').style.display = 'none';
-  document.getElementById('liveSearchBtn').disabled = false;
-
-  document.getElementById('importModal').style.display = 'flex';
+  return combos;
 }
 
-// ── Live search using /api/search ──
-async function runLiveSearch() {
+function openImportModal() {
   const cfg = getConfig();
   if (!cfg.keywords.length) {
     alert('Add at least one search keyword first.');
     return;
   }
+
+  const combos = buildSearchCombinations(cfg);
+  window._searchCombos = combos;
+
+  // Group combos by platform/source name
+  const groups = {};
+  for (let i = 0; i < combos.length; i++) {
+    const c = combos[i];
+    const grp = c.sources[0].name;
+    if (!groups[grp]) groups[grp] = [];
+    groups[grp].push({ idx: i, combo: c });
+  }
+
+  let html = '';
+  for (const [grpName, items] of Object.entries(groups)) {
+    html += `<div style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <strong style="font-size:12px">${grpName}</strong>
+        <button class="btn-sm" style="padding:2px 7px;font-size:10px" onclick="toggleComboGroup('${grpName}', true)">All</button>
+        <button class="btn-sm" style="padding:2px 7px;font-size:10px" onclick="toggleComboGroup('${grpName}', false)">None</button>
+      </div>`;
+    for (const { idx, combo } of items) {
+      html += `<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer;font-size:12px;border:1.5px solid var(--border);background:var(--bg);margin-bottom:4px;user-select:none" data-grp="${grpName}">
+        <input type="checkbox" class="combo-check" data-idx="${idx}" checked style="width:14px;height:14px;cursor:pointer;flex-shrink:0">
+        <span style="flex:1;color:var(--text)">${combo.label}</span>
+        <span style="color:var(--muted);font-size:11px">${combo.minFollowers.toLocaleString()}+ followers · ${combo.location}</span>
+      </label>`;
+    }
+    html += `</div>`;
+  }
+
+  const container = document.getElementById('combosContainer');
+  container.innerHTML = html;
+  container.onchange = (e) => { if (e.target.classList.contains('combo-check')) updateComboRunBtn(); };
+  document.getElementById('searchStatus').style.display = 'none';
+  document.getElementById('searchRawResult').style.display = 'none';
+  document.getElementById('comboCount').textContent = combos.length;
+  updateComboRunBtn();
+
+  document.getElementById('importModal').style.display = 'flex';
+}
+
+function toggleComboGroup(grpName, checked) {
+  document.querySelectorAll(`[data-grp="${grpName}"] .combo-check`).forEach(cb => cb.checked = checked);
+  updateComboRunBtn();
+}
+
+function updateComboRunBtn() {
+  const selected = document.querySelectorAll('.combo-check:checked').length;
+  const btn = document.getElementById('liveSearchBtn');
+  btn.querySelector('span:last-child').textContent = selected ? `Search ${selected} combination${selected > 1 ? 's' : ''}` : 'Select combinations above';
+  btn.disabled = selected === 0;
+}
+
+// ── Live search: runs each selected combo as a separate request ──
+async function runLiveSearch() {
+  const combos = window._searchCombos || [];
+  const selected = [...document.querySelectorAll('.combo-check:checked')].map(cb => combos[parseInt(cb.dataset.idx)]);
+  if (!selected.length) return;
+
   const btn = document.getElementById('liveSearchBtn');
   const status = document.getElementById('searchStatus');
   btn.disabled = true;
-  btn.innerHTML = '<span>⏳</span><span>Searching…</span>';
   status.style.display = 'block';
-  status.textContent = '🌐 Searching the web — this typically takes 30-90 seconds…';
+  status.style.background = 'var(--green-light)';
+  status.style.borderColor = 'var(--green-border)';
+  status.style.color = 'var(--green)';
 
+  // Disable checkboxes during run
+  document.querySelectorAll('.combo-check').forEach(cb => cb.disabled = true);
+
+  const allInfluencers = [];
+  const seenHandles = new Set();
   let elapsed = 0;
-  const tick = setInterval(() => {
-    elapsed += 1;
-    status.textContent = `🌐 Searching the web — ${elapsed}s elapsed (typical 30-90s)…`;
-  }, 1000);
+  const tick = setInterval(() => { elapsed++; }, 1000);
 
-  try {
-    const resp = await fetch('/api/search', {
-      method: 'POST',
-      headers: getApiHeaders(),
-      body: JSON.stringify({
-        keywords: cfg.keywords,
-        location: cfg.location,
-        platform: cfg.platform,
-        sources: cfg.sources,
-        minFollowers: cfg.minFollowers
-      })
-    });
-    clearInterval(tick);
+  for (let i = 0; i < selected.length; i++) {
+    const combo = selected[i];
+    status.textContent = `🌐 [${i + 1}/${selected.length}] Searching: ${combo.label} — ${elapsed}s elapsed…`;
 
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      if (resp.status === 401) {
-        sessionStorage.removeItem('appPassword');
-        alert('Unauthorized. Please refresh and re-enter the password.');
-        return;
+    try {
+      const resp = await fetch('/api/search', {
+        method: 'POST',
+        headers: getApiHeaders(),
+        body: JSON.stringify({
+          keywords: [combo.keyword],
+          location: combo.location,
+          platform: combo.platform,
+          sources: combo.sources,
+          minFollowers: combo.minFollowers
+        })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        if (resp.status === 401) {
+          clearInterval(tick);
+          sessionStorage.removeItem('appPassword');
+          alert('Unauthorized. Please refresh and re-enter the password.');
+          return;
+        }
+        status.textContent = `⚠ [${i + 1}/${selected.length}] Failed: ${combo.label} — ${err.error || resp.statusText}. Continuing…`;
+        status.style.background = 'var(--amber-bg)';
+        status.style.borderColor = 'var(--amber)';
+        status.style.color = 'var(--amber)';
+        await new Promise(r => setTimeout(r, 1500));
+        status.style.background = 'var(--green-light)';
+        status.style.borderColor = 'var(--green-border)';
+        status.style.color = 'var(--green)';
+        continue;
       }
-      status.style.background = 'var(--red-bg)';
-      status.style.borderColor = 'var(--red)';
-      status.style.color = 'var(--red)';
-      status.textContent = `✗ Search failed: ${err.error || resp.statusText} ${err.detail ? '— ' + err.detail.slice(0, 200) : ''}`;
-      return;
-    }
 
-    const data = await resp.json();
-    const arr = data.influencers || [];
-
-    if (!arr.length) {
-      status.style.background = 'var(--amber-bg)';
-      status.style.borderColor = 'var(--amber)';
-      status.style.color = 'var(--amber)';
-      status.textContent = `⚠ Search returned no parseable results. ${data.warning || ''} You can paste manually below.`;
-      if (data.rawText) {
-        document.getElementById('importText').value = data.rawText;
-        document.getElementById('searchRawResult').style.display = 'block';
+      const data = await resp.json();
+      const found = data.influencers || [];
+      let newCount = 0;
+      for (const inf of found) {
+        const key = (inf.handle || '').toLowerCase();
+        if (!key || !seenHandles.has(key)) {
+          seenHandles.add(key);
+          allInfluencers.push(inf);
+          newCount++;
+        }
       }
-      return;
+      status.textContent = `✓ [${i + 1}/${selected.length}] ${combo.label} — found ${newCount} new (${allInfluencers.length} total so far)`;
+      await new Promise(r => setTimeout(r, 400));
+    } catch (err) {
+      status.textContent = `⚠ [${i + 1}/${selected.length}] Network error on: ${combo.label}. Continuing…`;
+      await new Promise(r => setTimeout(r, 1500));
     }
-
-    status.style.background = 'var(--green-light)';
-    status.style.borderColor = 'var(--green-border)';
-    status.style.color = 'var(--green)';
-    status.textContent = `✓ Found ${arr.length} candidates — applying filters…`;
-
-    // Pass through the same filter pipeline as before
-    importResults(JSON.stringify(arr));
-  } catch (err) {
-    clearInterval(tick);
-    status.style.background = 'var(--red-bg)';
-    status.style.borderColor = 'var(--red)';
-    status.style.color = 'var(--red)';
-    status.textContent = `✗ Network error: ${err.message || err}`;
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<span>🔍</span><span>Search now</span>';
   }
+
+  clearInterval(tick);
+  document.querySelectorAll('.combo-check').forEach(cb => cb.disabled = false);
+
+  if (!allInfluencers.length) {
+    status.style.background = 'var(--amber-bg)';
+    status.style.borderColor = 'var(--amber)';
+    status.style.color = 'var(--amber)';
+    status.textContent = `⚠ All ${selected.length} searches returned no results.`;
+    btn.disabled = false;
+    updateComboRunBtn();
+    return;
+  }
+
+  status.style.background = 'var(--green-light)';
+  status.style.borderColor = 'var(--green-border)';
+  status.style.color = 'var(--green)';
+  status.textContent = `✓ Done — ${allInfluencers.length} unique candidates from ${selected.length} searches. Applying filters…`;
+
+  btn.disabled = false;
+  updateComboRunBtn();
+  importResults(JSON.stringify(allInfluencers));
 }
 
 
@@ -1747,42 +1823,37 @@ document.addEventListener('DOMContentLoaded', eInit);
 </script>
 <!-- Import modal -->
 <div id="importModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:999;align-items:center;justify-content:center;padding:1rem">
-  <div style="background:var(--white);border-radius:var(--r);box-shadow:0 20px 60px rgba(0,0,0,0.2);width:100%;max-width:720px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column">
+  <div style="background:var(--white);border-radius:var(--r);box-shadow:0 20px 60px rgba(0,0,0,0.2);width:100%;max-width:760px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column">
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <div>
-        <div style="font-weight:800;font-size:16px">Live influencer search</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:3px">Claude will search the web and return results directly</div>
+        <div style="font-weight:800;font-size:16px">Select search combinations</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">Each combination is sent as one focused search request — <span id="comboCount">0</span> total generated</div>
       </div>
       <button onclick="document.getElementById('importModal').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1">×</button>
     </div>
 
-    <div style="padding:20px 24px;overflow-y:auto;flex:1">
-      <div style="font-size:13px;font-weight:700;margin-bottom:6px">Search query summary</div>
-      <div id="searchSummary" style="background:var(--bg);border:1.5px solid var(--border);border-radius:var(--rs);padding:12px;font-size:12px;line-height:1.6;color:var(--text);margin-bottom:14px"></div>
-
-      <div style="display:flex;gap:8px;margin-bottom:14px">
-        <button class="run-btn" id="liveSearchBtn" style="margin-top:0;flex:1" onclick="runLiveSearch()">
-          <span>🔍</span><span>Search now</span>
-        </button>
-        <button class="btn-sm" onclick="document.getElementById('searchAdvanced').style.display = document.getElementById('searchAdvanced').style.display==='none'?'block':'none'" style="white-space:nowrap">Show prompt</button>
+    <div style="padding:16px 24px;overflow-y:auto;flex:1">
+      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+        <button class="btn-sm" style="font-size:11px" onclick="document.querySelectorAll('.combo-check').forEach(cb=>cb.checked=true);updateComboRunBtn()">Select all</button>
+        <button class="btn-sm" style="font-size:11px" onclick="document.querySelectorAll('.combo-check').forEach(cb=>cb.checked=false);updateComboRunBtn()">Deselect all</button>
       </div>
 
-      <div id="searchStatus" style="display:none;padding:12px;background:var(--green-light);border:1.5px solid var(--green-border);border-radius:var(--rs);font-size:12px;color:var(--green);margin-bottom:14px;font-family:var(--mono)"></div>
+      <div id="combosContainer"></div>
 
-      <div id="searchAdvanced" style="display:none;margin-bottom:14px">
-        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px">Generated prompt (read-only)</div>
-        <textarea id="generatedPrompt" readonly style="width:100%;height:200px;font-size:11px;font-family:var(--mono);padding:10px;border:1.5px solid var(--border);border-radius:var(--rs);background:var(--bg);resize:vertical;color:var(--text);line-height:1.5"></textarea>
-      </div>
+      <div id="searchStatus" style="display:none;padding:12px;background:var(--green-light);border:1.5px solid var(--green-border);border-radius:var(--rs);font-size:12px;color:var(--green);margin-top:14px;font-family:var(--mono)"></div>
 
-      <div id="searchRawResult" style="display:none">
+      <div id="searchRawResult" style="display:none;margin-top:14px">
         <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px">Couldn't auto-parse — paste JSON manually if needed</div>
         <textarea id="importText" placeholder="JSON array will appear here if auto-parse fails..." style="width:100%;height:130px;font-size:11px;font-family:var(--mono);padding:10px;border:1.5px solid var(--border);border-radius:var(--rs);background:var(--bg);resize:vertical;color:var(--text);line-height:1.5"></textarea>
         <button class="btn-sm" style="margin-top:7px" onclick="importResults(document.getElementById('importText').value)">Import this JSON</button>
       </div>
     </div>
 
-    <div style="padding:12px 24px 16px;background:var(--surface);border-top:1px solid var(--border);font-size:11px;color:var(--muted);flex-shrink:0">
-      💡 <strong>Tip:</strong> Search may take 30-90 seconds. Results auto-deduplicate against your existing list.
+    <div style="padding:14px 24px;background:var(--surface);border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-shrink:0">
+      <button class="run-btn" id="liveSearchBtn" style="margin-top:0;flex:1" onclick="runLiveSearch()">
+        <span>🔍</span><span>Search combinations</span>
+      </button>
+      <div style="font-size:11px;color:var(--muted)">Each search takes ~30-90s</div>
     </div>
   </div>
 </div>
