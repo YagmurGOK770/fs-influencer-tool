@@ -1648,17 +1648,22 @@ let eQueue = [];
 async function eInit() {
   try {
     const resp = await fetch('/api/db-load', { headers: getApiHeaders() });
+    console.log('[db-load] status:', resp.status);
+    const data = await resp.json();
+    console.log('[db-load] response:', data);
     if (resp.ok) {
-      const data = await resp.json();
       if (data.influencers && data.influencers.length > 0) {
         allRows = data.influencers.map((inf, i) => ({ ...inf, num: i + 1, ok: false, isNew: false }));
+        console.log('[db-load] allRows set:', allRows.length);
         updateStats();
         applyFilter();
         setStatus('review');
+      } else {
+        console.warn('[db-load] response ok but influencers empty or missing');
       }
     }
   } catch (e) {
-    console.warn('DB load failed, starting empty:', e.message);
+    console.error('[db-load] fetch error:', e.message);
   }
   // Pre-load change count for badge
   try {
