@@ -724,7 +724,7 @@ function renderTable() {
       <td class="td-trunc" style="max-width:180px" title="${(r.toneStyle||'').replace(/"/g,'&quot;')}">${r.toneStyle||'—'}</td>
       <td class="td-trunc" style="max-width:200px" title="${(r.targetAudience||'').replace(/"/g,'&quot;')}">${r.targetAudience||'—'}</td>
       <td class="td-trunc" style="max-width:200px" title="${(r.whyFollow||'').replace(/"/g,'&quot;')}">${r.whyFollow||'—'}</td>
-      <td>${r.isNew ? '<span class="kw-tag">' + (r.foundVia||'—') + '</span>' : ''}</td>
+      <td>${r.foundVia ? '<span class="kw-tag">' + r.foundVia + '</span>' : '—'}</td>
     `;
     tbody.appendChild(tr);
   });
@@ -1383,6 +1383,7 @@ async function runLiveSearch() {
         const key = (inf.handle || '').toLowerCase();
         if (!key || !seenHandles.has(key)) {
           seenHandles.add(key);
+          inf.foundVia = combo.label;
           allInfluencers.push(inf);
           newCount++;
         }
