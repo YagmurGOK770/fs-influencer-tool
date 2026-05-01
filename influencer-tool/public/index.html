@@ -1459,8 +1459,25 @@ async function runLiveSearch() {
   }
 
   applyFilter();
-  status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles ready.`;
-  await new Promise(r => setTimeout(r, 1200));
+  status.textContent = `✓ Enrichment done — saving ${newEntries.length} profiles to database…`;
+
+  try {
+    const saveResp = await fetch('/api/db-save', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ influencers: newEntries })
+    });
+    if (saveResp.ok) {
+      const saveData = await saveResp.json();
+      status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles saved to DB (${saveData.snapshots || 0} changes logged).`;
+    } else {
+      status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles ready (DB save failed, check logs).`;
+    }
+  } catch (e) {
+    status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles ready (DB save error: ${e.message}).`;
+  }
+
+  await new Promise(r => setTimeout(r, 2000));
   document.getElementById('importModal').style.display = 'none';
 }
 
@@ -1479,16 +1496,21 @@ let ePaused = false;
 let eQueue = [];
 
 // Init — load from localStorage if available
-function eInit() {
-  const saved = localStorage.getItem('enrichment_results');
-  if (saved) {
-    try {
-      eResults = JSON.parse(saved);
-      eLogLine('↩ Restored ' + Object.keys(eResults).length + ' saved eResults from previous session', 'info');
-    } catch(e) {}
+async function eInit() {
+  try {
+    const resp = await fetch('/api/db-load', { headers: getApiHeaders() });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.influencers && data.influencers.length > 0) {
+        allRows = data.influencers.map((inf, i) => ({ ...inf, num: i + 1, ok: false, isNew: false }));
+        updateStats();
+        applyFilter();
+        setStatus('review');
+      }
+    }
+  } catch (e) {
+    console.warn('DB load failed, starting empty:', e.message);
   }
-  eRenderTable();
-  eUpdateStats();
 }
 
 function eLogLine(msg, cls='muted') {
