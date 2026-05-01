@@ -1655,7 +1655,6 @@ async function eInit() {
       if (data.influencers && data.influencers.length > 0) {
         allRows = data.influencers.map((inf, i) => ({ ...inf, num: i + 1, ok: false, isNew: false }));
         console.log('[db-load] allRows set:', allRows.length);
-        updateStats();
         applyFilter();
         setStatus('review');
       } else {
