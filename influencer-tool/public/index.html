@@ -26,6 +26,43 @@
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;font-size:14px;line-height:1.5}
 
 .nav{background:var(--white);border-bottom:1px solid var(--border);padding:0 1.5rem;display:flex;align-items:center;justify-content:space-between;height:54px;position:sticky;top:0;z-index:100;box-shadow:var(--shadow-sm)}
+.nav-tabs{display:flex;gap:2px;margin-left:20px}
+.nav-tab{font-size:12px;font-weight:700;padding:5px 14px;border-radius:100px;border:1.5px solid transparent;cursor:pointer;color:var(--muted);background:none;font-family:var(--sans);transition:all .15s}
+.nav-tab:hover{color:var(--text);background:var(--bg)}
+.nav-tab.active{color:var(--green);background:var(--green-bg);border-color:var(--green-border)}
+.nav-tab .badge{display:inline-block;background:var(--orange);color:#fff;font-size:10px;font-weight:800;border-radius:100px;padding:1px 6px;margin-left:5px;vertical-align:middle}
+
+/* Change Log */
+.cl-page{max-width:1100px;margin:0 auto;padding:1.5rem 1.5rem 3rem}
+.cl-empty{text-align:center;padding:4rem 2rem;color:var(--muted)}
+.cl-empty-icon{font-size:48px;margin-bottom:12px}
+.cl-empty-title{font-size:16px;font-weight:700;color:var(--text);margin-bottom:6px}
+.cl-card{background:var(--white);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow-sm);margin-bottom:14px;overflow:hidden}
+.cl-card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;cursor:pointer;user-select:none;transition:background .15s}
+.cl-card-header:hover{background:var(--surface)}
+.cl-card-header.open{border-bottom:1px solid var(--border)}
+.cl-card-name{font-weight:800;font-size:14px}
+.cl-card-handle{font-size:12px;color:var(--muted);font-family:var(--mono);margin-top:2px}
+.cl-card-meta{display:flex;align-items:center;gap:8px}
+.cl-runs-badge{font-size:11px;font-weight:700;background:var(--blue-bg);color:var(--blue);border-radius:100px;padding:3px 10px}
+.cl-changes-badge{font-size:11px;font-weight:700;background:var(--orange-bg);color:var(--orange);border-radius:100px;padding:3px 10px}
+.cl-chevron{font-size:16px;color:var(--muted);transition:transform .2s}
+.cl-chevron.open{transform:rotate(180deg)}
+.cl-body{display:none;padding:0 18px 16px}
+.cl-body.open{display:block}
+.cl-run{margin-top:14px}
+.cl-run-date{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.cl-diff-row{display:grid;grid-template-columns:160px 1fr 1fr;gap:8px;align-items:start;padding:5px 0;border-bottom:1px solid var(--bg)}
+.cl-diff-row:last-child{border-bottom:none}
+.cl-field-name{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding-top:3px}
+.cl-old{background:var(--red-bg);border-radius:var(--rs);padding:5px 9px;font-size:12px;color:var(--red);position:relative}
+.cl-old::before{content:'−';font-weight:700;margin-right:4px;opacity:.7}
+.cl-new{background:var(--green-bg);border-radius:var(--rs);padding:5px 9px;font-size:12px;color:var(--green);position:relative}
+.cl-new::before{content:'+';font-weight:700;margin-right:4px;opacity:.7}
+.cl-null{color:var(--muted2);font-style:italic}
+.cl-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.cl-toolbar-title{font-size:13px;font-weight:700;color:var(--text)}
+.cl-toolbar-sub{font-size:12px;color:var(--muted);margin-top:2px}
 .nav-brand{display:flex;align-items:center;gap:10px}
 .nav-icon{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#2d8a4e,#1a65b8);display:flex;align-items:center;justify-content:center;font-size:14px}
 .nav-title{font-weight:800;font-size:15px;letter-spacing:-.3px}
@@ -221,9 +258,15 @@ td{padding:9px 10px;vertical-align:middle}
 <body>
 
 <nav class="nav">
-  <div class="nav-brand">
-    <div class="nav-icon">🔍</div>
-    <div class="nav-title">Influencer <span>Agent</span></div>
+  <div style="display:flex;align-items:center">
+    <div class="nav-brand">
+      <div class="nav-icon">🔍</div>
+      <div class="nav-title">Influencer <span>Agent</span></div>
+    </div>
+    <div class="nav-tabs">
+      <button class="nav-tab active" id="tabDashBtn" onclick="switchMainTab('dash')">Dashboard</button>
+      <button class="nav-tab" id="tabChangesBtn" onclick="switchMainTab('changes')">Change Log <span class="badge" id="changesBadge" style="display:none">0</span></button>
+    </div>
   </div>
   <div class="nav-right">
     <div class="share-hint">💡 Share this file via email or Drive — works offline, no login needed</div>
@@ -233,6 +276,7 @@ td{padding:9px 10px;vertical-align:middle}
     </div>
   </div>
 </nav>
+<div id="mainDash">
 <div class="page">
   <div class="stats">
     <div class="stat-card">
@@ -1485,6 +1529,111 @@ async function runLiveSearch() {
 // Tab switching removed — single-tab layout
 function switchTab() {}
 
+// ── Main tab switching ──
+function switchMainTab(tab) {
+  const isDash = tab === 'dash';
+  document.getElementById('mainDash').style.display = isDash ? '' : 'none';
+  document.getElementById('mainChanges').style.display = isDash ? 'none' : '';
+  document.getElementById('tabDashBtn').classList.toggle('active', isDash);
+  document.getElementById('tabChangesBtn').classList.toggle('active', !isDash);
+  if (!isDash) loadChanges();
+}
+
+async function loadChanges() {
+  const container = document.getElementById('clContent');
+  container.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--muted);font-size:13px">Loading changes…</div>';
+  try {
+    const resp = await fetch('/api/db-changes', { headers: getApiHeaders() });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    renderChanges(data.influencers || []);
+
+    // Update badge
+    const badge = document.getElementById('changesBadge');
+    if (data.total > 0) {
+      badge.textContent = data.total;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {
+    container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--red);font-size:13px">Failed to load changes: ${e.message}</div>`;
+  }
+}
+
+function renderChanges(influencers) {
+  const container = document.getElementById('clContent');
+  if (!influencers.length) {
+    container.innerHTML = `
+      <div class="cl-empty">
+        <div class="cl-empty-icon">📋</div>
+        <div class="cl-empty-title">No changes yet</div>
+        <div>Run a search to start tracking influencer changes.</div>
+      </div>`;
+    return;
+  }
+
+  const FIELD_LABELS = {
+    name: 'Name', platform: 'Platform', ig_handle: 'IG Handle',
+    ig_followers: 'IG Followers', tt_handle: 'TT Handle', tt_followers: 'TT Followers',
+    yt_handle: 'YT Handle', yt_followers: 'YT Followers', x_handle: 'X Handle',
+    x_followers: 'X Followers', followers: 'Total Followers', content_labels: 'Content Labels',
+    who_they_are: 'Who They Are', what_they_post: 'What They Post', tone_style: 'Tone & Style',
+    target_audience: 'Target Audience', why_follow: 'Why Follow', found_via: 'Found Via',
+    niche: 'Niche', location: 'Location'
+  };
+
+  container.innerHTML = influencers.map((inf, idx) => {
+    const totalChanges = inf.runs.reduce((sum, r) => sum + r.changes.length, 0);
+    const runsHtml = inf.runs.map(run => {
+      const date = new Date(run.runAt);
+      const dateStr = date.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+      const timeStr = date.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+      const diffsHtml = run.changes.map(c => `
+        <div class="cl-diff-row">
+          <div class="cl-field-name">${FIELD_LABELS[c.field] || c.field}</div>
+          <div class="cl-old">${c.oldValue ? c.oldValue : '<span class="cl-null">empty</span>'}</div>
+          <div class="cl-new">${c.newValue ? c.newValue : '<span class="cl-null">empty</span>'}</div>
+        </div>`).join('');
+      return `
+        <div class="cl-run">
+          <div class="cl-run-date">${dateStr} at ${timeStr} — ${run.changes.length} field${run.changes.length !== 1 ? 's' : ''} changed</div>
+          <div style="display:grid;grid-template-columns:160px 1fr 1fr;gap:8px;padding:4px 0 6px;border-bottom:1px solid var(--border);margin-bottom:4px">
+            <div style="font-size:10px;font-weight:700;color:var(--muted2);text-transform:uppercase">Field</div>
+            <div style="font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase">Before</div>
+            <div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase">After</div>
+          </div>
+          ${diffsHtml}
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="cl-card">
+        <div class="cl-card-header" id="clh${idx}" onclick="toggleClCard(${idx})">
+          <div>
+            <div class="cl-card-name">${inf.name || inf.handle}</div>
+            <div class="cl-card-handle">${inf.handle}${inf.platform ? ' · ' + inf.platform : ''}${inf.followers ? ' · ' + inf.followers : ''}</div>
+          </div>
+          <div class="cl-card-meta">
+            <span class="cl-runs-badge">${inf.runs.length} run${inf.runs.length !== 1 ? 's' : ''}</span>
+            <span class="cl-changes-badge">${totalChanges} change${totalChanges !== 1 ? 's' : ''}</span>
+            <span class="cl-chevron" id="clc${idx}">▾</span>
+          </div>
+        </div>
+        <div class="cl-body" id="clb${idx}">${runsHtml}</div>
+      </div>`;
+  }).join('');
+}
+
+function toggleClCard(idx) {
+  const header = document.getElementById('clh' + idx);
+  const body   = document.getElementById('clb' + idx);
+  const chev   = document.getElementById('clc' + idx);
+  const open   = body.classList.toggle('open');
+  header.classList.toggle('open', open);
+  chev.classList.toggle('open', open);
+}
+
 
 // ── Enrichment Tool ──
 
@@ -1511,6 +1660,15 @@ async function eInit() {
   } catch (e) {
     console.warn('DB load failed, starting empty:', e.message);
   }
+  // Pre-load change count for badge
+  try {
+    const cr = await fetch('/api/db-changes', { headers: getApiHeaders() });
+    if (cr.ok) {
+      const cd = await cr.json();
+      const badge = document.getElementById('changesBadge');
+      if (cd.total > 0) { badge.textContent = cd.total; badge.style.display = ''; }
+    }
+  } catch (e) { /* silent */ }
 }
 
 function eLogLine(msg, cls='muted') {
@@ -1818,6 +1976,27 @@ document.addEventListener('DOMContentLoaded', eInit);
   </div>
 </div>
 
+</div><!-- #mainDash -->
+
+<!-- Change Log page -->
+<div id="mainChanges" style="display:none">
+  <div class="cl-page">
+    <div class="cl-toolbar">
+      <div>
+        <div class="cl-toolbar-title">Change Log</div>
+        <div class="cl-toolbar-sub">Influencers where data changed between runs — newest changes first</div>
+      </div>
+      <button class="btn-sm" onclick="loadChanges()">↻ Refresh</button>
+    </div>
+    <div id="clContent">
+      <div class="cl-empty">
+        <div class="cl-empty-icon">📋</div>
+        <div class="cl-empty-title">No changes yet</div>
+        <div>Run a search to start tracking influencer changes.</div>
+      </div>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
