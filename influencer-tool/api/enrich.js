@@ -4,28 +4,31 @@
 
 import { checkAuth, requireApiKey } from './_auth.js';
 
-const MODEL = 'claude-sonnet-4-5';
-const MAX_TOKENS = 600;
+const MODEL = 'claude-sonnet-4-6';
+const MAX_TOKENS = 1200;
+const MAX_WEB_SEARCHES = 4;
 
 function buildPrompt({ name, handle, platform, followers }) {
-  return `You are a UK food influencer research expert. Generate a concise profile for this influencer based on their known public presence.
+  return `You are a UK food influencer research expert. Use the web_search tool to look up this influencer and find real, accurate information about them.
 
 Influencer: ${name || '(unknown)'}
 Handle: ${handle || '(unknown)'}
 Platform(s): ${platform || 'Instagram'}
 Total Followers: ${followers || '(unknown)'}
 
-Return ONLY a JSON object with exactly these 6 fields (no extra text, no markdown):
+Search for their social media profile, recent posts, and any press coverage. Use what you find to fill in the profile accurately.
+
+After researching, return ONLY a JSON object with exactly these 6 fields (no extra text, no markdown):
 {
   "whoTheyAre": "One sentence describing who this person is (role, background, what makes them notable). Max 15 words.",
-  "whatTheyPost": "What type of content they post. Max 12 words.",
+  "whatTheyPost": "What type of content they post based on what you found. Max 12 words.",
   "toneStyle": "Their content tone and style. Max 10 words.",
   "targetAudience": "Who follows them. Max 12 words.",
   "whyFollow": "The main reason to follow them. Max 12 words.",
   "contentLabels": "3-5 descriptive labels separated by  ·  (e.g. London Food  ·  Restaurant Reviews  ·  Budget Eats)"
 }
 
-If you are not confident about specifics, provide reasonable inferences from their handle, name, and follower size — but never invent specific facts (awards, employers, books) you cannot verify.`;
+Base your answers on what you actually find online. If you cannot find specific information, make a reasonable inference from what is available — but never invent specific facts (awards, employers, books) you cannot verify.`;
 }
 
 function extractJsonObject(text) {
@@ -67,7 +70,14 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: MAX_TOKENS,
-        messages: [{ role: 'user', content: prompt }]
+        messages: [{ role: 'user', content: prompt }],
+        tools: [
+          {
+            type: 'web_search_20250305',
+            name: 'web_search',
+            max_uses: MAX_WEB_SEARCHES
+          }
+        ]
       })
     });
 

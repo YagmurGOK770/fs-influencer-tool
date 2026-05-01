@@ -215,68 +215,6 @@ td{padding:9px 10px;vertical-align:middle}
   .nav-right .share-hint{display:none}
 }
 
-/* ── Tab navigation ── */
-.tab-nav{display:flex;gap:2px;padding:0 20px;border-bottom:1px solid var(--border);background:var(--white)}
-.tab-btn{padding:11px 20px;font-size:13px;font-weight:700;border:none;background:none;cursor:pointer;color:var(--muted);border-bottom:3px solid transparent;margin-bottom:-1px;transition:all .15s;border-radius:0}
-.tab-btn:hover{color:var(--text)}
-.tab-btn.active{color:var(--green);border-bottom-color:var(--green)}
-.tab-pane{display:none}
-.tab-pane.active{display:block}
-
-/* ── Enrichment tool overrides (scoped inside #enrichTab) ── */
-#enrichTab .header{padding:24px 32px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;background:var(--white)}
-#enrichTab .header h1{font-size:17px;font-weight:700;color:var(--text)}
-#enrichTab .header p{font-size:12px;color:var(--muted);margin-top:3px}
-#enrichTab .controls{padding:14px 32px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--border);background:var(--white)}
-#enrichTab .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;border:none;cursor:pointer;font-size:12.5px;font-weight:600;transition:all .15s}
-#enrichTab .btn-green{background:#16a34a;color:#fff}
-#enrichTab .btn-green:hover{background:#15803d}
-#enrichTab .btn-green:disabled{background:#dcfce7;color:#86efac;cursor:not-allowed}
-#enrichTab .btn-blue{background:#1d4ed8;color:#fff}
-#enrichTab .btn-blue:hover{background:#1e40af}
-#enrichTab .btn-blue:disabled{background:#dbeafe;color:#93c5fd;cursor:not-allowed}
-#enrichTab .btn-gray{background:var(--surface);color:var(--muted);border:1px solid var(--border)}
-#enrichTab .btn-gray:hover{background:var(--border);color:var(--text)}
-#enrichTab .stat-bar{display:flex;gap:20px;align-items:center;flex-wrap:wrap}
-#enrichTab .stat{text-align:center}
-#enrichTab .stat-num{font-size:22px;font-weight:800}
-#enrichTab .stat-num.green{color:var(--green)}
-#enrichTab .stat-num.amber{color:#f59e0b}
-#enrichTab .stat-num.red{color:#ef4444}
-#enrichTab .stat-num.blue{color:#3b82f6}
-#enrichTab .stat-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
-#enrichTab .progress-wrap{padding:12px 32px;background:var(--surface);border-bottom:1px solid var(--border)}
-#enrichTab .progress-bar-bg{height:6px;background:var(--border);border-radius:99px;overflow:hidden}
-#enrichTab .progress-bar-fill{height:100%;background:linear-gradient(90deg,var(--green),#4ade80);border-radius:99px;transition:width .4s ease;width:0%}
-#enrichTab .progress-label{font-size:11px;color:var(--muted);margin-top:6px}
-#enrichTab .log-wrap{padding:0 32px 16px;background:var(--white)}
-#enrichTab .log{background:var(--surface);border:1px solid var(--border);border-radius:10px;height:160px;overflow-y:auto;padding:10px 12px;font-family:var(--mono);font-size:11.5px;margin-top:14px}
-#enrichTab .log-line{padding:2px 0;line-height:1.5}
-#enrichTab .log-line.ok{color:var(--green)}
-#enrichTab .log-line.err{color:#ef4444}
-#enrichTab .log-line.info{color:#3b82f6}
-#enrichTab .log-line.muted{color:var(--muted)}
-#enrichTab .log-line.head{color:#f59e0b;font-weight:700}
-#enrichTab .table-wrap{padding:16px 32px 32px;overflow-x:auto;overflow-y:auto;max-height:75vh;background:var(--white)}
-#enrichTab table{width:100%;border-collapse:collapse;font-size:12px}
-#enrichTab th{background:var(--surface);color:var(--muted);font-weight:600;padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;position:sticky;top:0;z-index:1}
-#enrichTab td{padding:7px 10px;border-bottom:1px solid var(--border);vertical-align:top}
-#enrichTab tr:hover td{background:var(--surface)}
-#enrichTab .td-name{font-weight:600;color:var(--text);white-space:nowrap}
-#enrichTab .td-handle{font-family:var(--mono);color:var(--muted);font-size:11px;white-space:nowrap}
-#enrichTab .td-trunc{max-width:200px;white-space:normal;word-break:break-word;color:var(--muted)}
-#enrichTab .td-trunc.filled{color:var(--text)}
-#enrichTab .status-pill{display:inline-block;font-size:9px;font-weight:700;padding:2px 7px;border-radius:99px;text-transform:uppercase;letter-spacing:.05em}
-#enrichTab .status-done{background:#dcfce7;color:#16a34a}
-#enrichTab .status-pending{background:var(--surface);color:var(--muted)}
-#enrichTab .status-error{background:#fee2e2;color:#ef4444}
-#enrichTab .status-running{background:#dbeafe;color:#1d4ed8}
-#enrichTab .export-section{padding:16px 32px;border-top:1px solid var(--border);background:var(--surface)}
-#enrichTab .export-section h3{font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px}
-#enrichTab .export-section p{font-size:12px;color:var(--muted);margin-bottom:10px}
-#enrichTab textarea{width:100%;height:100px;background:var(--white);border:1px solid var(--border);border-radius:8px;color:var(--green);font-family:var(--mono);font-size:11px;padding:10px;resize:vertical}
-#enrichTab select{background:var(--white);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:7px;font-size:12px;cursor:pointer}
-#enrichTab .batch-size-label{font-size:12px;color:var(--muted)}
 
 </style>
 </head>
@@ -295,12 +233,7 @@ td{padding:9px 10px;vertical-align:middle}
     </div>
   </div>
 </nav>
-<div class="tab-nav">
-  <button class="tab-btn active" onclick="switchTab('dashTab',this)">🔍 Influencer Dashboard</button>
-  <button class="tab-btn" onclick="switchTab('enrichTab',this)">🧠 Profile Enrichment</button>
-</div>
-
-<div id="dashTab" class="tab-pane active"><div class="page">
+<div class="page">
   <div class="stats">
     <div class="stat-card">
       <div class="stat-label">Total in list</div>
@@ -1180,7 +1113,7 @@ function parseFollowers(str) {
 }
 
 // ── Import results from Claude search run in main conversation ──
-function importResults(jsonText) {
+function importResults(jsonText, { keepModalOpen = false } = {}) {
   try {
     const clean = jsonText.replace(/```json\n?|```\n?/g,'').trim();
     const arr = JSON.parse(clean.slice(clean.indexOf('['), clean.lastIndexOf(']')+1));
@@ -1257,7 +1190,7 @@ base.forEach(r => {
     if(skippedFollowers) logLine(`  ↳ ${skippedFollowers} removed — below ${cfg.minFollowers.toLocaleString()} follower minimum`, 'info');
     if(skippedDup)       logLine(`  ↳ ${skippedDup} removed — already in your list`, 'info');
 
-    if(added===0){ alert(`No new influencers passed the filters.\n\n• ${skippedDup} already in list\n• ${skippedFollowers} below follower minimum\n• ${skippedRelevance} not relevant enough to London/food\n\nTry adjusting keywords or min follower count.`); return; }
+    if(added===0){ alert(`No new influencers passed the filters.\n\n• ${skippedDup} already in list\n• ${skippedFollowers} below follower minimum\n• ${skippedRelevance} not relevant enough to London/food\n\nTry adjusting keywords or min follower count.`); return null; }
 
     ran = true;
     allRows = [...newEntries, ...JSON.parse(JSON.stringify(base))];
@@ -1274,11 +1207,15 @@ base.forEach(r => {
     searchQ=''; document.getElementById('searchBox').value='';
     applyFilter(); setStatus('review');
     document.getElementById('resultsCard').scrollIntoView({behavior:'smooth',block:'start'});
-    document.getElementById('importModal').style.display='none';
+    if (!keepModalOpen) {
+      document.getElementById('importModal').style.display='none';
+    }
     document.getElementById('importText').value='';
+    return newEntries;
   } catch(e) {
     alert('Error parsing results: '+e.message);
     console.error(e);
+    return null;
   }
 }
 
@@ -1478,57 +1415,57 @@ async function runLiveSearch() {
 
   btn.disabled = false;
   updateComboRunBtn();
-  importResults(JSON.stringify(allInfluencers));
-}
 
+  const newEntries = importResults(JSON.stringify(allInfluencers), { keepModalOpen: true });
 
-// ── Tab switching ──
-function switchTab(id, btn) {
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-  btn.classList.add('active');
-  if (id === 'enrichTab' && allRows && allRows.length > 0) {
-    // Sync enrichment list from current dashboard dataset
-    const seen = new Set(eTO_ENRICH.map(e => String(e.num)));
-    const newEntries = allRows
-      .filter(r => !seen.has(String(r.num)))
-      .map(r => ({
-        num: String(r.num),
-        name: r.name || '',
-        platform: r.platform || '',
-        niche: r.niche || '',
-        location: r.location || '',
-        source: r.source || '',
-        igHandle: r.igHandle || (r.platform && r.platform.toLowerCase().includes('instagram') ? r.handle : '') || '',
-        ttHandle: r.ttHandle || (r.platform && r.platform.toLowerCase().includes('tiktok') ? r.handle : '') || '',
-        ytHandle: r.ytHandle || (r.platform && r.platform.toLowerCase().includes('youtube') ? r.handle : '') || '',
-        xHandle: r.xHandle || (r.platform && r.platform.toLowerCase().includes('x') ? r.handle : '') || '',
-        followers: r.followers || '',
-      }));
-    if (newEntries.length > 0) {
-      eTO_ENRICH = [...eTO_ENRICH, ...newEntries];
-      // Pre-populate eResults with enrichment data from uploaded file
-      for (const r of allRows) {
-        const num = String(r.num);
-        if ((r.whoTheyAre || r.whatTheyPost || r.toneStyle || r.targetAudience || r.whyFollow || r.contentLabels) && !eResults[num]) {
-          eResults[num] = {
-            status: 'done',
-            whoTheyAre: r.whoTheyAre || '',
-            whatTheyPost: r.whatTheyPost || '',
-            toneStyle: r.toneStyle || '',
-            targetAudience: r.targetAudience || '',
-            whyFollow: r.whyFollow || '',
-            contentLabels: r.contentLabels || '',
-          };
-        }
-      }
-      eRenderTable();
-      eUpdateStats();
-      eLogLine('↑ ' + newEntries.length + ' new influencer(s) added from dashboard dataset.', 'ok');
-    }
+  if (!newEntries || !newEntries.length) {
+    document.getElementById('importModal').style.display = 'none';
+    return;
   }
+
+  // Assign row nums to new entries so enrichOne can track them
+  newEntries.forEach((inf, i) => { if (!inf.num) inf.num = 'new_' + i; });
+
+  // Auto-enrich the newly found influencers one by one
+  status.style.background = 'var(--green-light)';
+  status.style.borderColor = 'var(--green-border)';
+  status.style.color = 'var(--green)';
+
+  let enrichDone = 0;
+  for (const inf of newEntries) {
+    status.textContent = `🔎 Enriching profiles… [${enrichDone + 1}/${newEntries.length}] Looking up ${inf.name || inf.handle}…`;
+    try {
+      const handle = inf.igHandle || inf.ttHandle || inf.ytHandle || inf.xHandle || inf.handle || '';
+      const resp = await fetch('/api/enrich', {
+        method: 'POST',
+        headers: getApiHeaders(),
+        body: JSON.stringify({ name: inf.name, handle, platform: inf.platform, followers: inf.followers })
+      });
+      if (resp.ok) {
+        const enriched = await resp.json();
+        inf.whoTheyAre     = enriched.whoTheyAre     || '';
+        inf.whatTheyPost   = enriched.whatTheyPost   || '';
+        inf.toneStyle      = enriched.toneStyle      || '';
+        inf.targetAudience = enriched.targetAudience || '';
+        inf.whyFollow      = enriched.whyFollow      || '';
+        inf.contentLabels  = enriched.contentLabels  || inf.contentLabels || '';
+        // Update in allRows too
+        const row = allRows.find(r => r.num === inf.num || (r.handle && r.handle === inf.handle));
+        if (row) Object.assign(row, { whoTheyAre: inf.whoTheyAre, whatTheyPost: inf.whatTheyPost, toneStyle: inf.toneStyle, targetAudience: inf.targetAudience, whyFollow: inf.whyFollow, contentLabels: inf.contentLabels });
+      }
+    } catch (e) { /* skip failed enrichments silently */ }
+    enrichDone++;
+  }
+
+  applyFilter();
+  status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles ready.`;
+  await new Promise(r => setTimeout(r, 1200));
+  document.getElementById('importModal').style.display = 'none';
 }
+
+
+// Tab switching removed — single-tab layout
+function switchTab() {}
 
 
 // ── Enrichment Tool ──
@@ -1827,7 +1764,7 @@ document.addEventListener('DOMContentLoaded', eInit);
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <div>
         <div style="font-weight:800;font-size:16px">Select search combinations</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:3px">Each combination is sent as one focused search request — <span id="comboCount">0</span> total generated</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">Each combination is one focused search — found profiles are enriched from the web automatically · <span id="comboCount">0</span> combinations</div>
       </div>
       <button onclick="document.getElementById('importModal').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1">×</button>
     </div>
@@ -1853,93 +1790,11 @@ document.addEventListener('DOMContentLoaded', eInit);
       <button class="run-btn" id="liveSearchBtn" style="margin-top:0;flex:1" onclick="runLiveSearch()">
         <span>🔍</span><span>Search combinations</span>
       </button>
-      <div style="font-size:11px;color:var(--muted)">Each search takes ~30-90s</div>
+      <div style="font-size:11px;color:var(--muted)">Search + web enrichment — allow 1-3 min per combo</div>
     </div>
   </div>
 </div>
 
-
-</div><!-- end dashTab -->
-
-<div id="enrichTab" class="tab-pane">
-<div class="header">
-  <div>
-    <h1>🧠 Influencer Profile Enrichment</h1>
-    <p>Uses Claude AI to generate Who They Are · What They Post · Tone &amp; Style · Target Audience · Why Follow Them · Content Labels</p>
-  </div>
-  <div class="stat-bar">
-    <div class="stat"><div class="stat-num blue" id="statTotal">370</div><div class="stat-label">Total</div></div>
-    <div class="stat"><div class="stat-num green" id="statDone">0</div><div class="stat-label">Done</div></div>
-    <div class="stat"><div class="stat-num amber" id="statPending">370</div><div class="stat-label">Pending</div></div>
-    <div class="stat"><div class="stat-num red" id="statError">0</div><div class="stat-label">Errors</div></div>
-  </div>
-</div>
-
-<div class="controls">
-  <button class="btn btn-green" id="startBtn" onclick="eStartEnrichment()">▶ Start Enrichment</button>
-  <button class="btn btn-gray" id="pauseBtn" onclick="ePauseEnrichment()" disabled>⏸ Pause</button>
-  <button class="btn btn-blue" id="exportBtn" onclick="eExportResults()" disabled>⬇ Export JSON</button>
-  <button class="btn btn-green" id="exportXlsxBtn" onclick="eExportXlsx()" disabled>⬇ Export XLSX</button>
-  <button class="btn btn-gray" onclick="eRetryErrors()">↺ Retry Errors</button>
-  <label class="batch-size-label">Batch size:
-    <select id="batchSize">
-      <option value="5">5 at a time</option>
-      <option value="10" selected>10 at a time</option>
-      <option value="20">20 at a time</option>
-    </select>
-  </label>
-  <label class="batch-size-label">Delay:
-    <select id="batchDelay">
-      <option value="500">Fast (0.5s)</option>
-      <option value="1000" selected>Normal (1s)</option>
-      <option value="2000">Slow (2s)</option>
-    </select>
-  </label>
-</div>
-
-<div class="progress-wrap">
-  <div class="progress-bar-bg"><div class="progress-bar-fill" id="progressFill"></div></div>
-  <div class="progress-label" id="progressLabel">Ready to start</div>
-</div>
-
-<div class="log-wrap">
-  <div class="log" id="log"><div class="log-line muted">Waiting to start...</div></div>
-</div>
-
-<div class="export-section">
-  <h3>Export Results</h3>
-  <p>Once enrichment is complete, click "Export JSON" to copy the enriched data, then paste it into the dashboard's import modal to update all profiles.</p>
-  <textarea id="exportArea" placeholder="Enriched JSON will appear here after export..."></textarea>
-  <div style="margin-top:8px;display:flex;gap:8px;">
-    <button class="btn btn-blue" onclick="eCopyExport()">📋 Copy to Clipboard</button>
-    <button class="btn btn-gray" onclick="eDownloadExport()">⬇ Download as JSON file</button>
-  </div>
-</div>
-
-<div class="table-wrap">
-  <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>Name</th>
-        <th>Platform</th>
-        <th>Handle</th>
-        <th>Followers</th>
-        <th>Status</th>
-        <th>Who They Are</th>
-        <th>What They Post</th>
-        <th>Tone &amp; Style</th>
-        <th>Target Audience</th>
-        <th>Why Follow</th>
-        <th>Content Labels</th>
-      </tr>
-    </thead>
-    <tbody id="enrichTbody"></tbody>
-  </table>
-</div>
-
-
-</div><!-- end enrichTab -->
 
 </body>
 </html>
