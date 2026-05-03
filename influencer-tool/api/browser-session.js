@@ -32,44 +32,48 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid platform. Must be instagram, tiktok, youtube or x.' });
   }
 
-  // Create a persistent Browserless session (15 min TTL)
-  const sessionResp = await fetch(
-    `https://${BROWSERLESS_HOST}/session?token=${BROWSERLESS_TOKEN}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ttl: 900000 }),
+  // Create a Browserless session via the /session endpoint
+  let sessionRaw, sessionText;
+  try {
+    const sessionResp = await fetch(
+      `https://${BROWSERLESS_HOST}/session?token=${BROWSERLESS_TOKEN}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ttl: 900000 }),
+      }
+    );
+    sessionText = await sessionResp.text();
+    if (!sessionResp.ok) {
+      return res.status(502).json({ error: `Browserless /session failed (${sessionResp.status}): ${sessionText}` });
     }
-  );
-
-  if (!sessionResp.ok) {
-    const text = await sessionResp.text();
-    return res.status(502).json({ error: `Browserless session failed: ${sessionResp.status} ${text}` });
+    sessionRaw = JSON.parse(sessionText);
+  } catch (e) {
+    return res.status(502).json({ error: `Browserless request error: ${e.message}`, raw: sessionText });
   }
 
-  const session = await sessionResp.json();
-  const connectURL = session.connect || session.webSocketDebuggerUrl;
-  const sessionId  = session.sessionId || session.id;
+  // Browserless v2 session response shape: { id, connect, liveURL } or similar
+  const connectURL = sessionRaw.connect || sessionRaw.webSocketDebuggerUrl || sessionRaw.wsEndpoint;
+  const sessionId  = sessionRaw.id || sessionRaw.sessionId;
+  // liveURL may be returned directly, or we construct it
+  const liveURL = sessionRaw.liveURL
+    || `https://${BROWSERLESS_HOST}/live/?i=${sessionId}&token=${BROWSERLESS_TOKEN}`;
 
   if (!connectURL) {
-    return res.status(502).json({ error: 'Browserless did not return a connect URL', raw: session });
+    return res.status(502).json({ error: 'Browserless did not return a WebSocket URL', raw: sessionRaw });
   }
 
-  // Navigate to the login page via CDP so the iframe shows it immediately
-  // Use the /json/new endpoint to open a page, then navigate
+  // Navigate to the platform login page so it's ready when the user opens the iframe
   try {
     const { chromium } = await import('playwright');
     const browser = await chromium.connect({ wsEndpoint: connectURL });
     const page = await browser.newPage();
     await page.goto(LOGIN_URLS[platform], { waitUntil: 'domcontentloaded', timeout: 15000 });
-    // Don't close the browser — session stays live for user interaction
+    // Leave browser open — session stays live for user interaction
   } catch (navErr) {
-    // Navigation failure is non-fatal — live URL will still show a browser the user can navigate
     console.warn('[browser-session] navigation warning:', navErr.message);
+    // Non-fatal — user can navigate manually in the iframe
   }
 
-  // Generate the live viewer URL
-  const liveURL = `https://${BROWSERLESS_HOST}/live/?i=${sessionId}&token=${BROWSERLESS_TOKEN}`;
-
-  return res.status(200).json({ sessionId, liveURL, connectURL });
+  return res.status(200).json({ sessionId, liveURL, connectURL, debug: { keys: Object.keys(sessionRaw) } });
 }
