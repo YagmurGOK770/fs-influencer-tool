@@ -1505,11 +1505,10 @@ async function runLiveSearch() {
         });
         data = await resp.json();
         if (data.error) {
-          const msgs = { login_required: `${srcObj.name} credentials missing — add ${platformKey.toUpperCase()}_USER / ${platformKey.toUpperCase()}_PASS to Vercel env vars`, captcha: `${srcObj.name} CAPTCHA triggered — try again later`, checkpoint: `Instagram checkpoint detected — log in to the scraping account manually to resolve` };
-          const msg = msgs[data.error] || (data.message || data.error);
-          logLine(`⚠ ${msg}`, 'warn');
-          status.textContent = `⚠ [${i + 1}/${selected.length}] ${msg} — skipping`;
-          await new Promise(r => setTimeout(r, 1500));
+          const msg = data.message || data.error;
+          logLine(`⚠ ${srcObj.name}: ${msg}`, 'warn');
+          status.textContent = `⚠ [${i + 1}/${selected.length}] ${srcObj.name}: ${msg.slice(0, 120)} — skipping`;
+          await new Promise(r => setTimeout(r, 2500));
           continue;
         }
       } else {

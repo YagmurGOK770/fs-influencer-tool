@@ -39,16 +39,36 @@ async function loginInstagram(page) {
   const pass = process.env.IG_PASS;
   if (!user || !pass) throw new Error('IG_USER / IG_PASS not set in environment');
 
-  await page.goto('https://www.instagram.com/accounts/login/', { waitUntil: 'domcontentloaded', timeout: 20000 });
-  await page.waitForSelector('input[name="username"]', { timeout: 10000 });
-  await page.fill('input[name="username"]', user);
-  await page.fill('input[name="password"]', pass);
-  await page.click('button[type="submit"]');
-  // Wait for redirect away from login page
-  await page.waitForURL(url => !url.includes('/accounts/login'), { timeout: 15000 });
-  // Dismiss "Save login info" / notifications prompts if present
-  await page.locator('button:has-text("Not Now"), button:has-text("Not now")').first().click({ timeout: 5000 }).catch(() => {});
+  await page.goto('https://www.instagram.com/accounts/login/', { waitUntil: 'domcontentloaded', timeout: 25000 });
+
+  // Dismiss EU cookie banner if present (Instagram shows "Allow all cookies" / "Decline optional cookies")
+  await page.locator('button:has-text("Allow all cookies"), button:has-text("Decline optional cookies"), button:has-text("Only allow essential cookies")').first().click({ timeout: 6000 }).catch(() => {});
   await page.waitForTimeout(1500);
+
+  // Wait for username field with longer timeout and broader selector
+  const userField = await page.waitForSelector('input[name="username"], input[aria-label*="username" i], input[aria-label*="email" i], input[autocomplete="username"]', { timeout: 20000 }).catch(() => null);
+  if (!userField) {
+    // Surface what's actually on the page for debugging
+    const url = page.url();
+    const title = await page.title();
+    throw new Error(`Instagram login page did not show username field. URL: ${url}, title: ${title}`);
+  }
+
+  await userField.fill(user);
+  await page.fill('input[name="password"], input[type="password"]', pass);
+  await page.click('button[type="submit"], button:has-text("Log in"), button:has-text("Log In")');
+
+  // Wait for navigation away from login or for any post-login element
+  await Promise.race([
+    page.waitForURL(url => !url.includes('/accounts/login'), { timeout: 20000 }),
+    page.waitForSelector('svg[aria-label="Home"], a[href="/"]', { timeout: 20000 })
+  ]).catch(() => {});
+
+  // Dismiss "Save login info" and "Turn on notifications" prompts
+  for (let i = 0; i < 2; i++) {
+    await page.locator('button:has-text("Not Now"), button:has-text("Not now")').first().click({ timeout: 4000 }).catch(() => {});
+    await page.waitForTimeout(800);
+  }
 }
 
 async function loginTikTok(page) {
@@ -198,6 +218,7 @@ export default async function handler(req, res) {
   } catch (err) {
     if (browser) await browser.close().catch(() => {});
     const code = err.code || 'error';
+    console.error(`[browser-scrape] ${platform}/${keyword} failed:`, err.message);
     return res.status(200).json({ error: code, message: err.message, influencers: [] });
   }
 }
