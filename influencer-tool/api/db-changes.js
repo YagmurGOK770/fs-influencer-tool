@@ -1,9 +1,14 @@
 // GET /api/db-changes
-// Returns influencers that have at least one change snapshot,
-// each with their full snapshot history grouped by run_at date.
+// Returns influencers that have meaningful tracked changes:
+// followers (ig/tt/yt/x/total), platform, content_labels, who_they_are.
 
 import { createClient } from '@supabase/supabase-js';
 import { checkAuth } from './_auth.js';
+
+const TRACKED = new Set([
+  'ig_followers', 'tt_followers', 'yt_followers', 'x_followers', 'followers',
+  'platform', 'content_labels', 'who_they_are'
+]);
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -67,6 +72,7 @@ export default async function handler(req, res) {
       };
     }
 
+    if (!TRACKED.has(s.field_name)) continue;
     byHandle[s.handle].runs[runKey].changes.push({
       field: s.field_name,
       oldValue: s.old_value,
@@ -74,11 +80,15 @@ export default async function handler(req, res) {
     });
   }
 
-  // Convert to array, runs as sorted array (newest first)
-  const influencers = Object.values(byHandle).map(inf => ({
-    ...inf,
-    runs: Object.values(inf.runs).sort((a, b) => new Date(b.runAt) - new Date(a.runAt))
-  }));
+  // Convert to array, drop runs/influencers with no tracked changes
+  const influencers = Object.values(byHandle)
+    .map(inf => ({
+      ...inf,
+      runs: Object.values(inf.runs)
+        .filter(r => r.changes.length > 0)
+        .sort((a, b) => new Date(b.runAt) - new Date(a.runAt))
+    }))
+    .filter(inf => inf.runs.length > 0);
 
   return res.status(200).json({ influencers, total: influencers.length });
 }

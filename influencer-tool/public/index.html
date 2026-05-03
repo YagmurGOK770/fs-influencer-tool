@@ -60,6 +60,10 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .cl-new{background:var(--green-bg);border-radius:var(--rs);padding:5px 9px;font-size:12px;color:var(--green);position:relative}
 .cl-new::before{content:'+';font-weight:700;margin-right:4px;opacity:.7}
 .cl-null{color:var(--muted2);font-style:italic}
+mark.wd-del{background:rgba(192,57,43,.15);color:var(--red);border-radius:3px;padding:0 2px;font-weight:600;text-decoration:line-through;text-decoration-color:rgba(192,57,43,.5)}
+mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;padding:0 2px;font-weight:600}
+.cl-bio-checking{grid-column:2/4;font-size:12px;color:var(--muted2);font-style:italic;padding:5px 0}
+.cl-bio-same{font-size:12px;color:var(--muted);background:var(--surface);border-radius:var(--rs);padding:5px 9px;border:1px solid var(--border)}
 .cl-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .cl-toolbar-title{font-size:13px;font-weight:700;color:var(--text)}
 .cl-toolbar-sub{font-size:12px;color:var(--muted);margin-top:2px}
@@ -1623,6 +1627,38 @@ async function loadChanges() {
   }
 }
 
+// Word-level diff: returns HTML with <mark> on changed words
+function wordDiff(oldStr, newStr) {
+  const ow = (oldStr||'').split(/\s+/);
+  const nw = (newStr||'').split(/\s+/);
+  // LCS-based diff
+  const m = ow.length, n = nw.length;
+  const dp = Array.from({length:m+1},()=>new Array(n+1).fill(0));
+  for (let i=m-1;i>=0;i--) for (let j=n-1;j>=0;j--) {
+    dp[i][j] = ow[i]===nw[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j],dp[i][j+1]);
+  }
+  let i=0,j=0;
+  const oldHtml=[], newHtml=[];
+  while (i<m||j<n) {
+    if (i<m&&j<n&&ow[i]===nw[j]) {
+      oldHtml.push(ow[i]); newHtml.push(nw[j]); i++; j++;
+    } else if (j<n&&(i>=m||dp[i][j+1]>=dp[i+1][j])) {
+      newHtml.push(`<mark class="wd-add">${nw[j]}</mark>`); j++;
+    } else {
+      oldHtml.push(`<mark class="wd-del">${ow[i]}</mark>`); i++;
+    }
+  }
+  return { oldHtml: oldHtml.join(' '), newHtml: newHtml.join(' ') };
+}
+
+const FIELD_LABELS = {
+  platform: 'Platform',
+  ig_followers: 'IG Followers', tt_followers: 'TT Followers',
+  yt_followers: 'YT Followers', x_followers: 'X Followers',
+  followers: 'Total Followers', content_labels: 'Content Labels',
+  who_they_are: 'Who They Are'
+};
+
 function renderChanges(influencers) {
   const container = document.getElementById('clContent');
   if (!influencers.length) {
@@ -1635,31 +1671,45 @@ function renderChanges(influencers) {
     return;
   }
 
-  const FIELD_LABELS = {
-    name: 'Name', platform: 'Platform', ig_handle: 'IG Handle',
-    ig_followers: 'IG Followers', tt_handle: 'TT Handle', tt_followers: 'TT Followers',
-    yt_handle: 'YT Handle', yt_followers: 'YT Followers', x_handle: 'X Handle',
-    x_followers: 'X Followers', followers: 'Total Followers', content_labels: 'Content Labels',
-    who_they_are: 'Who They Are', what_they_post: 'What They Post', tone_style: 'Tone & Style',
-    target_audience: 'Target Audience', why_follow: 'Why Follow', found_via: 'Found Via',
-    niche: 'Niche', location: 'Location'
-  };
-
   container.innerHTML = influencers.map((inf, idx) => {
     const totalChanges = inf.runs.reduce((sum, r) => sum + r.changes.length, 0);
     const runsHtml = inf.runs.map(run => {
       const date = new Date(run.runAt);
       const dateStr = date.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
       const timeStr = date.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
-      const diffsHtml = run.changes.map(c => `
-        <div class="cl-diff-row">
-          <div class="cl-field-name">${FIELD_LABELS[c.field] || c.field}</div>
-          <div class="cl-old">${c.oldValue ? c.oldValue : '<span class="cl-null">empty</span>'}</div>
-          <div class="cl-new">${c.newValue ? c.newValue : '<span class="cl-null">empty</span>'}</div>
-        </div>`).join('');
+      const diffsHtml = run.changes.map(c => {
+        if (c.field === 'who_they_are') {
+          // Bio shown as placeholder; async comparison fills it in
+          const rowId = `bio-${idx}-${run.runAt.replace(/\W/g,'')}-${c.field}`;
+          setTimeout(() => compareBio(rowId, c.oldValue, c.newValue), 0);
+          return `
+            <div class="cl-diff-row" id="${rowId}">
+              <div class="cl-field-name">${FIELD_LABELS[c.field]}</div>
+              <div class="cl-bio-checking" colspan="2">Comparing context…</div>
+            </div>`;
+        }
+        if (!c.oldValue && !c.newValue) return '';
+        const isSingleVal = ['platform','ig_followers','tt_followers','yt_followers','x_followers','followers'].includes(c.field);
+        let oldHtml, newHtml;
+        if (isSingleVal) {
+          oldHtml = c.oldValue || '<span class="cl-null">—</span>';
+          newHtml = c.newValue || '<span class="cl-null">—</span>';
+        } else {
+          const d = wordDiff(c.oldValue||'', c.newValue||'');
+          oldHtml = d.oldHtml || '<span class="cl-null">empty</span>';
+          newHtml = d.newHtml || '<span class="cl-null">empty</span>';
+        }
+        return `
+          <div class="cl-diff-row">
+            <div class="cl-field-name">${FIELD_LABELS[c.field] || c.field}</div>
+            <div class="cl-old">${oldHtml}</div>
+            <div class="cl-new">${newHtml}</div>
+          </div>`;
+      }).filter(Boolean).join('');
+      if (!diffsHtml.trim()) return '';
       return `
         <div class="cl-run">
-          <div class="cl-run-date">${dateStr} at ${timeStr} — ${run.changes.length} field${run.changes.length !== 1 ? 's' : ''} changed</div>
+          <div class="cl-run-date">${dateStr} at ${timeStr} — ${run.changes.length} field${run.changes.length !== 1 ? 's' : ''} updated</div>
           <div style="display:grid;grid-template-columns:160px 1fr 1fr;gap:8px;padding:4px 0 6px;border-bottom:1px solid var(--border);margin-bottom:4px">
             <div style="font-size:10px;font-weight:700;color:var(--muted2);text-transform:uppercase">Field</div>
             <div style="font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase">Before</div>
@@ -1667,7 +1717,7 @@ function renderChanges(influencers) {
           </div>
           ${diffsHtml}
         </div>`;
-    }).join('');
+    }).filter(Boolean).join('');
 
     return `
       <div class="cl-card">
@@ -1685,6 +1735,36 @@ function renderChanges(influencers) {
         <div class="cl-body" id="clb${idx}">${runsHtml}</div>
       </div>`;
   }).join('');
+}
+
+async function compareBio(rowId, oldValue, newValue) {
+  const row = document.getElementById(rowId);
+  if (!row) return;
+  try {
+    const resp = await fetch('/api/compare-bio', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ oldValue, newValue })
+    });
+    const data = await resp.json();
+    if (!data.changed) {
+      // Same context — show as a muted "no meaningful change" note
+      row.innerHTML = `
+        <div class="cl-field-name">${FIELD_LABELS['who_they_are']}</div>
+        <div class="cl-bio-same" style="grid-column:2/4">Same focus — ${data.reason || 'no meaningful change detected'}</div>`;
+    } else {
+      const d = wordDiff(oldValue||'', newValue||'');
+      row.innerHTML = `
+        <div class="cl-field-name">${FIELD_LABELS['who_they_are']}</div>
+        <div class="cl-old">${d.oldHtml || '<span class="cl-null">empty</span>'}</div>
+        <div class="cl-new">${d.newHtml || '<span class="cl-null">empty</span>'}</div>`;
+    }
+  } catch {
+    row.innerHTML = `
+      <div class="cl-field-name">${FIELD_LABELS['who_they_are']}</div>
+      <div class="cl-old">${oldValue||'—'}</div>
+      <div class="cl-new">${newValue||'—'}</div>`;
+  }
 }
 
 function toggleClCard(idx) {
