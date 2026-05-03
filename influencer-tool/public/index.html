@@ -190,7 +190,18 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 
 .table-wrap{overflow-x:auto;overflow-y:auto;max-height:75vh}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
-thead th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:8px 10px;text-align:left;border-bottom:1.5px solid var(--border);background:var(--surface);white-space:nowrap}
+thead th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:8px 10px;text-align:left;border-bottom:1.5px solid var(--border);background:var(--surface);white-space:nowrap;position:sticky;top:0;z-index:2}
+thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){position:sticky;top:0;z-index:3}
+thead th:nth-child(1){left:0;min-width:32px}
+thead th:nth-child(2){left:32px;min-width:46px}
+thead th:nth-child(3){left:78px;min-width:120px;border-right:1.5px solid var(--border2)}
+tbody td:nth-child(1),tbody td:nth-child(2),tbody td:nth-child(3){position:sticky;background:var(--white);z-index:1}
+tbody td:nth-child(1){left:0}
+tbody td:nth-child(2){left:32px}
+tbody td:nth-child(3){left:78px;border-right:1.5px solid var(--border)}
+tbody tr:hover td:nth-child(1),tbody tr:hover td:nth-child(2),tbody tr:hover td:nth-child(3){background:var(--surface)}
+tbody tr.isnew td:nth-child(1),tbody tr.isnew td:nth-child(2),tbody tr.isnew td:nth-child(3){background:#f0faf4}
+tbody tr.isnew:hover td:nth-child(1),tbody tr.isnew:hover td:nth-child(2),tbody tr.isnew:hover td:nth-child(3){background:#e8f7ee}
 tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
 tbody tr:hover{background:var(--surface)}
 tbody tr:last-child{border-bottom:none}
@@ -1255,15 +1266,15 @@ base.forEach(r => {
         handle:  normHandle,
         name:    r.name||'',
         platform: r.platform||'',
-        igHandle:  plat.includes('instagram') ? normHandle : '',
-        igFollowers: plat.includes('instagram') ? (r.followers||'') : '',
-        ttHandle:  plat.includes('tiktok') ? normHandle : '',
-        ttFollowers: plat.includes('tiktok') ? (r.followers||'') : '',
-        ytHandle:  plat.includes('youtube') ? normHandle : '',
-        ytFollowers: plat.includes('youtube') ? (r.followers||'') : '',
-        xHandle:   (plat === 'x' || plat.includes('twitter')) ? normHandle : '',
-        xFollowers:(plat === 'x' || plat.includes('twitter')) ? (r.followers||'') : '',
-        followers: r.followers||'',
+        igHandle:   plat.includes('instagram') ? normHandle : '',
+        igFollowers: plat === 'instagram' ? (r.followers||'') : '',
+        ttHandle:   plat.includes('tiktok') ? normHandle : '',
+        ttFollowers: plat === 'tiktok' ? (r.followers||'') : '',
+        ytHandle:   plat.includes('youtube') ? normHandle : '',
+        ytFollowers: plat === 'youtube' ? (r.followers||'') : '',
+        xHandle:    (plat === 'x' || plat.includes('twitter')) ? normHandle : '',
+        xFollowers: (plat === 'x' || plat.includes('twitter')) ? (r.followers||'') : '',
+        followers:  r.followers||'',
         whoTheyAre: '', whatTheyPost: '', toneStyle: '',
         targetAudience: '', whyFollow: '',
         contentLabels: r.niche||'',
