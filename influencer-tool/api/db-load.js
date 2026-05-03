@@ -27,6 +27,7 @@ function toFrontend(row) {
     foundVia:      row.found_via     || '',
     niche:         row.niche         || '',
     location:      row.location      || '',
+    bucket:        row.bucket        || '',
     createdAt:     row.created_at,
     updatedAt:     row.updated_at,
   };

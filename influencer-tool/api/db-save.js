@@ -11,7 +11,7 @@ const TRACKED_FIELDS = [
   'x_handle', 'x_followers', 'followers',
   'content_labels', 'who_they_are', 'what_they_post',
   'tone_style', 'target_audience', 'why_follow', 'found_via',
-  'niche', 'location'
+  'niche', 'location', 'bucket'
 ];
 
 function toRow(inf) {
@@ -37,6 +37,7 @@ function toRow(inf) {
     found_via:      inf.foundVia      || null,
     niche:          inf.niche         || null,
     location:       inf.location      || null,
+    bucket:         inf.bucket        || null,
   };
 }
 

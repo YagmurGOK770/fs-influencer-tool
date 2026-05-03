@@ -181,6 +181,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .fpill:not(.active) .fcount{background:var(--border);color:var(--muted)}
 .search-box{font-size:12px;padding:5px 10px;border:1.5px solid var(--border);border-radius:var(--rs);font-family:var(--sans);color:var(--text);background:var(--bg);width:190px}
 .search-box:focus{outline:none;border-color:var(--green)}
+.bucket-input{font-size:11px;padding:3px 7px;border:1.5px solid transparent;border-radius:var(--rs);font-family:var(--sans);color:var(--text);background:transparent;width:110px;cursor:pointer;transition:all .15s}
+.bucket-input:hover{border-color:var(--border2);background:var(--bg)}
+.bucket-input:focus{outline:none;border-color:var(--green);background:white;cursor:text}
+.bucket-input::placeholder{color:var(--muted2);font-style:italic}
+.bucket-select{font-size:12px;padding:4px 8px;border:1.5px solid var(--border);border-radius:var(--rs);font-family:var(--sans);color:var(--text);background:var(--bg);cursor:pointer}
+.bucket-select:focus{outline:none;border-color:var(--green)}
 
 .table-wrap{overflow-x:auto;overflow-y:auto;max-height:75vh}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -341,6 +347,9 @@ td{padding:9px 10px;vertical-align:middle}
             <button class="fpill fnew" onclick="setFilter('new',this)">✦ New <span class="fcount" id="fcNew">0</span></button>
             <button class="fpill fex" onclick="setFilter('exists',this)">Existing <span class="fcount" id="fcEx">0</span></button>
           </div>
+          <select class="bucket-select" id="bucketFilter" onchange="onBucketFilter()">
+            <option value="">All buckets</option>
+          </select>
           <input type="text" class="search-box" id="searchBox" placeholder="Search name, handle, labels, description…" oninput="onSearch()"/>
         </div>
 
@@ -368,6 +377,7 @@ td{padding:9px 10px;vertical-align:middle}
                 <th style="min-width:180px">Target Audience</th>
                 <th style="min-width:160px">Why Follow Them</th>
                 <th>Found Via</th>
+                <th style="min-width:120px">Bucket</th>
               </tr>
             </thead>
             <tbody id="tbody"></tbody>
@@ -497,6 +507,7 @@ let filtered = [];
 let currentPage = 1;
 let activeFilter = 'all';
 let searchQ = '';
+let activeBucket = '';
 let ran = false;
 let running = false;
 
@@ -697,8 +708,9 @@ function applyFilter() {
   filtered = allRows.filter(r => {
     if (activeFilter === 'new' && !r.isNew) return false;
     if (activeFilter === 'exists' && r.isNew) return false;
+    if (activeBucket && (r.bucket||'') !== activeBucket) return false;
     if (q) {
-      const hay = (r.handle+r.name+r.platform+r.contentLabels+r.whoTheyAre+r.whatTheyPost+r.toneStyle+r.targetAudience+r.whyFollow+r.igHandle+r.ttHandle+r.ytHandle+r.xHandle+r.foundVia).toLowerCase();
+      const hay = (r.handle+r.name+r.platform+r.contentLabels+r.whoTheyAre+r.whatTheyPost+r.toneStyle+r.targetAudience+r.whyFollow+r.igHandle+r.ttHandle+r.ytHandle+r.xHandle+r.foundVia+(r.bucket||'')).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -716,6 +728,44 @@ function setFilter(f, btn) {
   applyFilter();
 }
 function onSearch() { searchQ = document.getElementById('searchBox').value; applyFilter(); }
+
+function onBucketFilter() {
+  activeBucket = document.getElementById('bucketFilter').value;
+  applyFilter();
+}
+
+function updateBucketFilter() {
+  const buckets = [...new Set(allRows.map(r => r.bucket||'').filter(Boolean))].sort();
+  const sel = document.getElementById('bucketFilter');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All buckets</option>';
+  buckets.forEach(b => {
+    const o = document.createElement('option');
+    o.value = b; o.textContent = b;
+    if (b === prev) o.selected = true;
+    sel.appendChild(o);
+  });
+  // update datalist
+  const dl = document.getElementById('bucketList');
+  if (dl) { dl.innerHTML = ''; buckets.forEach(b => { const op = document.createElement('option'); op.value = b; dl.appendChild(op); }); }
+}
+
+async function saveBucket(handle, value) {
+  const row = allRows.find(r => r.handle === handle);
+  if (!row) return;
+  const trimmed = value.trim();
+  if (row.bucket === trimmed) return;
+  row.bucket = trimmed;
+  updateBucketFilter();
+  applyFilter();
+  try {
+    await fetch('/api/db-save', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ influencers: [row] })
+    });
+  } catch(e) { console.error('saveBucket failed:', e.message); }
+}
 
 function updateCounts() {
   const nc = allRows.filter(r => r.isNew).length;
@@ -769,6 +819,7 @@ function renderTable() {
       <td class="td-trunc" style="max-width:200px" title="${(r.targetAudience||'').replace(/"/g,'&quot;')}">${r.targetAudience||'—'}</td>
       <td class="td-trunc" style="max-width:200px" title="${(r.whyFollow||'').replace(/"/g,'&quot;')}">${r.whyFollow||'—'}</td>
       <td>${r.foundVia ? '<span class="kw-tag">' + r.foundVia + '</span>' : '—'}</td>
+      <td><input class="bucket-input" type="text" list="bucketList" placeholder="+ add bucket" value="${(r.bucket||'').replace(/"/g,'&quot;')}" onblur="saveBucket('${r.handle}',this.value)" onkeydown="if(event.key==='Enter')this.blur()"/></td>
     `;
     tbody.appendChild(tr);
   });
@@ -1249,7 +1300,7 @@ base.forEach(r => {
     document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active'));
     document.querySelectorAll('.fpill')[1].classList.add('active');
     searchQ=''; document.getElementById('searchBox').value='';
-    applyFilter(); setStatus('review');
+    updateBucketFilter(); applyFilter(); setStatus('review');
     document.getElementById('resultsCard').scrollIntoView({behavior:'smooth',block:'start'});
     if (!keepModalOpen) {
       document.getElementById('importModal').style.display='none';
@@ -1655,6 +1706,7 @@ async function eInit() {
       if (data.influencers && data.influencers.length > 0) {
         allRows = data.influencers.map((inf, i) => ({ ...inf, num: i + 1, ok: false, isNew: false }));
         console.log('[db-load] allRows set:', allRows.length);
+        updateBucketFilter();
         applyFilter();
         setStatus('review');
       } else {
@@ -2002,5 +2054,6 @@ document.addEventListener('DOMContentLoaded', eInit);
   </div>
 </div>
 
+<datalist id="bucketList"></datalist>
 </body>
 </html>
