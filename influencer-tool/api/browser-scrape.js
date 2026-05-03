@@ -11,11 +11,11 @@
 // YouTube needs no login.
 
 import { checkAuth } from './_auth.js';
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-core';
 
 const TOKEN = process.env.BROWSERLESS_TOKEN;
-// BaaS V2 endpoint — use the region closest to your Vercel deployment (fra1 = Frankfurt)
-const WS_ENDPOINT = `wss://production-lon.browserless.io?token=${TOKEN}`;
+// BaaS V2 Playwright endpoint — must include /playwright/chromium path
+const WS_ENDPOINT = `wss://production-lon.browserless.io/playwright/chromium?token=${TOKEN}`;
 
 function normaliseFollowers(raw) {
   if (!raw && raw !== 0) return '';
