@@ -191,6 +191,13 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .bucket-input::placeholder{color:var(--muted2);font-style:italic}
 .bucket-select{font-size:12px;padding:4px 8px;border:1.5px solid var(--border);border-radius:var(--rs);font-family:var(--sans);color:var(--text);background:var(--bg);cursor:pointer}
 .bucket-select:focus{outline:none;border-color:var(--green)}
+.native-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:100px;border:1.5px solid var(--border2);background:var(--white);cursor:pointer;color:var(--muted);font-family:var(--sans);transition:all .15s;line-height:1.6}
+.native-badge.on{background:var(--blue-bg);color:var(--blue);border-color:var(--blue)}
+.native-badge:disabled{opacity:.4;cursor:default}
+.session-dot{width:6px;height:6px;border-radius:50%;display:inline-block;vertical-align:middle;flex-shrink:0}
+.session-dot.ok{background:var(--green)}
+.session-dot.missing{background:var(--orange)}
+.src-login-btn{font-size:10px;font-weight:700;color:var(--orange);background:none;border:none;cursor:pointer;padding:0 2px;font-family:var(--sans);text-decoration:underline}
 
 .table-wrap{overflow-x:auto;overflow-y:auto;max-height:75vh}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -525,6 +532,8 @@ let searchQ = '';
 let activeBucket = '';
 let ran = false;
 let running = false;
+let scraperAvailable = false;
+let scraperStatus = { running: false, sessions: {} };
 
 function platClass(p) {
   if (!p) return 'x';
@@ -553,11 +562,13 @@ function addKw() {
   document.getElementById('kwList').appendChild(el); i.value = '';
 }
 // ── Sources management ──
+const PLATFORM_ID_MAP = { ig:'instagram', tt:'tiktok', yt:'youtube', x:'x' };
+
 const DEFAULT_SOURCES = [
-  { id:'ig',  icon:'IG',  iconClass:'ig',  name:'Instagram',     desc:'Via Google search',       url:'', builtin:true, on:true },
-  { id:'tt',  icon:'TT',  iconClass:'tt',  name:'TikTok',        desc:'Hashtag creators',        url:'', builtin:true, on:true },
-  { id:'yt',  icon:'YT',  iconClass:'yt',  name:'YouTube',       desc:'Hashtag & keyword',       url:'', builtin:true, on:true },
-  { id:'x',   icon:'𝕏',   iconClass:'x',   name:'X / Twitter',   desc:'Food influencer search',  url:'', builtin:true, on:true },
+  { id:'ig',  icon:'IG',  iconClass:'ig',  name:'Instagram',     desc:'Via Google search',       url:'', builtin:true, on:true, native:false },
+  { id:'tt',  icon:'TT',  iconClass:'tt',  name:'TikTok',        desc:'Hashtag creators',        url:'', builtin:true, on:true, native:false },
+  { id:'yt',  icon:'YT',  iconClass:'yt',  name:'YouTube',       desc:'Hashtag & keyword',       url:'', builtin:true, on:true, native:false },
+  { id:'x',   icon:'𝕏',   iconClass:'x',   name:'X / Twitter',   desc:'Food influencer search',  url:'', builtin:true, on:true, native:false },
   { id:'web', icon:'WEB', iconClass:'web', name:'Ranking pages', desc:'Feedspot, blogs',         url:'', builtin:true, on:true },
   { id:'tribe',     icon:'TRB', iconClass:'cust', name:'Tribe Group', desc:'Influencer marketplace', url:'https://www.tribegroup.co/', builtin:false, on:true },
   { id:'collabstr', icon:'CLB', iconClass:'cust', name:'Collabstr',   desc:'Creator directory',      url:'https://collabstr.com/',     builtin:false, on:true },
@@ -604,6 +615,28 @@ function renderSources() {
     const deleteBtn = s.builtin
       ? ''
       : `<button class="src-delete" onclick="event.stopPropagation();deleteSource(${i})" title="Remove">×</button>`;
+
+    // Native search controls — only for platform sources with a PLATFORM_ID_MAP entry
+    const platformKey = PLATFORM_ID_MAP[s.id];
+    let nativeControls = '';
+    if (platformKey && scraperAvailable) {
+      const sess = scraperStatus.sessions?.[platformKey] || {};
+      const hasSess = sess.hasSession;
+      const nativeCls = s.native ? 'on' : '';
+      const dotCls = hasSess ? 'ok' : 'missing';
+      const loginBtn = (!hasSess && s.native)
+        ? `<button class="src-login-btn" onclick="event.stopPropagation();openPlatformAuth('${platformKey}')">Login →</button>`
+        : '';
+      nativeControls = `
+        <button class="native-badge ${nativeCls}" onclick="event.stopPropagation();toggleNative('${s.id}')" title="${s.native?'Switch to Google search':'Switch to native platform search'}">
+          ${s.native ? '⚡ Native' : '🌐 Google'}
+        </button>
+        <span class="session-dot ${dotCls}" title="${hasSess?'Session active':'Login required'}"></span>
+        ${loginBtn}`;
+    } else if (platformKey && !scraperAvailable) {
+      nativeControls = `<span style="font-size:10px;color:var(--muted2)" title="Start scraper.js to enable native search">🌐</span>`;
+    }
+
     return `
       <div class="source-item ${onCls}" onclick="toggleSrcAt(${i})">
         <div class="source-left">
@@ -613,7 +646,8 @@ function renderSources() {
             <div class="src-desc">${escapeHtml(descText)}</div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:4px">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+          ${nativeControls}
           ${deleteBtn}
           <div class="tog ${togCls}"></div>
         </div>
@@ -674,8 +708,63 @@ function deleteSource(i) {
   renderSources();
 }
 
+// ── Native scraper helpers ────────────────────────────────────────────────
+
+function toggleNative(id) {
+  const s = sources.find(s => s.id === id);
+  if (!s) return;
+  s.native = !s.native;
+  persistSources();
+  renderSources();
+}
+
+async function openPlatformAuth(platform) {
+  const statusEl = document.getElementById('sdot');
+  const origTitle = document.title;
+  document.title = `Waiting for ${platform} login…`;
+
+  // Show notice in search log if visible
+  if (document.getElementById('terminal')) {
+    logLine(`🔐 Opening ${platform} login browser — log in then return here`, 'info');
+  }
+
+  try {
+    const resp = await fetch(`http://localhost:3131/auth/${platform}`, { signal: AbortSignal.timeout(190_000) });
+    const data = await resp.json();
+    if (data.ok) {
+      if (document.getElementById('terminal')) logLine(`✓ ${platform} login saved`, 'ok');
+      await checkScraperStatus();
+    } else {
+      if (document.getElementById('terminal')) logLine(`⚠ ${platform} login failed: ${data.error}`, 'warn');
+    }
+  } catch(e) {
+    if (document.getElementById('terminal')) logLine(`⚠ ${platform} auth error: ${e.message}`, 'warn');
+  }
+  document.title = origTitle;
+}
+
+async function checkScraperStatus() {
+  try {
+    const resp = await fetch('http://localhost:3131/status', { signal: AbortSignal.timeout(2000) });
+    if (resp.ok) {
+      scraperStatus = await resp.json();
+      scraperAvailable = true;
+    } else {
+      scraperAvailable = false;
+      scraperStatus = { running: false, sessions: {} };
+    }
+  } catch {
+    scraperAvailable = false;
+    scraperStatus = { running: false, sessions: {} };
+  }
+  renderSources();
+}
+
 // Render the sources list as soon as the script runs
 renderSources();
+// Check for local scraper in background
+checkScraperStatus();
+setInterval(checkScraperStatus, 30_000);
 
 function setStatus(s) {
   document.getElementById('sdot').className = 'dot ' + s;
@@ -1452,41 +1541,65 @@ async function runLiveSearch() {
 
   for (let i = 0; i < selected.length; i++) {
     const combo = selected[i];
-    status.textContent = `🌐 [${i + 1}/${selected.length}] Searching: ${combo.label} — ${elapsed}s elapsed…`;
+    status.textContent = `[${i + 1}/${selected.length}] ${combo.label} — ${elapsed}s elapsed…`;
 
     try {
-      const resp = await fetch('/api/search', {
-        method: 'POST',
-        headers: getApiHeaders(),
-        body: JSON.stringify({
-          keywords: [combo.keyword],
-          location: combo.location,
-          platform: combo.platform,
-          sources: combo.sources,
-          minFollowers: combo.minFollowers
-        })
-      });
+      // Determine if we use the local native scraper or the Google/Claude API
+      const srcObj = sources.find(s => s.name === combo.sources[0]?.name);
+      const platformKey = srcObj ? PLATFORM_ID_MAP[srcObj.id] : null;
+      const useNative = !!(srcObj?.native && scraperAvailable && platformKey);
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        if (resp.status === 401) {
-          clearInterval(tick);
-          sessionStorage.removeItem('appPassword');
-          alert('Unauthorized. Please refresh and re-enter the password.');
-          return;
+      let data;
+      if (useNative) {
+        status.textContent = `⚡ [${i + 1}/${selected.length}] Native ${srcObj.name}: "${combo.keyword}"…`;
+        const resp = await fetch('http://localhost:3131/scrape', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ platform: platformKey, keyword: combo.keyword, maxResults: 25 })
+        });
+        data = await resp.json();
+        if (data.error) {
+          const msg = { login_required: `${srcObj.name} login required — click Login → next to the source`, captcha: `${srcObj.name} CAPTCHA triggered — please log in again`, checkpoint: `Instagram checkpoint — open Login → to resolve` }[data.error] || data.error;
+          logLine(`⚠ Native ${srcObj.name}: ${msg}`, 'warn');
+          status.textContent = `⚠ [${i + 1}/${selected.length}] ${msg} — skipping`;
+          await new Promise(r => setTimeout(r, 1500));
+          continue;
         }
-        status.textContent = `⚠ [${i + 1}/${selected.length}] Failed: ${combo.label} — ${err.error || resp.statusText}. Continuing…`;
-        status.style.background = 'var(--amber-bg)';
-        status.style.borderColor = 'var(--amber)';
-        status.style.color = 'var(--amber)';
-        await new Promise(r => setTimeout(r, 1500));
-        status.style.background = 'var(--green-light)';
-        status.style.borderColor = 'var(--green-border)';
-        status.style.color = 'var(--green)';
-        continue;
+      } else {
+        status.textContent = `🌐 [${i + 1}/${selected.length}] Searching: ${combo.label}…`;
+        const resp = await fetch('/api/search', {
+          method: 'POST',
+          headers: getApiHeaders(),
+          body: JSON.stringify({
+            keywords: [combo.keyword],
+            location: combo.location,
+            platform: combo.platform,
+            sources: combo.sources,
+            minFollowers: combo.minFollowers
+          })
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          if (resp.status === 401) {
+            clearInterval(tick);
+            sessionStorage.removeItem('appPassword');
+            alert('Unauthorized. Please refresh and re-enter the password.');
+            return;
+          }
+          status.textContent = `⚠ [${i + 1}/${selected.length}] Failed: ${combo.label} — ${err.error || resp.statusText}. Continuing…`;
+          status.style.background = 'var(--amber-bg)';
+          status.style.borderColor = 'var(--amber)';
+          status.style.color = 'var(--amber)';
+          await new Promise(r => setTimeout(r, 1500));
+          status.style.background = 'var(--green-light)';
+          status.style.borderColor = 'var(--green-border)';
+          status.style.color = 'var(--green)';
+          continue;
+        }
+        data = await resp.json();
       }
 
-      const data = await resp.json();
       const found = data.influencers || [];
       let newCount = 0;
       for (const inf of found) {

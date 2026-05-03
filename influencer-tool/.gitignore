@@ -3,5 +3,5 @@ node_modules
 .env.local
 .vercel
 .DS_Store
-
-.vercel
+sessions/
+browser-profiles/
