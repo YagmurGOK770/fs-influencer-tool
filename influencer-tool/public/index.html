@@ -619,13 +619,15 @@ function renderSources() {
     const platformKey = PLATFORM_ID_MAP[s.id];
     let nativeControls = '';
     if (platformKey) {
-      const hasSess = !!browserSession[platformKey];
       const nativeCls = s.native ? 'on' : '';
+      const sessionBtn = (s.native && platformKey !== 'youtube')
+        ? `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}')" title="Paste ${s.name} session cookie">🔑</button>`
+        : '';
       nativeControls = `
         <button class="native-badge ${nativeCls}" onclick="event.stopPropagation();toggleNative('${s.id}')" title="${s.native ? 'Switch to Google search' : 'Switch to native platform search'}">
           ${s.native ? '⚡ Native' : '🌐 Google'}
         </button>
-        ${hasSess ? `<span class="session-dot ok" title="Session active"></span>` : ''}`;
+        ${sessionBtn}`;
     }
 
     return `
@@ -707,6 +709,35 @@ function toggleNative(id) {
   s.native = !s.native;
   persistSources();
   renderSources();
+}
+
+async function openSessionModal(platform) {
+  const LABELS = { instagram:'Instagram', tiktok:'TikTok', x:'X / Twitter' };
+  const COOKIE_NAMES = { instagram:'sessionid', tiktok:'sessionid', x:'auth_token' };
+  const name = LABELS[platform];
+  const cookieName = COOKIE_NAMES[platform];
+
+  const value = prompt(
+    `Paste ${name} session cookie (${cookieName}):\n\n` +
+    `1. Open ${name} in your browser, log in to your scraping account\n` +
+    `2. Open DevTools (F12) → Application → Cookies → https://www.${platform === 'x' ? 'x' : platform}.com\n` +
+    `3. Copy the value of "${cookieName}" cookie\n` +
+    `4. Paste below:`
+  );
+  if (!value || !value.trim()) return;
+
+  try {
+    const resp = await fetch('/api/save-session', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ platform, sessionId: value.trim() })
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to save');
+    alert(`✓ ${name} session saved — native search will use this cookie from now on.`);
+  } catch (e) {
+    alert(`Failed to save ${name} session: ${e.message}`);
+  }
 }
 
 // Render the sources list as soon as the script runs

@@ -12,10 +12,32 @@
 
 import { checkAuth } from './_auth.js';
 import { chromium } from 'playwright-core';
+import { createClient } from '@supabase/supabase-js';
 
 const TOKEN = process.env.BROWSERLESS_TOKEN;
 // BaaS V2 Playwright endpoint — must include /playwright/chromium path
 const WS_ENDPOINT = `wss://production-lon.browserless.io/playwright/chromium?token=${TOKEN}`;
+
+async function loadSavedCookies(platform) {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) return null;
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  const { data } = await supabase.from('platform_sessions').select('cookies').eq('platform', platform).maybeSingle();
+  return data?.cookies || null;
+}
+
+async function applyCookies(context, cookies) {
+  // Playwright requires {name, value, domain, path}
+  const cleaned = cookies.map(c => ({
+    name: c.name,
+    value: c.value,
+    domain: c.domain || '',
+    path: c.path || '/',
+    secure: c.secure !== false,
+    httpOnly: c.httpOnly !== false,
+    sameSite: c.sameSite || 'Lax',
+  })).filter(c => c.name && c.value && c.domain);
+  if (cleaned.length) await context.addCookies(cleaned);
+}
 
 function normaliseFollowers(raw) {
   if (!raw && raw !== 0) return '';
@@ -163,26 +185,80 @@ async function scrapeYouTube(page, keyword, maxResults) {
   , maxResults);
 }
 
-async function scrapeInstagram(page, keyword, maxResults) {
-  await loginInstagram(page);
+async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
+  // If we already injected a saved cookie, just verify the session by hitting the home page.
+  // If the saved cookie is expired/invalid we get redirected to /accounts/login — fall back to credential login.
   await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+  if (page.url().includes('/accounts/login')) {
+    if (hadCookies) throw Object.assign(new Error('Saved Instagram cookie expired — re-paste a fresh sessionid'), { code: 'cookie_expired' });
+    await loginInstagram(page);
+    await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+  }
+  await page.waitForTimeout(2000);
+
   const q = encodeURIComponent(keyword.replace(/^#/, ''));
-  const data = await page.evaluate(async (query) => {
-    const r = await fetch(`/api/v1/web/search/topsearch/?query=${query}&context=blended`, {
-      headers: { 'X-IG-App-ID': '936619743392459' }
-    });
-    if (!r.ok) return null;
-    return r.json();
+
+  // Try the internal topsearch API first — it returns JSON if Instagram trusts the session
+  const apiData = await page.evaluate(async (query) => {
+    try {
+      const r = await fetch(`/api/v1/web/search/topsearch/?query=${query}&context=blended`, {
+        headers: { 'X-IG-App-ID': '936619743392459', 'Accept': 'application/json' }
+      });
+      const ct = r.headers.get('content-type') || '';
+      if (!r.ok || !ct.includes('application/json')) return null;
+      return r.json();
+    } catch { return null; }
   }, q);
-  if (!data || !data.users) return [];
-  return data.users.slice(0, maxResults).map(u => {
-    const user = u.user || u;
-    return { handle: '@' + user.username, name: user.full_name || user.username, followers: String(user.follower_count || ''), niche: (user.biography || '').slice(0, 80) || 'Food' };
-  });
+
+  if (apiData && apiData.users && apiData.users.length) {
+    return apiData.users.slice(0, maxResults).map(u => {
+      const user = u.user || u;
+      return { handle: '@' + user.username, name: user.full_name || user.username, followers: String(user.follower_count || ''), niche: (user.biography || '').slice(0, 80) || 'Food' };
+    });
+  }
+
+  // Fallback: scrape the search UI directly
+  await page.goto(`https://www.instagram.com/explore/search/keyword/?q=${q}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await page.waitForTimeout(3000);
+
+  const uiResults = await page.evaluate((max) => {
+    // Account result rows on the search page have a profile-pic <img> next to a username link
+    const links = Array.from(document.querySelectorAll('a[href^="/"][role="link"]'));
+    const seen = new Set();
+    const out = [];
+    for (const a of links) {
+      const href = a.getAttribute('href') || '';
+      const m = href.match(/^\/([A-Za-z0-9._]+)\/?$/);
+      if (!m) continue;
+      const username = m[1];
+      if (seen.has(username) || ['p','reels','explore','accounts','direct','stories'].includes(username)) continue;
+      seen.add(username);
+      // Look for a sibling/nearby span that holds the display name
+      const card = a.closest('div[role="none"], div');
+      const nameEl = card ? card.querySelector('span:not(:has(*))') : null;
+      out.push({
+        username,
+        full_name: (nameEl?.textContent || '').trim(),
+      });
+      if (out.length >= max) break;
+    }
+    return out;
+  }, maxResults);
+
+  if (!uiResults.length) {
+    throw new Error('Instagram returned no results — search may be rate-limited or blocked');
+  }
+
+  return uiResults.map(u => ({
+    handle: '@' + u.username,
+    name: u.full_name || u.username,
+    followers: '',  // not available on search UI — enrich step will fill in
+    niche: 'Food',
+  }));
 }
 
-async function scrapeTikTok(page, keyword, maxResults) {
-  await loginTikTok(page);
+async function scrapeTikTok(page, keyword, maxResults, hadCookies) {
+  if (!hadCookies) await loginTikTok(page);
   const q = encodeURIComponent(keyword.replace(/^#/, ''));
   await page.goto(`https://www.tiktok.com/search/user?q=${q}`, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
@@ -199,8 +275,8 @@ async function scrapeTikTok(page, keyword, maxResults) {
   , maxResults);
 }
 
-async function scrapeX(page, keyword, maxResults) {
-  await loginX(page);
+async function scrapeX(page, keyword, maxResults, hadCookies) {
+  if (!hadCookies) await loginX(page);
   const q = encodeURIComponent(keyword + ' food');
   await page.goto(`https://x.com/search?q=${q}&f=user`, { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForTimeout(2000);
@@ -233,14 +309,23 @@ export default async function handler(req, res) {
   let browser;
   try {
     browser = await chromium.connect({ wsEndpoint: WS_ENDPOINT });
-    const page = await browser.newPage();
+    const context = browser.contexts()[0] || await browser.newContext();
+
+    // Inject saved cookies before opening any page so the session is recognised on first request
+    const savedCookies = await loadSavedCookies(platform);
+    if (savedCookies && savedCookies.length) {
+      await applyCookies(context, savedCookies);
+    }
+
+    const page = await context.newPage();
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
+    const hadCookies = !!(savedCookies && savedCookies.length);
     let raw = [];
     if (platform === 'youtube')   raw = await scrapeYouTube(page, keyword, maxResults);
-    if (platform === 'instagram') raw = await scrapeInstagram(page, keyword, maxResults);
-    if (platform === 'tiktok')    raw = await scrapeTikTok(page, keyword, maxResults);
-    if (platform === 'x')         raw = await scrapeX(page, keyword, maxResults);
+    if (platform === 'instagram') raw = await scrapeInstagram(page, keyword, maxResults, hadCookies);
+    if (platform === 'tiktok')    raw = await scrapeTikTok(page, keyword, maxResults, hadCookies);
+    if (platform === 'x')         raw = await scrapeX(page, keyword, maxResults, hadCookies);
 
     const influencers = raw.map(r => ({
       handle:   r.handle.startsWith('@') ? r.handle : '@' + r.handle,
