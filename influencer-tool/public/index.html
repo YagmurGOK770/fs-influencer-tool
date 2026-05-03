@@ -532,7 +532,7 @@ let searchQ = '';
 let activeBucket = '';
 let ran = false;
 let running = false;
-let browserSession = {}; // { platform: { sessionId, liveURL, connectURL } }
+let browserSession = {}; // tracks which platforms have been used this session
 
 function platClass(p) {
   if (!p) return 'x';
@@ -707,68 +707,6 @@ function toggleNative(id) {
   s.native = !s.native;
   persistSources();
   renderSources();
-}
-
-// Holds resolve/reject for the login-done promise so runLiveSearch can await it
-let _browserLoginResolve = null;
-
-async function openNativeLogin(platform) {
-  const modal = document.getElementById('browserModal');
-  const title = document.getElementById('browserModalTitle');
-  const hint  = document.getElementById('browserModalHint');
-  const doneBtn = document.getElementById('browserDoneBtn');
-  const openBtn = document.getElementById('browserOpenBtn');
-
-  const LABELS = { instagram:'Instagram', tiktok:'TikTok', youtube:'YouTube', x:'X / Twitter' };
-  title.textContent = `Log in to ${LABELS[platform] || platform}`;
-  hint.innerHTML = `Creating a cloud browser session…`;
-  doneBtn.disabled = true;
-  doneBtn.textContent = 'Done — start scraping ✓';
-  openBtn.style.display = 'none';
-  modal.style.display = 'flex';
-
-  try {
-    const resp = await fetch('/api/browser-session', {
-      method: 'POST',
-      headers: getApiHeaders(),
-      body: JSON.stringify({ platform })
-    });
-    const text = await resp.text();
-    let data;
-    try { data = JSON.parse(text); } catch { throw new Error(text.slice(0, 200)); }
-    if (!resp.ok || data.error) throw new Error(data.error || 'Session creation failed');
-
-    browserSession[platform] = { sessionId: data.sessionId, liveURL: data.liveURL, connectURL: data.connectURL };
-
-    // Open the live browser in a new tab — iframes are blocked by Browserless CSP
-    window.open(data.liveURL, '_blank');
-
-    hint.innerHTML = `A browser window has opened in a new tab. Log in to ${LABELS[platform]}, then come back here and click <strong>Done</strong>.`;
-    openBtn.style.display = '';
-    openBtn.onclick = () => window.open(data.liveURL, '_blank');
-    doneBtn.disabled = false;
-    renderSources();
-  } catch (e) {
-    title.textContent = `Failed to create browser session`;
-    hint.textContent = e.message;
-    doneBtn.disabled = false;
-    doneBtn.textContent = 'Close';
-  }
-
-  // Return a promise that resolves when user clicks Done or cancels
-  return new Promise((resolve) => { _browserLoginResolve = resolve; });
-}
-
-function onBrowserLoginDone() {
-  document.getElementById('browserModal').style.display = 'none';
-  document.getElementById('browserFrame').src = '';
-  if (_browserLoginResolve) { _browserLoginResolve(true); _browserLoginResolve = null; }
-}
-
-function closeBrowserModal() {
-  document.getElementById('browserModal').style.display = 'none';
-  document.getElementById('browserFrame').src = '';
-  if (_browserLoginResolve) { _browserLoginResolve(false); _browserLoginResolve = null; }
 }
 
 // Render the sources list as soon as the script runs
@@ -1559,29 +1497,17 @@ async function runLiveSearch() {
 
       let data;
       if (useNative) {
-        // Ensure we have a live Browserless session for this platform
-        if (!browserSession[platformKey]) {
-          status.textContent = `⚡ [${i + 1}/${selected.length}] Opening ${srcObj.name} browser — please log in…`;
-          const loggedIn = await openNativeLogin(platformKey);
-          if (!loggedIn || !browserSession[platformKey]) {
-            status.textContent = `⚠ [${i + 1}/${selected.length}] ${srcObj.name} login cancelled — skipping`;
-            await new Promise(r => setTimeout(r, 1200));
-            continue;
-          }
-        }
-        status.textContent = `⚡ [${i + 1}/${selected.length}] Scraping ${srcObj.name}: "${combo.keyword}"…`;
+        status.textContent = `⚡ [${i + 1}/${selected.length}] Native ${srcObj.name}: "${combo.keyword}"…`;
         const resp = await fetch('/api/browser-scrape', {
           method: 'POST',
           headers: getApiHeaders(),
-          body: JSON.stringify({ connectURL: browserSession[platformKey].connectURL, platform: platformKey, keyword: combo.keyword, maxResults: 25 })
+          body: JSON.stringify({ platform: platformKey, keyword: combo.keyword, maxResults: 25 })
         });
         data = await resp.json();
         if (data.error) {
-          const msgs = { login_required: `${srcObj.name} session expired — please re-enable Native and log in again`, captcha: `${srcObj.name} CAPTCHA triggered — try again later`, checkpoint: `Instagram checkpoint detected — log in manually to resolve` };
-          const msg = msgs[data.error] || data.error;
+          const msgs = { login_required: `${srcObj.name} credentials missing — add ${platformKey.toUpperCase()}_USER / ${platformKey.toUpperCase()}_PASS to Vercel env vars`, captcha: `${srcObj.name} CAPTCHA triggered — try again later`, checkpoint: `Instagram checkpoint detected — log in to the scraping account manually to resolve` };
+          const msg = msgs[data.error] || (data.message || data.error);
           logLine(`⚠ ${msg}`, 'warn');
-          delete browserSession[platformKey];
-          renderSources();
           status.textContent = `⚠ [${i + 1}/${selected.length}] ${msg} — skipping`;
           await new Promise(r => setTimeout(r, 1500));
           continue;
@@ -2283,29 +2209,5 @@ document.addEventListener('DOMContentLoaded', eInit);
 
 <datalist id="bucketList"></datalist>
 
-<div id="browserModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem">
-  <div class="browser-modal-inner" style="max-width:520px">
-    <div class="browser-modal-header">
-      <div>
-        <div id="browserModalTitle" style="font-weight:800;font-size:15px">Log in to platform</div>
-        <div id="browserModalHint" style="font-size:12px;color:var(--muted);margin-top:3px">Creating session…</div>
-      </div>
-      <button onclick="closeBrowserModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1">×</button>
-    </div>
-    <div style="padding:16px 20px;display:flex;flex-direction:column;align-items:center;gap:16px;text-align:center">
-      <div style="font-size:48px">🌐</div>
-      <div style="font-size:13px;color:var(--muted);max-width:380px">A cloud browser window will open in a new tab. Log in there, then come back here and click <strong>Done</strong>.</div>
-      <button id="browserOpenBtn" class="btn-outline" style="display:none">↗ Re-open browser tab</button>
-      <div style="font-size:11px;color:var(--orange);background:var(--amber-bg);border:1px solid var(--orange-border);border-radius:var(--rs);padding:8px 14px;width:100%">⚠ Use a dedicated scraping account — not your personal account</div>
-    </div>
-    <div class="browser-modal-footer">
-      <div style="font-size:11px;color:var(--muted)">Powered by Browserless.io</div>
-      <div style="display:flex;gap:8px">
-        <button class="btn-outline" onclick="closeBrowserModal()">Cancel</button>
-        <button class="btn-green" id="browserDoneBtn" onclick="onBrowserLoginDone()" disabled>Done — start scraping ✓</button>
-      </div>
-    </div>
-  </div>
-</div>
 </body>
 </html>
