@@ -41,11 +41,14 @@ async function loginInstagram(page) {
 
   await page.goto('https://www.instagram.com/accounts/login/', { waitUntil: 'domcontentloaded', timeout: 25000 });
 
-  // Dismiss EU cookie banner if present (Instagram shows "Allow all cookies" / "Decline optional cookies")
+  // Dismiss EU cookie banner if present
   await page.locator('button:has-text("Allow all cookies"), button:has-text("Decline optional cookies"), button:has-text("Only allow essential cookies")').first().click({ timeout: 6000 }).catch(() => {});
   await page.waitForTimeout(1500);
 
-  // Wait for the form to be interactive — try several strategies
+  // If Instagram shows a saved-profile chooser, click "Use another profile" to reach the login form
+  await page.locator('div[role="button"]:has-text("Use another profile"), button:has-text("Use another profile"), a:has-text("Use another profile")').first().click({ timeout: 4000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
   // Find the username field using multiple fallback selectors
