@@ -82,9 +82,22 @@ async function loginInstagram(page) {
   await page.fill('input[type="password"]', pass);
   await page.waitForTimeout(300);
 
-  // Submit — try button[type="submit"] first, then any "Log in" button
-  const submitBtn = await page.locator('button[type="submit"], button:has-text("Log in"):not(:has-text("Facebook"))').first();
-  await submitBtn.click({ timeout: 5000 });
+  // Submit — Instagram uses a div[role="button"] in newer versions, not a real <button>
+  const submitSelectors = [
+    'button[type="submit"]:not(:has-text("Facebook"))',
+    'div[role="button"]:has-text("Log in"):not(:has-text("Facebook"))',
+    'button:has-text("Log in"):not(:has-text("Facebook"))',
+    '[type="submit"]',
+  ];
+  let clicked = false;
+  for (const sel of submitSelectors) {
+    const ok = await page.locator(sel).first().click({ timeout: 3000 }).then(() => true).catch(() => false);
+    if (ok) { clicked = true; break; }
+  }
+  if (!clicked) {
+    // Last resort — press Enter inside the password field
+    await page.locator('input[type="password"]').first().press('Enter').catch(() => {});
+  }
 
   // Wait for navigation away from login or for any post-login element
   await Promise.race([
