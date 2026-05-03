@@ -45,18 +45,43 @@ async function loginInstagram(page) {
   await page.locator('button:has-text("Allow all cookies"), button:has-text("Decline optional cookies"), button:has-text("Only allow essential cookies")').first().click({ timeout: 6000 }).catch(() => {});
   await page.waitForTimeout(1500);
 
-  // Wait for username field with longer timeout and broader selector
-  const userField = await page.waitForSelector('input[name="username"], input[aria-label*="username" i], input[aria-label*="email" i], input[autocomplete="username"]', { timeout: 20000 }).catch(() => null);
+  // Wait for the form to be interactive — try several strategies
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+
+  // Find the username field using multiple fallback selectors
+  // Instagram's modern login uses placeholder "Mobile number, username or email"
+  const userSelectors = [
+    'input[name="username"]',
+    'input[aria-label*="username" i]',
+    'input[aria-label*="email" i]',
+    'input[autocomplete="username"]',
+    'input[placeholder*="username" i]',
+    'input[placeholder*="email" i]',
+    'input[placeholder*="Mobile" i]',
+    'form input[type="text"]',
+    'form input:not([type="password"]):not([type="hidden"]):not([type="submit"])',
+  ];
+  let userField = null;
+  for (const sel of userSelectors) {
+    userField = await page.waitForSelector(sel, { timeout: 4000, state: 'visible' }).catch(() => null);
+    if (userField) break;
+  }
   if (!userField) {
-    // Surface what's actually on the page for debugging
     const url = page.url();
     const title = await page.title();
-    throw new Error(`Instagram login page did not show username field. URL: ${url}, title: ${title}`);
+    const inputCount = await page.locator('input').count();
+    throw new Error(`Instagram username field not found. URL: ${url}, title: ${title}, inputs on page: ${inputCount}`);
   }
 
+  await userField.click();
   await userField.fill(user);
-  await page.fill('input[name="password"], input[type="password"]', pass);
-  await page.click('button[type="submit"], button:has-text("Log in"), button:has-text("Log In")');
+  await page.waitForTimeout(300);
+  await page.fill('input[type="password"]', pass);
+  await page.waitForTimeout(300);
+
+  // Submit — try button[type="submit"] first, then any "Log in" button
+  const submitBtn = await page.locator('button[type="submit"], button:has-text("Log in"):not(:has-text("Facebook"))').first();
+  await submitBtn.click({ timeout: 5000 });
 
   // Wait for navigation away from login or for any post-login element
   await Promise.race([
