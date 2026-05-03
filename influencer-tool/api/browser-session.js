@@ -63,17 +63,13 @@ export default async function handler(req, res) {
     return res.status(502).json({ error: 'Browserless did not return a WebSocket URL', raw: sessionRaw });
   }
 
-  // Navigate to the platform login page so it's ready when the user opens the iframe
-  try {
-    const { chromium } = await import('playwright');
-    const browser = await chromium.connect({ wsEndpoint: connectURL });
-    const page = await browser.newPage();
-    await page.goto(LOGIN_URLS[platform], { waitUntil: 'domcontentloaded', timeout: 15000 });
-    // Leave browser open — session stays live for user interaction
-  } catch (navErr) {
-    console.warn('[browser-session] navigation warning:', navErr.message);
-    // Non-fatal — user can navigate manually in the iframe
-  }
-
-  return res.status(200).json({ sessionId, liveURL, connectURL, debug: { keys: Object.keys(sessionRaw) } });
+  // Return immediately — user navigates to login page manually in the iframe.
+  // We include the target login URL so the frontend can show it as a hint.
+  return res.status(200).json({
+    sessionId,
+    liveURL,
+    connectURL,
+    loginURL: LOGIN_URLS[platform],
+    debug: { keys: Object.keys(sessionRaw) }
+  });
 }

@@ -740,6 +740,7 @@ async function openNativeLogin(platform) {
 
     browserSession[platform] = { sessionId: data.sessionId, liveURL: data.liveURL, connectURL: data.connectURL };
     frame.src = data.liveURL;
+    if (data.loginURL) hint.innerHTML = `Navigate to <a href="${data.loginURL}" target="_blank" style="color:var(--blue)">${data.loginURL}</a> in the browser below and log in, then click Done.`;
     doneBtn.disabled = false;
     doneBtn.textContent = 'Done — start scraping ✓';
     renderSources();
