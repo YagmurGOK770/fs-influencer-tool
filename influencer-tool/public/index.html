@@ -1747,6 +1747,7 @@ async function compareBio(rowId, oldValue, newValue) {
       body: JSON.stringify({ oldValue, newValue })
     });
     const data = await resp.json();
+    if (data.error) throw new Error(data.error + (data.raw ? ' | raw: ' + data.raw : ''));
     if (!data.changed) {
       // Same context — show as a muted "no meaningful change" note
       row.innerHTML = `
@@ -1759,7 +1760,8 @@ async function compareBio(rowId, oldValue, newValue) {
         <div class="cl-old">${d.oldHtml || '<span class="cl-null">empty</span>'}</div>
         <div class="cl-new">${d.newHtml || '<span class="cl-null">empty</span>'}</div>`;
     }
-  } catch {
+  } catch(err) {
+    console.error('compareBio error:', err);
     row.innerHTML = `
       <div class="cl-field-name">${FIELD_LABELS['who_they_are']}</div>
       <div class="cl-old">${oldValue||'—'}</div>

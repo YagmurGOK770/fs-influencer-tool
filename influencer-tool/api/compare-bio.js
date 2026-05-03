@@ -22,29 +22,36 @@ export default async function handler(req, res) {
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const message = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 120,
-    messages: [{
-      role: 'user',
-      content: `Compare these two descriptions of the same influencer. Decide if their core identity or professional focus has meaningfully changed, or if it is essentially the same person described differently.
+  let message;
+  try {
+    message = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 120,
+      messages: [{
+        role: 'user',
+        content: `Compare these two descriptions of the same influencer. Decide if their core identity or professional focus has meaningfully changed, or if it is essentially the same person described differently.
 
 Before: "${oldValue}"
 After: "${newValue}"
 
-Reply with ONLY a JSON object, no extra text:
-{"changed": true/false, "reason": "one short sentence explaining why"}
+Reply with ONLY a valid JSON object, no markdown, no extra text:
+{"changed": true, "reason": "one short sentence"} or {"changed": false, "reason": "one short sentence"}
 
 Examples of NOT changed: added a new project but same niche, slightly different wording, same career area.
 Examples of changed: shifted from food to fitness, went from chef to fashion influencer, completely different focus.`
-    }]
-  });
+      }]
+    });
+  } catch (apiErr) {
+    return res.status(500).json({ error: apiErr.message });
+  }
 
+  const text = message.content[0].text.trim();
+  // Strip markdown code fences if present
+  const clean = text.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'').trim();
   try {
-    const text = message.content[0].text.trim();
-    const json = JSON.parse(text);
+    const json = JSON.parse(clean);
     return res.status(200).json(json);
   } catch {
-    return res.status(200).json({ changed: false, reason: 'Could not parse comparison result' });
+    return res.status(500).json({ error: 'Bad JSON from model', raw: clean });
   }
 }
