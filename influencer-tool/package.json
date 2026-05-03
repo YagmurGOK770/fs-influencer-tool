@@ -13,7 +13,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@supabase/supabase-js": "^2.45.0",
-    "express": "^5.2.1",
     "playwright": "^1.59.1"
   }
 }

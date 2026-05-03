@@ -1,10 +1,8 @@
 {
   "functions": {
-    "api/search.js": {
-      "maxDuration": 300
-    },
-    "api/enrich.js": {
-      "maxDuration": 60
-    }
+    "api/search.js":          { "maxDuration": 300 },
+    "api/enrich.js":          { "maxDuration": 60  },
+    "api/browser-session.js": { "maxDuration": 30  },
+    "api/browser-scrape.js":  { "maxDuration": 120 }
   }
 }

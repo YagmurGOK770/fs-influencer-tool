@@ -193,11 +193,11 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .bucket-select:focus{outline:none;border-color:var(--green)}
 .native-badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:100px;border:1.5px solid var(--border2);background:var(--white);cursor:pointer;color:var(--muted);font-family:var(--sans);transition:all .15s;line-height:1.6}
 .native-badge.on{background:var(--blue-bg);color:var(--blue);border-color:var(--blue)}
-.native-badge:disabled{opacity:.4;cursor:default}
 .session-dot{width:6px;height:6px;border-radius:50%;display:inline-block;vertical-align:middle;flex-shrink:0}
 .session-dot.ok{background:var(--green)}
-.session-dot.missing{background:var(--orange)}
-.src-login-btn{font-size:10px;font-weight:700;color:var(--orange);background:none;border:none;cursor:pointer;padding:0 2px;font-family:var(--sans);text-decoration:underline}
+.browser-modal-inner{background:var(--white);border-radius:var(--r);box-shadow:0 20px 60px rgba(0,0,0,0.2);width:100%;max-width:960px;display:flex;flex-direction:column;overflow:hidden}
+.browser-modal-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.browser-modal-footer{padding:12px 20px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:8px}
 
 .table-wrap{overflow-x:auto;overflow-y:auto;max-height:75vh}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
@@ -532,8 +532,7 @@ let searchQ = '';
 let activeBucket = '';
 let ran = false;
 let running = false;
-let scraperAvailable = false;
-let scraperStatus = { running: false, sessions: {} };
+let browserSession = {}; // { platform: { sessionId, liveURL, connectURL } }
 
 function platClass(p) {
   if (!p) return 'x';
@@ -619,22 +618,14 @@ function renderSources() {
     // Native search controls — only for platform sources with a PLATFORM_ID_MAP entry
     const platformKey = PLATFORM_ID_MAP[s.id];
     let nativeControls = '';
-    if (platformKey && scraperAvailable) {
-      const sess = scraperStatus.sessions?.[platformKey] || {};
-      const hasSess = sess.hasSession;
+    if (platformKey) {
+      const hasSess = !!browserSession[platformKey];
       const nativeCls = s.native ? 'on' : '';
-      const dotCls = hasSess ? 'ok' : 'missing';
-      const loginBtn = (!hasSess && s.native)
-        ? `<button class="src-login-btn" onclick="event.stopPropagation();openPlatformAuth('${platformKey}')">Login →</button>`
-        : '';
       nativeControls = `
-        <button class="native-badge ${nativeCls}" onclick="event.stopPropagation();toggleNative('${s.id}')" title="${s.native?'Switch to Google search':'Switch to native platform search'}">
+        <button class="native-badge ${nativeCls}" onclick="event.stopPropagation();toggleNative('${s.id}')" title="${s.native ? 'Switch to Google search' : 'Switch to native platform search'}">
           ${s.native ? '⚡ Native' : '🌐 Google'}
         </button>
-        <span class="session-dot ${dotCls}" title="${hasSess?'Session active':'Login required'}"></span>
-        ${loginBtn}`;
-    } else if (platformKey && !scraperAvailable) {
-      nativeControls = `<span style="font-size:10px;color:var(--muted2)" title="Start scraper.js to enable native search">🌐</span>`;
+        ${hasSess ? `<span class="session-dot ok" title="Session active"></span>` : ''}`;
     }
 
     return `
@@ -708,7 +699,7 @@ function deleteSource(i) {
   renderSources();
 }
 
-// ── Native scraper helpers ────────────────────────────────────────────────
+// ── Native browser (Browserless) helpers ─────────────────────────────────
 
 function toggleNative(id) {
   const s = sources.find(s => s.id === id);
@@ -718,53 +709,62 @@ function toggleNative(id) {
   renderSources();
 }
 
-async function openPlatformAuth(platform) {
-  const statusEl = document.getElementById('sdot');
-  const origTitle = document.title;
-  document.title = `Waiting for ${platform} login…`;
+// Holds resolve/reject for the login-done promise so runLiveSearch can await it
+let _browserLoginResolve = null;
 
-  // Show notice in search log if visible
-  if (document.getElementById('terminal')) {
-    logLine(`🔐 Opening ${platform} login browser — log in then return here`, 'info');
-  }
+async function openNativeLogin(platform) {
+  const modal = document.getElementById('browserModal');
+  const frame = document.getElementById('browserFrame');
+  const title = document.getElementById('browserModalTitle');
+  const hint  = document.getElementById('browserModalHint');
+  const doneBtn = document.getElementById('browserDoneBtn');
+
+  const LABELS = { instagram:'Instagram', tiktok:'TikTok', youtube:'YouTube', x:'X / Twitter' };
+  title.textContent = `Log in to ${LABELS[platform] || platform}`;
+  hint.textContent  = `Log in to your ${LABELS[platform] || platform} account in the browser below, then click Done.`;
+  frame.src = '';
+  doneBtn.disabled = true;
+  doneBtn.textContent = 'Creating session…';
+  modal.style.display = 'flex';
 
   try {
-    const resp = await fetch(`http://localhost:3131/auth/${platform}`, { signal: AbortSignal.timeout(190_000) });
+    const resp = await fetch('/api/browser-session', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ platform })
+    });
     const data = await resp.json();
-    if (data.ok) {
-      if (document.getElementById('terminal')) logLine(`✓ ${platform} login saved`, 'ok');
-      await checkScraperStatus();
-    } else {
-      if (document.getElementById('terminal')) logLine(`⚠ ${platform} login failed: ${data.error}`, 'warn');
-    }
-  } catch(e) {
-    if (document.getElementById('terminal')) logLine(`⚠ ${platform} auth error: ${e.message}`, 'warn');
+    if (!resp.ok || data.error) throw new Error(data.error || 'Session creation failed');
+
+    browserSession[platform] = { sessionId: data.sessionId, liveURL: data.liveURL, connectURL: data.connectURL };
+    frame.src = data.liveURL;
+    doneBtn.disabled = false;
+    doneBtn.textContent = 'Done — start scraping ✓';
+    renderSources();
+  } catch (e) {
+    title.textContent = `Failed to open browser: ${e.message}`;
+    doneBtn.disabled = false;
+    doneBtn.textContent = 'Close';
   }
-  document.title = origTitle;
+
+  // Return a promise that resolves when user clicks Done or cancels
+  return new Promise((resolve) => { _browserLoginResolve = resolve; });
 }
 
-async function checkScraperStatus() {
-  try {
-    const resp = await fetch('http://localhost:3131/status', { signal: AbortSignal.timeout(2000) });
-    if (resp.ok) {
-      scraperStatus = await resp.json();
-      scraperAvailable = true;
-    } else {
-      scraperAvailable = false;
-      scraperStatus = { running: false, sessions: {} };
-    }
-  } catch {
-    scraperAvailable = false;
-    scraperStatus = { running: false, sessions: {} };
-  }
-  renderSources();
+function onBrowserLoginDone() {
+  document.getElementById('browserModal').style.display = 'none';
+  document.getElementById('browserFrame').src = '';
+  if (_browserLoginResolve) { _browserLoginResolve(true); _browserLoginResolve = null; }
+}
+
+function closeBrowserModal() {
+  document.getElementById('browserModal').style.display = 'none';
+  document.getElementById('browserFrame').src = '';
+  if (_browserLoginResolve) { _browserLoginResolve(false); _browserLoginResolve = null; }
 }
 
 // Render the sources list as soon as the script runs
 renderSources();
-// Check for local scraper in background
-checkScraperStatus();
-setInterval(checkScraperStatus, 30_000);
 
 function setStatus(s) {
   document.getElementById('sdot').className = 'dot ' + s;
@@ -1544,23 +1544,36 @@ async function runLiveSearch() {
     status.textContent = `[${i + 1}/${selected.length}] ${combo.label} — ${elapsed}s elapsed…`;
 
     try {
-      // Determine if we use the local native scraper or the Google/Claude API
+      // Determine if we use the Browserless native scraper or the Google/Claude API
       const srcObj = sources.find(s => s.name === combo.sources[0]?.name);
       const platformKey = srcObj ? PLATFORM_ID_MAP[srcObj.id] : null;
-      const useNative = !!(srcObj?.native && scraperAvailable && platformKey);
+      const useNative = !!(srcObj?.native && platformKey);
 
       let data;
       if (useNative) {
-        status.textContent = `⚡ [${i + 1}/${selected.length}] Native ${srcObj.name}: "${combo.keyword}"…`;
-        const resp = await fetch('http://localhost:3131/scrape', {
+        // Ensure we have a live Browserless session for this platform
+        if (!browserSession[platformKey]) {
+          status.textContent = `⚡ [${i + 1}/${selected.length}] Opening ${srcObj.name} browser — please log in…`;
+          const loggedIn = await openNativeLogin(platformKey);
+          if (!loggedIn || !browserSession[platformKey]) {
+            status.textContent = `⚠ [${i + 1}/${selected.length}] ${srcObj.name} login cancelled — skipping`;
+            await new Promise(r => setTimeout(r, 1200));
+            continue;
+          }
+        }
+        status.textContent = `⚡ [${i + 1}/${selected.length}] Scraping ${srcObj.name}: "${combo.keyword}"…`;
+        const resp = await fetch('/api/browser-scrape', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ platform: platformKey, keyword: combo.keyword, maxResults: 25 })
+          headers: getApiHeaders(),
+          body: JSON.stringify({ connectURL: browserSession[platformKey].connectURL, platform: platformKey, keyword: combo.keyword, maxResults: 25 })
         });
         data = await resp.json();
         if (data.error) {
-          const msg = { login_required: `${srcObj.name} login required — click Login → next to the source`, captcha: `${srcObj.name} CAPTCHA triggered — please log in again`, checkpoint: `Instagram checkpoint — open Login → to resolve` }[data.error] || data.error;
-          logLine(`⚠ Native ${srcObj.name}: ${msg}`, 'warn');
+          const msgs = { login_required: `${srcObj.name} session expired — please re-enable Native and log in again`, captcha: `${srcObj.name} CAPTCHA triggered — try again later`, checkpoint: `Instagram checkpoint detected — log in manually to resolve` };
+          const msg = msgs[data.error] || data.error;
+          logLine(`⚠ ${msg}`, 'warn');
+          delete browserSession[platformKey];
+          renderSources();
           status.textContent = `⚠ [${i + 1}/${selected.length}] ${msg} — skipping`;
           await new Promise(r => setTimeout(r, 1500));
           continue;
@@ -2261,5 +2274,28 @@ document.addEventListener('DOMContentLoaded', eInit);
 </div>
 
 <datalist id="bucketList"></datalist>
+
+<div id="browserModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;padding:1rem">
+  <div class="browser-modal-inner">
+    <div class="browser-modal-header">
+      <div>
+        <div id="browserModalTitle" style="font-weight:800;font-size:15px">Log in to platform</div>
+        <div id="browserModalHint" style="font-size:12px;color:var(--muted);margin-top:3px">Log in in the browser below, then click Done.</div>
+      </div>
+      <button onclick="closeBrowserModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1">×</button>
+    </div>
+    <div style="padding:12px 16px;background:var(--amber-bg);border-bottom:1px solid var(--orange-border);font-size:11px;color:var(--orange);font-weight:600">
+      ⚠ Use a dedicated account for scraping — do not use your personal account
+    </div>
+    <iframe id="browserFrame" src="" style="width:100%;height:520px;border:none;display:block"></iframe>
+    <div class="browser-modal-footer">
+      <div style="font-size:11px;color:var(--muted)">The browser above is running in the cloud via Browserless.io</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn-outline" onclick="closeBrowserModal()">Cancel</button>
+        <button class="btn-green" id="browserDoneBtn" onclick="onBrowserLoginDone()" disabled>Done — start scraping ✓</button>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
