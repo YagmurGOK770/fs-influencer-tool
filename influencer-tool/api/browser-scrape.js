@@ -185,46 +185,68 @@ async function scrapeYouTube(page, keyword, maxResults) {
   , maxResults);
 }
 
+async function screenshot(page) {
+  try {
+    const buf = await page.screenshot({ type: 'jpeg', quality: 60, fullPage: false });
+    return 'data:image/jpeg;base64,' + buf.toString('base64');
+  } catch { return null; }
+}
+
 async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
-  // If we already injected a saved cookie, just verify the session by hitting the home page.
-  // If the saved cookie is expired/invalid we get redirected to /accounts/login — fall back to credential login.
+  const debug = { steps: [] };
+  const snap = async (label) => {
+    const url = page.url();
+    const img = await screenshot(page);
+    debug.steps.push({ label, url, img });
+    console.log(`[ig-debug] ${label} — ${url}`);
+  };
+
   await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+  await snap('home load');
+
   if (page.url().includes('/accounts/login')) {
-    if (hadCookies) throw Object.assign(new Error('Saved Instagram cookie expired — re-paste a fresh sessionid'), { code: 'cookie_expired' });
+    if (hadCookies) {
+      const err = Object.assign(new Error('Saved Instagram cookie expired — re-paste a fresh sessionid'), { code: 'cookie_expired', debug });
+      throw err;
+    }
     await loginInstagram(page);
     await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await snap('after login');
   }
   await page.waitForTimeout(2000);
 
   const q = encodeURIComponent(keyword.replace(/^#/, ''));
 
-  // Try the internal topsearch API first — it returns JSON if Instagram trusts the session
+  // Try the internal topsearch API first
   const apiData = await page.evaluate(async (query) => {
     try {
       const r = await fetch(`/api/v1/web/search/topsearch/?query=${query}&context=blended`, {
         headers: { 'X-IG-App-ID': '936619743392459', 'Accept': 'application/json' }
       });
       const ct = r.headers.get('content-type') || '';
-      if (!r.ok || !ct.includes('application/json')) return null;
+      if (!r.ok || !ct.includes('application/json')) return { error: `HTTP ${r.status}, content-type: ${ct}` };
       return r.json();
-    } catch { return null; }
+    } catch(e) { return { error: e.message }; }
   }, q);
 
+  debug.steps.push({ label: 'topsearch API result', apiData });
+  console.log('[ig-debug] topsearch:', JSON.stringify(apiData)?.slice(0, 300));
+
   if (apiData && apiData.users && apiData.users.length) {
-    return apiData.users.slice(0, maxResults).map(u => {
+    return { results: apiData.users.slice(0, maxResults).map(u => {
       const user = u.user || u;
       return { handle: '@' + user.username, name: user.full_name || user.username, followers: String(user.follower_count || ''), niche: (user.biography || '').slice(0, 80) || 'Food' };
-    });
+    }), debug };
   }
 
   // Fallback: scrape the search UI directly
   await page.goto(`https://www.instagram.com/explore/search/keyword/?q=${q}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForTimeout(3000);
-  // Scroll to load more results
   await page.evaluate(() => window.scrollBy(0, 1500));
   await page.waitForTimeout(1500);
   await page.evaluate(() => window.scrollBy(0, 1500));
   await page.waitForTimeout(1000);
+  await snap('search page');
 
   const SKIP_USERNAMES = new Set(['p','reels','explore','accounts','direct','stories','tv','reel','about','press','blog','jobs','help','api','privacy','terms','hashtag','locations','music']);
 
@@ -248,8 +270,13 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
     return out;
   }, { max: maxResults, skip: [...SKIP_USERNAMES] });
 
+  debug.steps.push({ label: 'UI search results', count: uiResults.length, usernames: uiResults.map(u => u.username) });
+  console.log('[ig-debug] UI results:', uiResults.map(u => u.username));
+
   if (!uiResults.length) {
-    throw new Error('Instagram returned no results — search may be rate-limited or blocked');
+    const err = new Error('Instagram returned no results — search may be rate-limited or blocked');
+    err.debug = debug;
+    throw err;
   }
 
   // Visit each profile to get follower count (search page doesn't show it)
@@ -295,12 +322,12 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
     enriched.push({ username: u.username, full_name: u.full_name, followers, bio });
   }
 
-  return enriched.map(u => ({
+  return { results: enriched.map(u => ({
     handle: '@' + u.username,
     name: u.full_name || u.username,
     followers: u.followers,
     niche: (u.bio || 'Food').slice(0, 80),
-  }));
+  })), debug };
 }
 
 async function scrapeTikTok(page, keyword, maxResults, hadCookies) {
@@ -367,11 +394,16 @@ export default async function handler(req, res) {
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
     const hadCookies = !!(savedCookies && savedCookies.length);
-    let raw = [];
+    let raw = [], debug = null;
+
     if (platform === 'youtube')   raw = await scrapeYouTube(page, keyword, maxResults);
-    if (platform === 'instagram') raw = await scrapeInstagram(page, keyword, maxResults, hadCookies);
     if (platform === 'tiktok')    raw = await scrapeTikTok(page, keyword, maxResults, hadCookies);
     if (platform === 'x')         raw = await scrapeX(page, keyword, maxResults, hadCookies);
+    if (platform === 'instagram') {
+      const out = await scrapeInstagram(page, keyword, maxResults, hadCookies);
+      raw = out.results;
+      debug = out.debug;
+    }
 
     const influencers = raw.map(r => ({
       handle:   r.handle.startsWith('@') ? r.handle : '@' + r.handle,
@@ -385,12 +417,12 @@ export default async function handler(req, res) {
     }));
 
     await browser.close();
-    return res.status(200).json({ influencers, platform, keyword });
+    return res.status(200).json({ influencers, platform, keyword, debug });
 
   } catch (err) {
     if (browser) await browser.close().catch(() => {});
     const code = err.code || 'error';
     console.error(`[browser-scrape] ${platform}/${keyword} failed:`, err.message);
-    return res.status(200).json({ error: code, message: err.message, influencers: [] });
+    return res.status(200).json({ error: code, message: err.message, influencers: [], debug: err.debug || null });
   }
 }
