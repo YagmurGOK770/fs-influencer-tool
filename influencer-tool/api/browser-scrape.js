@@ -249,11 +249,56 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
     throw new Error('Instagram returned no results — search may be rate-limited or blocked');
   }
 
-  return uiResults.map(u => ({
+  // Visit each profile to get follower count (search page doesn't show it)
+  const enriched = [];
+  for (const u of uiResults.slice(0, Math.min(uiResults.length, 10))) {
+    let followers = '';
+    let bio = u.full_name || '';
+    try {
+      await page.goto(`https://www.instagram.com/${u.username}/`, { waitUntil: 'domcontentloaded', timeout: 12000 });
+      await page.waitForTimeout(1500);
+      const profileData = await page.evaluate(() => {
+        // Try meta description: "X Followers, Y Following, Z Posts"
+        const meta = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+        const mMatch = meta.match(/([\d,.]+[KkMmBb]?)\s*Followers?/i);
+        // Try JSON-LD / window._sharedData
+        let jsonFollowers = '';
+        try {
+          const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+          for (const s of scripts) {
+            const d = JSON.parse(s.textContent || '');
+            if (d.interactionStatistic) {
+              const stat = Array.isArray(d.interactionStatistic) ? d.interactionStatistic : [d.interactionStatistic];
+              const f = stat.find(x => x.interactionType?.includes('Follow'));
+              if (f?.userInteractionCount) { jsonFollowers = String(f.userInteractionCount); break; }
+            }
+          }
+        } catch {}
+        // Try page text — look for "followers" label near a number
+        let textFollowers = '';
+        const spans = Array.from(document.querySelectorAll('span, li'));
+        for (const el of spans) {
+          if (/followers/i.test(el.textContent) && el.textContent.length < 50) {
+            const numMatch = el.textContent.match(/([\d,.]+[KkMm]?)\s*[Ff]ollowers?/);
+            if (numMatch) { textFollowers = numMatch[1]; break; }
+          }
+        }
+        return {
+          followers: jsonFollowers || (mMatch ? mMatch[1] : '') || textFollowers,
+          bio: document.querySelector('meta[property="og:description"]')?.getAttribute('content') || meta,
+        };
+      });
+      followers = profileData.followers || '';
+      bio = profileData.bio || bio;
+    } catch { /* skip — use empty */ }
+    enriched.push({ username: u.username, full_name: u.full_name, followers, bio });
+  }
+
+  return enriched.map(u => ({
     handle: '@' + u.username,
     name: u.full_name || u.username,
-    followers: '',  // not available on search UI — enrich step will fill in
-    niche: 'Food',
+    followers: u.followers,
+    niche: (u.bio || 'Food').slice(0, 80),
   }));
 }
 
