@@ -72,8 +72,6 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .nav-title{font-weight:800;font-size:15px;letter-spacing:-.3px}
 .nav-title span{color:var(--green)}
 .nav-right{display:flex;align-items:center;gap:10px}
-.share-hint{font-size:11px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:100px;padding:4px 12px;display:flex;align-items:center;gap:5px}
-.share-hint strong{color:var(--text)}
 .status-pill{display:flex;align-items:center;gap:6px;font-size:12px;font-family:var(--mono);background:var(--surface);border:1px solid var(--border);border-radius:100px;padding:5px 12px;color:var(--muted)}
 .dot{width:7px;height:7px;border-radius:50%;background:var(--muted2);flex-shrink:0}
 .dot.running{background:var(--green);animation:blink 1s ease-in-out infinite}
@@ -202,6 +200,18 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .table-wrap{overflow-x:auto;overflow-y:auto;max-height:75vh}
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 thead th{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:8px 10px;text-align:left;border-bottom:1.5px solid var(--border);background:var(--surface);white-space:nowrap;position:sticky;top:0;z-index:2}
+thead th.sortable{cursor:pointer;user-select:none}
+thead th.sortable:hover{color:var(--text)}
+thead th .sort-ind{display:inline-block;margin-left:4px;color:var(--muted2);font-size:9px}
+thead th.sort-asc .sort-ind,thead th.sort-desc .sort-ind{color:var(--green)}
+thead tr.filter-row th{padding:4px 6px;background:var(--surface);position:sticky;top:34px;z-index:2;border-bottom:1.5px solid var(--border)}
+thead tr.filter-row th:nth-child(1),thead tr.filter-row th:nth-child(2),thead tr.filter-row th:nth-child(3){position:sticky;top:34px;z-index:3}
+thead tr.filter-row th:nth-child(1){left:0}
+thead tr.filter-row th:nth-child(2){left:32px}
+thead tr.filter-row th:nth-child(3){left:78px;border-right:1.5px solid var(--border2)}
+.col-filter{width:100%;font-size:10.5px;padding:3px 6px;border:1px solid var(--border2);border-radius:4px;background:var(--white);color:var(--text);font-family:var(--sans);box-sizing:border-box}
+.col-filter:focus{outline:none;border-color:var(--green);background:white}
+.col-filter::placeholder{color:var(--muted2);font-style:italic;font-size:10px}
 thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){position:sticky;top:0;z-index:3}
 thead th:nth-child(1){left:0;min-width:32px}
 thead th:nth-child(2){left:32px;min-width:46px}
@@ -277,7 +287,6 @@ td{padding:9px 10px;vertical-align:middle}
   .layout{grid-template-columns:1fr}
   .stats{grid-template-columns:repeat(2,1fr)}
   .review-banner{flex-direction:column;align-items:flex-start}
-  .nav-right .share-hint{display:none}
 }
 
 
@@ -297,7 +306,6 @@ td{padding:9px 10px;vertical-align:middle}
     </div>
   </div>
   <div class="nav-right">
-    <div class="share-hint">💡 Share this file via email or Drive — works offline, no login needed</div>
     <div class="status-pill">
       <div class="dot" id="sdot"></div>
       <span id="stxt">Ready</span>
@@ -377,31 +385,7 @@ td{padding:9px 10px;vertical-align:middle}
 
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr>
-                <th style="width:32px;text-align:center">✓</th>
-                <th style="width:46px">#</th>
-                <th style="min-width:120px">Name</th>
-                <th>Platforms</th>
-                <th>Instagram ↗</th>
-                <th>IG Followers</th>
-                <th>TikTok ↗</th>
-                <th>TT Followers</th>
-                <th>YouTube ↗</th>
-                <th>YT Followers</th>
-                <th>X ↗</th>
-                <th>X Followers</th>
-                <th>Total Followers</th>
-                <th style="min-width:160px">Content Labels</th>
-                <th style="min-width:180px">Who They Are</th>
-                <th style="min-width:180px">What They Post</th>
-                <th style="min-width:160px">Tone &amp; Style</th>
-                <th style="min-width:180px">Target Audience</th>
-                <th style="min-width:160px">Why Follow Them</th>
-                <th>Found Via</th>
-                <th style="min-width:120px">Bucket</th>
-              </tr>
-            </thead>
+            <thead id="thead"></thead>
             <tbody id="tbody"></tbody>
           </table>
         </div>
@@ -564,10 +548,10 @@ function addKw() {
 const PLATFORM_ID_MAP = { ig:'instagram', tt:'tiktok', yt:'youtube', x:'x' };
 
 const DEFAULT_SOURCES = [
-  { id:'ig',  icon:'IG',  iconClass:'ig',  name:'Instagram',     desc:'Via Google search',       url:'', builtin:true, on:true, native:false },
-  { id:'tt',  icon:'TT',  iconClass:'tt',  name:'TikTok',        desc:'Hashtag creators',        url:'', builtin:true, on:true, native:false },
-  { id:'yt',  icon:'YT',  iconClass:'yt',  name:'YouTube',       desc:'Hashtag & keyword',       url:'', builtin:true, on:true, native:false },
-  { id:'x',   icon:'𝕏',   iconClass:'x',   name:'X / Twitter',   desc:'Food influencer search',  url:'', builtin:true, on:true, native:false },
+  { id:'ig',  icon:'IG',  iconClass:'ig',  name:'Instagram',     desc:'Google search · live verify',  url:'', builtin:true, on:true },
+  { id:'tt',  icon:'TT',  iconClass:'tt',  name:'TikTok',        desc:'Google search',                 url:'', builtin:true, on:true },
+  { id:'yt',  icon:'YT',  iconClass:'yt',  name:'YouTube',       desc:'Google search',                 url:'', builtin:true, on:true },
+  { id:'x',   icon:'𝕏',   iconClass:'x',   name:'X / Twitter',   desc:'Google search',                 url:'', builtin:true, on:true },
   { id:'web', icon:'WEB', iconClass:'web', name:'Ranking pages', desc:'Feedspot, blogs',         url:'', builtin:true, on:true },
   { id:'tribe',     icon:'TRB', iconClass:'cust', name:'Tribe Group', desc:'Influencer marketplace', url:'https://www.tribegroup.co/', builtin:false, on:true },
   { id:'collabstr', icon:'CLB', iconClass:'cust', name:'Collabstr',   desc:'Creator directory',      url:'https://collabstr.com/',     builtin:false, on:true },
@@ -615,19 +599,11 @@ function renderSources() {
       ? ''
       : `<button class="src-delete" onclick="event.stopPropagation();deleteSource(${i})" title="Remove">×</button>`;
 
-    // Native search controls — only for platform sources with a PLATFORM_ID_MAP entry
+    // Session cookie button — for platforms used in verification (Instagram only for now)
     const platformKey = PLATFORM_ID_MAP[s.id];
     let nativeControls = '';
-    if (platformKey) {
-      const nativeCls = s.native ? 'on' : '';
-      const sessionBtn = (s.native && platformKey !== 'youtube')
-        ? `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}',this)" title="Paste your ${s.name} session cookie">🔑</button>`
-        : '';
-      nativeControls = `
-        <button class="native-badge ${nativeCls}" onclick="event.stopPropagation();toggleNative('${s.id}')" title="${s.native ? 'Switch to Google search' : 'Switch to native platform search'}">
-          ${s.native ? '⚡ Native' : '🌐 Google'}
-        </button>
-        ${sessionBtn}`;
+    if (platformKey === 'instagram') {
+      nativeControls = `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}',this)" title="Paste your ${s.name} session cookie (used to verify follower counts)">🔑</button>`;
     }
 
     return `
@@ -701,14 +677,86 @@ function deleteSource(i) {
   renderSources();
 }
 
-// ── Native browser (Browserless) helpers ─────────────────────────────────
+// ── Session cookie helper (used for follower verification) ───────────────
 
-function toggleNative(id) {
-  const s = sources.find(s => s.id === id);
-  if (!s) return;
-  s.native = !s.native;
-  persistSources();
-  renderSources();
+// Verify Instagram candidates via /api/verify — uses the saved sessionid cookie
+// to load each profile and replace the AI-estimated follower count with the live one.
+async function verifyInfluencerFollowers(influencers, status) {
+  // Collect IG handles to verify (anything with an igHandle, or whose primary handle is Instagram)
+  const toVerify = [];
+  for (const inf of influencers) {
+    const handle = inf.igHandle || (
+      String(inf.platform || '').toLowerCase().includes('instagram') ? inf.handle : null
+    );
+    if (handle) toVerify.push({ inf, handle });
+  }
+
+  if (!toVerify.length) {
+    if (status) status.textContent = `⚠ No Instagram handles to verify — skipping verification.`;
+    await new Promise(r => setTimeout(r, 800));
+    return;
+  }
+
+  if (status) status.textContent = `🔍 Verifying ${toVerify.length} Instagram profiles via saved session…`;
+
+  // Verify in batches of 10 so a single browser run isn't too long
+  const BATCH_SIZE = 10;
+  let verifiedCount = 0;
+  let failedCount = 0;
+
+  for (let b = 0; b < toVerify.length; b += BATCH_SIZE) {
+    const batch = toVerify.slice(b, b + BATCH_SIZE);
+    if (status) status.textContent = `🔍 Verifying batch ${Math.floor(b / BATCH_SIZE) + 1}/${Math.ceil(toVerify.length / BATCH_SIZE)} (${b + 1}–${Math.min(b + BATCH_SIZE, toVerify.length)} of ${toVerify.length})…`;
+
+    try {
+      const resp = await fetch('/api/verify', {
+        method: 'POST',
+        headers: getApiHeaders(),
+        body: JSON.stringify({
+          platform: 'instagram',
+          handles: batch.map(b => b.handle),
+        }),
+      });
+      const data = await resp.json();
+
+      if (!resp.ok || data.error) {
+        if (data.error === 'cookie_missing' || data.error === 'cookie_expired') {
+          const retry = confirm(`Saved Instagram session is missing or expired.\n\nClick OK to paste a fresh sessionid cookie, then retry verification.`);
+          if (retry) {
+            await openSessionModal('instagram', null);
+            b -= BATCH_SIZE; // retry this batch
+            continue;
+          } else {
+            logLine(`⚠ Verification skipped — no valid session cookie`, 'warn');
+            return;
+          }
+        }
+        logLine(`⚠ Verify batch failed: ${data.error || resp.statusText}`, 'warn');
+        failedCount += batch.length;
+        continue;
+      }
+
+      const results = data.results || {};
+      for (const { inf, handle } of batch) {
+        const r = results[handle];
+        if (!r || !r.ok) { failedCount++; continue; }
+        if (r.followers) {
+          inf.followers = r.followers;
+          inf.igFollowers = r.followers;
+          verifiedCount++;
+        }
+        if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
+      }
+    } catch (err) {
+      logLine(`⚠ Verify batch error: ${err.message}`, 'warn');
+      failedCount += batch.length;
+    }
+  }
+
+  if (status) {
+    status.textContent = `✓ Verified ${verifiedCount}/${toVerify.length} (${failedCount} could not be verified) — applying filters…`;
+  }
+  await new Promise(r => setTimeout(r, 1000));
 }
 
 async function openSessionModal(platform, triggerBtn) {
@@ -903,12 +951,145 @@ function updateApproved() {
   document.getElementById('exportBar').classList.toggle('show', sel > 0 && ran);
 }
 
+// ── Column metadata, sort state, per-column filters ───────────────────────
+const COLUMN_META = [
+  { key: '_check',         label: '✓',                style: 'width:32px;text-align:center' },
+  { key: '_num',           label: '#',                style: 'width:46px' },
+  { key: 'name',           label: 'Name',             type: 'text',   style: 'min-width:120px' },
+  { key: 'platform',       label: 'Platforms',        type: 'text' },
+  { key: 'igHandle',       label: 'Instagram ↗',      type: 'text' },
+  { key: 'igFollowers',    label: 'IG Followers',     type: 'number' },
+  { key: 'ttHandle',       label: 'TikTok ↗',         type: 'text' },
+  { key: 'ttFollowers',    label: 'TT Followers',     type: 'number' },
+  { key: 'ytHandle',       label: 'YouTube ↗',        type: 'text' },
+  { key: 'ytFollowers',    label: 'YT Followers',     type: 'number' },
+  { key: 'xHandle',        label: 'X ↗',              type: 'text' },
+  { key: 'xFollowers',     label: 'X Followers',      type: 'number' },
+  { key: 'followers',      label: 'Total Followers',  type: 'number' },
+  { key: 'contentLabels',  label: 'Content Labels',   type: 'text', style: 'min-width:160px' },
+  { key: 'whoTheyAre',     label: 'Who They Are',     type: 'text', style: 'min-width:180px' },
+  { key: 'whatTheyPost',   label: 'What They Post',   type: 'text', style: 'min-width:180px' },
+  { key: 'toneStyle',      label: 'Tone & Style',     type: 'text', style: 'min-width:160px' },
+  { key: 'targetAudience', label: 'Target Audience',  type: 'text', style: 'min-width:180px' },
+  { key: 'whyFollow',      label: 'Why Follow Them',  type: 'text', style: 'min-width:160px' },
+  { key: 'foundVia',       label: 'Found Via',        type: 'text' },
+  { key: 'bucket',         label: 'Bucket',           type: 'text', style: 'min-width:120px' },
+];
+
+let sortState = { key: null, dir: 'asc' };
+const colFilters = {}; // key → string
+
+function renderHead() {
+  const thead = document.getElementById('thead');
+  if (!thead) return;
+  const headerRow = COLUMN_META.map(c => {
+    const isSortable = !!c.type;
+    const sortClass = sortState.key === c.key ? (sortState.dir === 'asc' ? 'sort-asc' : 'sort-desc') : '';
+    const ind = sortState.key === c.key ? (sortState.dir === 'asc' ? '▲' : '▼') : '⇅';
+    const cls = isSortable ? `sortable ${sortClass}` : '';
+    const onclick = isSortable ? `onclick="onSortClick('${c.key}')"` : '';
+    const style = c.style ? ` style="${c.style}"` : '';
+    return `<th class="${cls}"${style} ${onclick}>${c.label}${isSortable ? ` <span class="sort-ind">${ind}</span>` : ''}</th>`;
+  }).join('');
+  const filterRow = COLUMN_META.map(c => {
+    if (!c.type) return '<th></th>';
+    const ph = c.type === 'number' ? '>10K  <5M  10K-1M' : 'filter…';
+    const val = (colFilters[c.key] || '').replace(/"/g,'&quot;');
+    return `<th><input type="text" class="col-filter" data-col="${c.key}" placeholder="${ph}" value="${val}" oninput="onColFilterInput('${c.key}',this.value)"/></th>`;
+  }).join('');
+  thead.innerHTML = `<tr>${headerRow}</tr><tr class="filter-row">${filterRow}</tr>`;
+}
+
+function onSortClick(key) {
+  if (sortState.key === key) {
+    sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortState = { key, dir: 'asc' };
+  }
+  renderHead();
+  currentPage = 1;
+  renderTable();
+  renderPagination();
+}
+
+function onColFilterInput(key, value) {
+  if (!value || !value.trim()) delete colFilters[key];
+  else colFilters[key] = value.trim();
+  currentPage = 1;
+  renderTable();
+  renderPagination();
+}
+
+function matchTextFilter(value, filter) {
+  return String(value||'').toLowerCase().includes(filter.toLowerCase());
+}
+
+function matchNumberFilter(value, filter) {
+  const n = parseFollowers(value);
+  const f = filter.trim();
+  // Range: "10K-1M"
+  const range = f.match(/^([\d.,]+[KkMm]?)\s*-\s*([\d.,]+[KkMm]?)$/);
+  if (range) {
+    const lo = parseFollowers(range[1]);
+    const hi = parseFollowers(range[2]);
+    return n >= lo && n <= hi;
+  }
+  // Comparison: ">10K", ">=5K", "<1M", "<=500"
+  const cmp = f.match(/^(>=|<=|>|<)\s*([\d.,]+[KkMm]?)$/);
+  if (cmp) {
+    const target = parseFollowers(cmp[2]);
+    if (cmp[1] === '>')  return n >  target;
+    if (cmp[1] === '>=') return n >= target;
+    if (cmp[1] === '<')  return n <  target;
+    if (cmp[1] === '<=') return n <= target;
+  }
+  // Plain number → at-least match (most useful default)
+  const target = parseFollowers(f);
+  if (target > 0) return n >= target;
+  return true;
+}
+
+function getDisplayRows() {
+  let rows = filtered;
+  // Apply per-column filters
+  const activeKeys = Object.keys(colFilters);
+  if (activeKeys.length) {
+    rows = rows.filter(r => {
+      for (const key of activeKeys) {
+        const meta = COLUMN_META.find(c => c.key === key);
+        if (!meta) continue;
+        const filter = colFilters[key];
+        if (meta.type === 'number') {
+          if (!matchNumberFilter(r[key], filter)) return false;
+        } else {
+          if (!matchTextFilter(r[key], filter)) return false;
+        }
+      }
+      return true;
+    });
+  }
+  // Apply sort
+  if (sortState.key) {
+    const meta = COLUMN_META.find(c => c.key === sortState.key);
+    const dir = sortState.dir === 'asc' ? 1 : -1;
+    rows = [...rows].sort((a, b) => {
+      const va = a[sortState.key], vb = b[sortState.key];
+      if (meta?.type === 'number') {
+        return (parseFollowers(va) - parseFollowers(vb)) * dir;
+      }
+      return String(va||'').localeCompare(String(vb||'')) * dir;
+    });
+  }
+  return rows;
+}
+
 function renderTable() {
   const tbody = document.getElementById('tbody'); tbody.innerHTML = '';
+  const displayRows = getDisplayRows();
   const start = (currentPage-1)*PAGE_SIZE;
-  const page = filtered.slice(start, start+PAGE_SIZE);
+  const page = displayRows.slice(start, start+PAGE_SIZE);
   if (!page.length) {
-    tbody.innerHTML = '<tr><td colspan="16"><div class="empty-state"><div class="empty-icon">🔎</div>' + (ran ? 'No results match' : 'Run the agent to populate the full list') + '</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="21"><div class="empty-state"><div class="empty-icon">🔎</div>' + (ran ? 'No results match' : 'Run the agent to populate the full list') + '</div></td></tr>';
     return;
   }
   page.forEach(r => {
@@ -946,7 +1127,7 @@ function renderTable() {
 
 function renderPagination() {
   const bar = document.getElementById('paginationBar');
-  const total = filtered.length;
+  const total = getDisplayRows().length;
   if (total === 0) { bar.style.display='none'; return; }
   bar.style.display = 'flex';
   const totalPages = Math.ceil(total/PAGE_SIZE);
@@ -1032,6 +1213,7 @@ function exportAll() {
 
 // Init — show existing list immediately
 filtered = [...allRows];
+renderHead();
 updateCounts();
 renderTable();
 renderPagination();
@@ -1560,71 +1742,38 @@ async function runLiveSearch() {
     status.textContent = `[${i + 1}/${selected.length}] ${combo.label} — ${elapsed}s elapsed…`;
 
     try {
-      // Determine if we use the Browserless native scraper or the Google/Claude API
-      const srcObj = sources.find(s => s.name === combo.sources[0]?.name);
-      const platformKey = srcObj ? PLATFORM_ID_MAP[srcObj.id] : null;
-      const useNative = !!(srcObj?.native && platformKey);
+      status.textContent = `🌐 [${i + 1}/${selected.length}] Searching: ${combo.label}…`;
+      const resp = await fetch('/api/search', {
+        method: 'POST',
+        headers: getApiHeaders(),
+        body: JSON.stringify({
+          keywords: [combo.keyword],
+          location: combo.location,
+          platform: combo.platform,
+          sources: combo.sources,
+          minFollowers: combo.minFollowers
+        })
+      });
 
-      let data;
-      if (useNative) {
-        status.textContent = `⚡ [${i + 1}/${selected.length}] Native ${srcObj.name}: "${combo.keyword}"…`;
-        const resp = await fetch('/api/browser-scrape', {
-          method: 'POST',
-          headers: getApiHeaders(),
-          body: JSON.stringify({ platform: platformKey, keyword: combo.keyword, maxResults: 25 })
-        });
-        data = await resp.json();
-        if (data.debug) showScrapeDebug(data.debug, srcObj.name);
-        if (data.error) {
-          const msg = data.message || data.error;
-          logLine(`⚠ ${srcObj.name}: ${msg}`, 'warn');
-          // Challenge or expired cookie — offer to re-login then retry this combo
-          if (data.error === 'challenge' || data.error === 'cookie_expired') {
-            const retry = confirm(`${srcObj.name} session was blocked by Instagram.\n\nClick OK to open a login tab and retry this search.`);
-            if (retry) {
-              await openSessionModal(platformKey, null);
-              i--; // retry same combo
-              continue;
-            }
-          }
-          status.textContent = `⚠ [${i + 1}/${selected.length}] ${srcObj.name}: ${msg.slice(0, 120)} — skipping`;
-          await new Promise(r => setTimeout(r, 2500));
-          continue;
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        if (resp.status === 401) {
+          clearInterval(tick);
+          sessionStorage.removeItem('appPassword');
+          alert('Unauthorized. Please refresh and re-enter the password.');
+          return;
         }
-      } else {
-        status.textContent = `🌐 [${i + 1}/${selected.length}] Searching: ${combo.label}…`;
-        const resp = await fetch('/api/search', {
-          method: 'POST',
-          headers: getApiHeaders(),
-          body: JSON.stringify({
-            keywords: [combo.keyword],
-            location: combo.location,
-            platform: combo.platform,
-            sources: combo.sources,
-            minFollowers: combo.minFollowers
-          })
-        });
-
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          if (resp.status === 401) {
-            clearInterval(tick);
-            sessionStorage.removeItem('appPassword');
-            alert('Unauthorized. Please refresh and re-enter the password.');
-            return;
-          }
-          status.textContent = `⚠ [${i + 1}/${selected.length}] Failed: ${combo.label} — ${err.error || resp.statusText}. Continuing…`;
-          status.style.background = 'var(--amber-bg)';
-          status.style.borderColor = 'var(--amber)';
-          status.style.color = 'var(--amber)';
-          await new Promise(r => setTimeout(r, 1500));
-          status.style.background = 'var(--green-light)';
-          status.style.borderColor = 'var(--green-border)';
-          status.style.color = 'var(--green)';
-          continue;
-        }
-        data = await resp.json();
+        status.textContent = `⚠ [${i + 1}/${selected.length}] Failed: ${combo.label} — ${err.error || resp.statusText}. Continuing…`;
+        status.style.background = 'var(--amber-bg)';
+        status.style.borderColor = 'var(--amber)';
+        status.style.color = 'var(--amber)';
+        await new Promise(r => setTimeout(r, 1500));
+        status.style.background = 'var(--green-light)';
+        status.style.borderColor = 'var(--green-border)';
+        status.style.color = 'var(--green)';
+        continue;
       }
+      const data = await resp.json();
 
       const found = data.influencers || [];
       let newCount = 0;
@@ -1661,7 +1810,10 @@ async function runLiveSearch() {
   status.style.background = 'var(--green-light)';
   status.style.borderColor = 'var(--green-border)';
   status.style.color = 'var(--green)';
-  status.textContent = `✓ Done — ${allInfluencers.length} unique candidates from ${selected.length} searches. Applying filters…`;
+  status.textContent = `✓ Found ${allInfluencers.length} candidates. Verifying Instagram followers…`;
+
+  // ── Verification step: visit each IG profile via Browserless to get a live follower count ──
+  await verifyInfluencerFollowers(allInfluencers, status);
 
   btn.disabled = false;
   updateComboRunBtn();

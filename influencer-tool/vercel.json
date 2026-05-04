@@ -3,6 +3,7 @@
     "api/search.js":          { "maxDuration": 300 },
     "api/enrich.js":          { "maxDuration": 60  },
     "api/browser-scrape.js":  { "maxDuration": 120 },
-    "api/save-session.js":    { "maxDuration": 10  }
+    "api/save-session.js":    { "maxDuration": 10  },
+    "api/verify.js":          { "maxDuration": 300 }
   }
 }

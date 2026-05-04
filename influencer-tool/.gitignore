@@ -7,3 +7,4 @@ sessions/
 browser-profiles/
 
 .env*.local
+devserver.mjs

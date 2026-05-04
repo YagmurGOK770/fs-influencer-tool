@@ -246,53 +246,90 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
   debug.steps.push({ label: 'topsearch API result', apiData });
   console.log('[ig-debug] topsearch:', JSON.stringify(apiData)?.slice(0, 300));
 
+  // Collect users into a deduped map (key: username). Start with topsearch results.
+  const collected = new Map();
   if (apiData && apiData.users && apiData.users.length) {
-    return { results: apiData.users.slice(0, maxResults).map(u => {
+    for (const u of apiData.users) {
       const user = u.user || u;
-      return { handle: '@' + user.username, name: user.full_name || user.username, followers: String(user.follower_count || ''), niche: (user.biography || '').slice(0, 80) || 'Food' };
-    }), debug };
-  }
-
-  // Fallback: scrape the search UI directly
-  await page.goto(`https://www.instagram.com/explore/search/keyword/?q=${q}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-  await randDelay(page, 2500, 4000);
-
-  // Detect challenge page
-  if (page.url().includes('/challenge/')) {
-    await snap('challenge page');
-    throw Object.assign(new Error('Instagram showed a challenge — please log in again via the 🔑 button'), { code: 'challenge', debug });
-  }
-
-  await page.evaluate(() => window.scrollBy(0, 1500));
-  await randDelay(page, 1000, 2000);
-  await page.evaluate(() => window.scrollBy(0, 1500));
-  await randDelay(page, 800, 1500);
-  await snap('search page');
-
-  const SKIP_USERNAMES = new Set(['p','reels','explore','accounts','direct','stories','tv','reel','about','press','blog','jobs','help','api','privacy','terms','hashtag','locations','music']);
-
-  const uiResults = await page.evaluate(({ max, skip }) => {
-    const links = Array.from(document.querySelectorAll('a[href^="/"]'));
-    const seen = new Set();
-    const out = [];
-    for (const a of links) {
-      const href = a.getAttribute('href') || '';
-      const m = href.match(/^\/([A-Za-z0-9._]+)\/?$/);
-      if (!m) continue;
-      const username = m[1];
-      if (seen.has(username) || skip.includes(username)) continue;
-      seen.add(username);
-      const card = a.closest('li, [role="listitem"], div');
-      const spans = card ? Array.from(card.querySelectorAll('span')) : [];
-      const nameEl = spans.find(s => !s.children.length && s.textContent.trim() && s.textContent.trim() !== username);
-      out.push({ username, full_name: (nameEl?.textContent || '').trim() });
-      if (out.length >= max) break;
+      if (!user.username) continue;
+      collected.set(user.username, {
+        username: user.username,
+        full_name: user.full_name || user.username,
+        followers: String(user.follower_count || ''),
+        bio: (user.biography || '').slice(0, 120),
+        fromApi: true,
+      });
     }
-    return out;
-  }, { max: maxResults, skip: [...SKIP_USERNAMES] });
+    console.log(`[ig-debug] topsearch yielded ${collected.size} users`);
+  }
 
-  debug.steps.push({ label: 'UI search results', count: uiResults.length, usernames: uiResults.map(u => u.username) });
-  console.log('[ig-debug] UI results:', uiResults.map(u => u.username));
+  // If topsearch didn't fill the quota, fall through to UI search + progressive scrolling
+  if (collected.size < maxResults) {
+    await page.goto(`https://www.instagram.com/explore/search/keyword/?q=${q}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await randDelay(page, 2500, 4000);
+
+    if (page.url().includes('/challenge/')) {
+      await snap('challenge page');
+      throw Object.assign(new Error('Instagram showed a challenge — please log in again via the 🔑 button'), { code: 'challenge', debug });
+    }
+
+    const SKIP_USERNAMES = ['p','reels','explore','accounts','direct','stories','tv','reel','about','press','blog','jobs','help','api','privacy','terms','hashtag','locations','music','popular','annatools2026','suggested','developer','developers','contact','legal','copyright','login','signup'];
+
+    // Progressive scroll: keep scrolling until we have enough users or no new ones appear.
+    // Human cadence: variable scroll distance, mouse jitter, randomised pauses, occasional brief pause.
+    const MAX_SCROLLS = 12;
+    let stagnantRounds = 0;
+    for (let scrollIdx = 0; scrollIdx < MAX_SCROLLS; scrollIdx++) {
+      const sizeBefore = collected.size;
+
+      const uiBatch = await page.evaluate((skip) => {
+        const links = Array.from(document.querySelectorAll('a[href^="/"]'));
+        const seen = new Set();
+        const out = [];
+        for (const a of links) {
+          const href = a.getAttribute('href') || '';
+          const m = href.match(/^\/([A-Za-z0-9._]+)\/?$/);
+          if (!m) continue;
+          const username = m[1];
+          if (seen.has(username) || skip.includes(username)) continue;
+          seen.add(username);
+          const card = a.closest('li, [role="listitem"], div');
+          const spans = card ? Array.from(card.querySelectorAll('span')) : [];
+          const nameEl = spans.find(s => !s.children.length && s.textContent.trim() && s.textContent.trim() !== username);
+          out.push({ username, full_name: (nameEl?.textContent || '').trim() });
+        }
+        return out;
+      }, SKIP_USERNAMES);
+
+      for (const u of uiBatch) {
+        if (!collected.has(u.username)) {
+          collected.set(u.username, { username: u.username, full_name: u.full_name, followers: '', bio: '', fromApi: false });
+        }
+      }
+
+      console.log(`[ig-debug] scroll ${scrollIdx}: collected=${collected.size}`);
+      if (collected.size >= maxResults) break;
+      if (collected.size === sizeBefore) {
+        stagnantRounds++;
+        if (stagnantRounds >= 2) break; // 2 scrolls in a row with no new results = end of list
+      } else {
+        stagnantRounds = 0;
+      }
+
+      // Human-like scroll: variable distance, mouse jitter, randomised pause
+      await page.mouse.move(200 + Math.random() * 600, 300 + Math.random() * 400, { steps: 6 });
+      await page.evaluate(() => window.scrollBy(0, 800 + Math.random() * 800));
+      await randDelay(page, 1200, 2800);
+      // Occasionally a longer pause like reading
+      if (Math.random() < 0.25) await randDelay(page, 1500, 3500);
+    }
+
+    await snap('search page after scrolling');
+  }
+
+  const uiResults = Array.from(collected.values()).slice(0, maxResults);
+  debug.steps.push({ label: 'merged results', count: uiResults.length, usernames: uiResults.map(u => u.username) });
+  console.log('[ig-debug] merged results:', uiResults.map(u => u.username));
 
   if (!uiResults.length) {
     const err = new Error('Instagram returned no results — search may be rate-limited or blocked');
@@ -300,16 +337,23 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
     throw err;
   }
 
-  // Visit each profile to get follower count (search page doesn't show it)
+  // Visit each profile to get follower count (search page doesn't show it).
+  // Skip profiles that already have followers from the topsearch API to reduce request volume.
   // Human-like: random delays between visits, mouse movement, occasional scrolling
   const enriched = [];
   for (let idx = 0; idx < uiResults.length; idx++) {
     const u = uiResults[idx];
-    let followers = '';
-    let bio = u.full_name || '';
+    let followers = u.followers || '';
+    let bio = u.bio || u.full_name || '';
 
-    // Pause between profiles — longer for first few, gradually shorter (like a real browser)
-    if (idx > 0) {
+    // If we already have followers from the API, skip the profile visit entirely
+    if (followers) {
+      enriched.push({ username: u.username, full_name: u.full_name, followers, bio });
+      continue;
+    }
+
+    // Pause between profile visits — longer for first few, gradually shorter (like a real browser)
+    if (enriched.length > 0) {
       await randDelay(page, 3000, 7000);
       // Random mouse jitter
       await page.mouse.move(
@@ -319,8 +363,20 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
       );
     }
 
+    // Check if browser is still alive before each visit
+    if (page.isClosed()) {
+      console.log('[ig-debug] page closed mid-loop, returning collected results');
+      break;
+    }
+
     try {
       await page.goto(`https://www.instagram.com/${u.username}/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      // If we landed on a non-profile path (login, error, etc), skip this user
+      if (!page.url().includes(`/${u.username}`)) {
+        console.log(`[ig-debug] profile redirect for ${u.username} → ${page.url()}, skipping`);
+        enriched.push({ username: u.username, full_name: u.full_name, followers: '', bio });
+        continue;
+      }
       await randDelay(page, 1800, 3500);
       // Occasionally scroll on the profile page like a real user reading
       if (Math.random() < 0.4) {
@@ -358,7 +414,16 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
       });
       followers = profileData.followers || '';
       bio = profileData.bio || bio;
-    } catch { /* skip — use empty */ }
+    } catch (e) {
+      console.log(`[ig-debug] profile visit failed for ${u.username}: ${e.message.slice(0, 100)}`);
+      enriched.push({ username: u.username, full_name: u.full_name, followers: '', bio });
+      // If browser is dead, bail out and return what we have
+      if (e.message.includes('closed') || e.message.includes('Target')) {
+        console.log('[ig-debug] browser appears closed, returning collected results');
+        break;
+      }
+      continue;
+    }
     enriched.push({ username: u.username, full_name: u.full_name, followers, bio });
   }
 
