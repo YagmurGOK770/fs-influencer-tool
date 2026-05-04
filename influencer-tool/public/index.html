@@ -1591,6 +1591,7 @@ base.forEach(r => {
 
     ran = true;
     allRows = [...newEntries, ...JSON.parse(JSON.stringify(base))];
+    window.BASE_DATA = allRows;
     const now = new Date();
     document.getElementById('sDate').textContent = now.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
     document.getElementById('sTime').textContent = now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
@@ -2089,6 +2090,7 @@ async function eInit() {
     if (resp.ok) {
       if (data.influencers && data.influencers.length > 0) {
         allRows = data.influencers.map((inf, i) => ({ ...inf, num: i + 1, ok: false, isNew: false }));
+        window.BASE_DATA = allRows;
         console.log('[db-load] allRows set:', allRows.length);
         updateBucketFilter();
         applyFilter();
