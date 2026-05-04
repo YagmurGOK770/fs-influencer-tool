@@ -192,6 +192,8 @@ async function screenshot(page) {
   } catch { return null; }
 }
 
+const randDelay = (page, min, max) => page.waitForTimeout(min + Math.random() * (max - min));
+
 async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
   const debug = { steps: [] };
   const snap = async (label) => {
@@ -206,14 +208,18 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
 
   if (page.url().includes('/accounts/login')) {
     if (hadCookies) {
-      const err = Object.assign(new Error('Saved Instagram cookie expired — re-paste a fresh sessionid'), { code: 'cookie_expired', debug });
+      const err = Object.assign(new Error('Saved Instagram cookie expired — please log in again via the 🔑 button'), { code: 'cookie_expired', debug });
       throw err;
     }
     await loginInstagram(page);
     await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
     await snap('after login');
   }
-  await page.waitForTimeout(2000);
+
+  // Human-like pause + mouse movement before navigating to search
+  await randDelay(page, 1500, 3500);
+  await page.mouse.move(200 + Math.random() * 400, 200 + Math.random() * 300);
+  await randDelay(page, 500, 1200);
 
   const q = encodeURIComponent(keyword.replace(/^#/, ''));
 
@@ -241,11 +247,18 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
 
   // Fallback: scrape the search UI directly
   await page.goto(`https://www.instagram.com/explore/search/keyword/?q=${q}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-  await page.waitForTimeout(3000);
+  await randDelay(page, 2500, 4000);
+
+  // Detect challenge page
+  if (page.url().includes('/challenge/')) {
+    await snap('challenge page');
+    throw Object.assign(new Error('Instagram showed a challenge — please log in again via the 🔑 button'), { code: 'challenge', debug });
+  }
+
   await page.evaluate(() => window.scrollBy(0, 1500));
-  await page.waitForTimeout(1500);
+  await randDelay(page, 1000, 2000);
   await page.evaluate(() => window.scrollBy(0, 1500));
-  await page.waitForTimeout(1000);
+  await randDelay(page, 800, 1500);
   await snap('search page');
 
   const SKIP_USERNAMES = new Set(['p','reels','explore','accounts','direct','stories','tv','reel','about','press','blog','jobs','help','api','privacy','terms','hashtag','locations','music']);
@@ -415,6 +428,19 @@ export default async function handler(req, res) {
       source:   `${PLATFORM_LABELS[platform]} native search`,
       foundVia: keyword,
     }));
+
+    // Auto-save cookies back to Supabase after a successful scrape so future runs skip login
+    try {
+      const cookieDomain = { instagram: 'https://www.instagram.com', tiktok: 'https://www.tiktok.com', x: 'https://x.com' }[platform];
+      if (cookieDomain && process.env.SUPABASE_URL) {
+        const freshCookies = await context.cookies(cookieDomain);
+        if (freshCookies.length) {
+          const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+          await supabase.from('platform_sessions')
+            .upsert({ platform, cookies: freshCookies, updated_at: new Date().toISOString() }, { onConflict: 'platform' });
+        }
+      }
+    } catch (e) { console.warn('[browser-scrape] cookie save failed:', e.message); }
 
     await browser.close();
     return res.status(200).json({ influencers, platform, keyword, debug });

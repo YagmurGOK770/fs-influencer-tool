@@ -621,7 +621,7 @@ function renderSources() {
     if (platformKey) {
       const nativeCls = s.native ? 'on' : '';
       const sessionBtn = (s.native && platformKey !== 'youtube')
-        ? `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}')" title="Paste ${s.name} session cookie">🔑</button>`
+        ? `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}',this)" title="Log in to ${s.name} in a live browser tab">🔑</button>`
         : '';
       nativeControls = `
         <button class="native-badge ${nativeCls}" onclick="event.stopPropagation();toggleNative('${s.id}')" title="${s.native ? 'Switch to Google search' : 'Switch to native platform search'}">
@@ -711,32 +711,62 @@ function toggleNative(id) {
   renderSources();
 }
 
-async function openSessionModal(platform) {
-  const LABELS = { instagram:'Instagram', tiktok:'TikTok', x:'X / Twitter' };
-  const COOKIE_NAMES = { instagram:'sessionid', tiktok:'sessionid', x:'auth_token' };
-  const name = LABELS[platform];
-  const cookieName = COOKIE_NAMES[platform];
+function showLoginWaitDialog(name) {
+  return new Promise(resolve => {
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:14px;padding:28px 32px;max-width:420px;width:90%;text-align:center;display:flex;flex-direction:column;gap:16px;box-shadow:0 8px 40px rgba(0,0,0,0.18)">
+        <div style="font-size:36px">🔐</div>
+        <div style="font-weight:800;font-size:16px">Log in to ${name}</div>
+        <div style="font-size:13px;color:#555;line-height:1.6">
+          A browser tab just opened with the ${name} login page.<br><br>
+          Log in with your scraping account, then come back here and click <strong>Done</strong>.
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:4px">
+          <button id="loginWaitCancel" style="padding:9px 22px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;background:#fff;font-size:13px">Cancel</button>
+          <button id="loginWaitDone" style="padding:9px 26px;border:none;border-radius:8px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:700;font-size:13px">Done ✓</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#loginWaitDone').onclick = () => { modal.remove(); resolve(true); };
+    modal.querySelector('#loginWaitCancel').onclick = () => { modal.remove(); resolve(false); };
+  });
+}
 
-  const value = prompt(
-    `Paste ${name} session cookie (${cookieName}):\n\n` +
-    `1. Open ${name} in your browser, log in to your scraping account\n` +
-    `2. Open DevTools (F12) → Application → Cookies → https://www.${platform === 'x' ? 'x' : platform}.com\n` +
-    `3. Copy the value of "${cookieName}" cookie\n` +
-    `4. Paste below:`
-  );
-  if (!value || !value.trim()) return;
+async function openSessionModal(platform, triggerBtn) {
+  const LABELS = { instagram:'Instagram', tiktok:'TikTok', x:'X / Twitter' };
+  const name = LABELS[platform] || platform;
+
+  // Show loading state on the button
+  const origLabel = triggerBtn ? triggerBtn.textContent : null;
+  if (triggerBtn) triggerBtn.textContent = '⏳';
 
   try {
-    const resp = await fetch('/api/save-session', {
+    const resp = await fetch('/api/browser-session', {
       method: 'POST',
       headers: getApiHeaders(),
-      body: JSON.stringify({ platform, sessionId: value.trim() })
+      body: JSON.stringify({ platform })
     });
     const data = await resp.json();
-    if (!resp.ok || !data.ok) throw new Error(data.error || 'Failed to save');
-    alert(`✓ ${name} session saved — native search will use this cookie from now on.`);
+
+    if (!resp.ok || !data.liveURL) {
+      alert('Could not open browser: ' + (data.error || 'unknown error'));
+      return;
+    }
+
+    // Open the live browser tab — user logs in there
+    window.open(data.liveURL, '_blank');
+
+    // Show wait dialog
+    const confirmed = await showLoginWaitDialog(name);
+    if (confirmed) {
+      logLine(`✓ ${name}: logged in — session cookies will be captured on the next search run`, 'info');
+    }
   } catch (e) {
-    alert(`Failed to save ${name} session: ${e.message}`);
+    alert(`Failed to open ${name} browser: ${e.message}`);
+  } finally {
+    if (triggerBtn && origLabel) triggerBtn.textContent = origLabel;
   }
 }
 
@@ -1567,6 +1597,15 @@ async function runLiveSearch() {
         if (data.error) {
           const msg = data.message || data.error;
           logLine(`⚠ ${srcObj.name}: ${msg}`, 'warn');
+          // Challenge or expired cookie — offer to re-login then retry this combo
+          if (data.error === 'challenge' || data.error === 'cookie_expired') {
+            const retry = confirm(`${srcObj.name} session was blocked by Instagram.\n\nClick OK to open a login tab and retry this search.`);
+            if (retry) {
+              await openSessionModal(platformKey, null);
+              i--; // retry same combo
+              continue;
+            }
+          }
           status.textContent = `⚠ [${i + 1}/${selected.length}] ${srcObj.name}: ${msg.slice(0, 120)} — skipping`;
           await new Promise(r => setTimeout(r, 2500));
           continue;
