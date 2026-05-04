@@ -1322,8 +1322,9 @@ base.forEach(r => {
       if(!h) continue;
       if(existingHandles.has(h)) { skippedDup++; continue; }
 
-      const fNum = parseFollowers(r.followers);
-      if(fNum < cfg.minFollowers) { skippedFollowers++; continue; }
+      const hasFollowers = r.followers && String(r.followers).trim() !== '';
+      const fNum = hasFollowers ? parseFollowers(r.followers) : null;
+      if(fNum !== null && cfg.minFollowers > 0 && fNum < cfg.minFollowers) { skippedFollowers++; continue; }
 
       if(score < MIN_RELEVANCE) { skippedRelevance++; continue; }
 
