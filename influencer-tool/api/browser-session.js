@@ -51,7 +51,7 @@ export default async function handler(req, res) {
     }
 
     const loginDest = encodeURIComponent(LOGIN_URLS[platform]);
-    const liveURL = `https://production-lon.browserless.io/live/?i=${sessionId}&url=${loginDest}`;
+    const liveURL = `https://production-lon.browserless.io/live/?i=${sessionId}&token=${TOKEN}&url=${loginDest}`;
 
     return res.status(200).json({ liveURL, sessionId });
   } catch (err) {
