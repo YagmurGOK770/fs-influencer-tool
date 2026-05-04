@@ -217,9 +217,17 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
   }
 
   // Human-like pause + mouse movement before navigating to search
-  await randDelay(page, 1500, 3500);
-  await page.mouse.move(200 + Math.random() * 400, 200 + Math.random() * 300);
-  await randDelay(page, 500, 1200);
+  // Multiple mouse moves with steps to simulate organic motion
+  await randDelay(page, 2000, 4000);
+  await page.mouse.move(200 + Math.random() * 400, 200 + Math.random() * 300, { steps: 8 });
+  await randDelay(page, 600, 1500);
+  await page.mouse.move(400 + Math.random() * 500, 300 + Math.random() * 400, { steps: 6 });
+  await randDelay(page, 400, 1000);
+  // Small scroll on home feed like a real user
+  if (Math.random() < 0.6) {
+    await page.evaluate(() => window.scrollBy(0, 200 + Math.random() * 300));
+    await randDelay(page, 700, 1600);
+  }
 
   const q = encodeURIComponent(keyword.replace(/^#/, ''));
 
@@ -293,13 +301,32 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
   }
 
   // Visit each profile to get follower count (search page doesn't show it)
+  // Human-like: random delays between visits, mouse movement, occasional scrolling
   const enriched = [];
-  for (const u of uiResults) {
+  for (let idx = 0; idx < uiResults.length; idx++) {
+    const u = uiResults[idx];
     let followers = '';
     let bio = u.full_name || '';
+
+    // Pause between profiles — longer for first few, gradually shorter (like a real browser)
+    if (idx > 0) {
+      await randDelay(page, 3000, 7000);
+      // Random mouse jitter
+      await page.mouse.move(
+        100 + Math.random() * 800,
+        100 + Math.random() * 500,
+        { steps: 5 + Math.floor(Math.random() * 10) }
+      );
+    }
+
     try {
       await page.goto(`https://www.instagram.com/${u.username}/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-      await page.waitForTimeout(2000);
+      await randDelay(page, 1800, 3500);
+      // Occasionally scroll on the profile page like a real user reading
+      if (Math.random() < 0.4) {
+        await page.evaluate(() => window.scrollBy(0, 300 + Math.random() * 400));
+        await randDelay(page, 800, 1800);
+      }
       const profileData = await page.evaluate(() => {
         // Primary: profile stats list — li[2] is the Followers item
         // XPath equivalent: header section ul li:nth-child(2) span[title], or innermost span

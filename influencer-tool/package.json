@@ -4,7 +4,7 @@
   "description": "Live influencer discovery + enrichment tool for FoodStyles",
   "private": true,
   "scripts": {
-    "dev": "vercel dev",
+    "dev": "echo 'use vercel dev directly'",
     "deploy": "vercel --prod"
   },
   "engines": {

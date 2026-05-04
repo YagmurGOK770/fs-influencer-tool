@@ -621,7 +621,7 @@ function renderSources() {
     if (platformKey) {
       const nativeCls = s.native ? 'on' : '';
       const sessionBtn = (s.native && platformKey !== 'youtube')
-        ? `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}',this)" title="Log in to ${s.name} in a live browser tab">🔑</button>`
+        ? `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}',this)" title="Paste your ${s.name} session cookie">🔑</button>`
         : '';
       nativeControls = `
         <button class="native-badge ${nativeCls}" onclick="event.stopPropagation();toggleNative('${s.id}')" title="${s.native ? 'Switch to Google search' : 'Switch to native platform search'}">
@@ -711,61 +711,41 @@ function toggleNative(id) {
   renderSources();
 }
 
-function showLoginWaitDialog(name) {
-  return new Promise(resolve => {
-    const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center';
-    modal.innerHTML = `
-      <div style="background:#fff;border-radius:14px;padding:28px 32px;max-width:420px;width:90%;text-align:center;display:flex;flex-direction:column;gap:16px;box-shadow:0 8px 40px rgba(0,0,0,0.18)">
-        <div style="font-size:36px">🔐</div>
-        <div style="font-weight:800;font-size:16px">Log in to ${name}</div>
-        <div style="font-size:13px;color:#555;line-height:1.6">
-          A browser tab just opened with the ${name} login page.<br><br>
-          Log in with your scraping account, then come back here and click <strong>Done</strong>.
-        </div>
-        <div style="display:flex;gap:8px;justify-content:center;margin-top:4px">
-          <button id="loginWaitCancel" style="padding:9px 22px;border:1.5px solid #ddd;border-radius:8px;cursor:pointer;background:#fff;font-size:13px">Cancel</button>
-          <button id="loginWaitDone" style="padding:9px 26px;border:none;border-radius:8px;cursor:pointer;background:#1a1a1a;color:#fff;font-weight:700;font-size:13px">Done ✓</button>
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-    modal.querySelector('#loginWaitDone').onclick = () => { modal.remove(); resolve(true); };
-    modal.querySelector('#loginWaitCancel').onclick = () => { modal.remove(); resolve(false); };
-  });
-}
-
 async function openSessionModal(platform, triggerBtn) {
   const LABELS = { instagram:'Instagram', tiktok:'TikTok', x:'X / Twitter' };
+  const COOKIE_NAMES = { instagram:'sessionid', tiktok:'sessionid', x:'auth_token' };
+  const DOMAINS = { instagram:'instagram.com', tiktok:'tiktok.com', x:'x.com' };
   const name = LABELS[platform] || platform;
+  const cookieName = COOKIE_NAMES[platform];
+  const domain = DOMAINS[platform];
 
-  // Show loading state on the button
+  const instructions =
+    `Paste your ${name} ${cookieName} cookie value:\n\n` +
+    `1. Open ${domain} in another tab and log in\n` +
+    `2. Open DevTools (F12) → Application → Cookies → ${domain}\n` +
+    `3. Copy the value of "${cookieName}"\n` +
+    `4. Paste it below`;
+
+  const value = prompt(instructions);
+  if (!value || !value.trim()) return;
+
   const origLabel = triggerBtn ? triggerBtn.textContent : null;
   if (triggerBtn) triggerBtn.textContent = '⏳';
 
   try {
-    const resp = await fetch('/api/browser-session', {
+    const resp = await fetch('/api/save-session', {
       method: 'POST',
       headers: getApiHeaders(),
-      body: JSON.stringify({ platform })
+      body: JSON.stringify({ platform, sessionId: value.trim() })
     });
     const data = await resp.json();
-
-    if (!resp.ok || !data.liveURL) {
-      const detail = data.receivedKeys ? `\n\nBrowserless returned keys: ${data.receivedKeys.join(', ')}` : '';
-      alert('Could not open browser: ' + (data.error || 'unknown error') + detail);
+    if (!resp.ok) {
+      alert(`Could not save session: ${data.error || 'unknown error'}`);
       return;
     }
-
-    // Open the live browser tab — user logs in there
-    window.open(data.liveURL, '_blank');
-
-    // Show wait dialog
-    const confirmed = await showLoginWaitDialog(name);
-    if (confirmed) {
-      logLine(`✓ ${name}: logged in — session cookies will be captured on the next search run`, 'info');
-    }
+    logLine(`✓ ${name}: session saved (${data.cookieCount} cookie). Future scrapes will skip login.`, 'info');
   } catch (e) {
-    alert(`Failed to open ${name} browser: ${e.message}`);
+    alert(`Failed to save ${name} session: ${e.message}`);
   } finally {
     if (triggerBtn && origLabel) triggerBtn.textContent = origLabel;
   }
