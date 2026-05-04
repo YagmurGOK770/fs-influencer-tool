@@ -34,25 +34,42 @@ export default async function handler(req, res) {
       `https://production-lon.browserless.io/session?token=${TOKEN}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ttl: 600000 }) }
     );
+    const rawText = await sessionResp.text();
+    console.log('[browser-session] raw response:', rawText.slice(0, 400));
+
     if (!sessionResp.ok) {
-      const text = await sessionResp.text();
-      return res.status(502).json({ error: `Browserless error: ${text.slice(0, 200)}` });
+      return res.status(502).json({ error: `Browserless error (${sessionResp.status}): ${rawText.slice(0, 200)}` });
     }
-    const session = await sessionResp.json();
+
+    let session;
+    try {
+      session = JSON.parse(rawText);
+    } catch (e) {
+      return res.status(502).json({ error: `Browserless returned non-JSON: ${rawText.slice(0, 200)}` });
+    }
+    console.log('[browser-session] session keys:', Object.keys(session).join(', '));
+
     // session keys: { id, connect (wsEndpoint), cloudEndpointId, ttl, stop, browserQL }
-    const { id: sessionId, connect: connectURL } = session;
+    const sessionId = session.id;
+    const connectURL = session.connect; // e.g. "wss://production-lon.browserless.io/playwright/chromium?..."
 
-    if (!sessionId || !connectURL) {
-      return res.status(502).json({ error: 'Browserless session missing id or connect URL', session });
+    if (!sessionId) {
+      return res.status(502).json({ error: 'Browserless session missing id', session });
     }
 
-    // Connect Playwright to this specific session and navigate to the login page
-    // so the live viewer shows the login page immediately when the user opens it
-    const browser = await chromium.connect({ wsEndpoint: connectURL });
+    // Use the generic Playwright endpoint with the token — session's connectURL may need
+    // the token appended if it isn't already included
+    const wsEndpoint = connectURL
+      ? (connectURL.includes('token=') ? connectURL : `${connectURL}&token=${TOKEN}`)
+      : `wss://production-lon.browserless.io/playwright/chromium?token=${TOKEN}`;
+
+    console.log('[browser-session] connecting to:', wsEndpoint.replace(TOKEN, 'TOKEN'));
+
+    const browser = await chromium.connect({ wsEndpoint });
     const context = browser.contexts()[0] || await browser.newContext();
     const page = context.pages()[0] || await context.newPage();
     await page.goto(LOGIN_URLS[platform], { waitUntil: 'domcontentloaded', timeout: 20000 });
-    // Do NOT close the browser — session must stay open for the user to interact with
+    // Do NOT close — session stays live for the user
 
     const liveURL = `https://production-lon.browserless.io/live/?i=${sessionId}&token=${TOKEN}`;
     return res.status(200).json({ liveURL, sessionId });
