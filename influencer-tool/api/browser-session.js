@@ -38,17 +38,33 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: `Browserless error: ${text.slice(0, 200)}` });
     }
     const session = await sessionResp.json();
-    console.log('[browser-session] session created:', JSON.stringify(session).slice(0, 300));
+    const sessionKeys = Object.keys(session);
+    console.log('[browser-session] session response keys:', sessionKeys.join(', '));
+    console.log('[browser-session] session response:', JSON.stringify(session).slice(0, 500));
 
-    // liveURL is the interactive browser the user opens — append the login URL so it navigates there
-    const baseURL = session.liveURL || session.live_url || session.url;
+    // Browserless V2 session API returns different keys depending on plan/version
+    // Try all known key names for the live viewer URL
+    const baseURL = session.liveURL
+      || session.live_url
+      || session.liveUrl
+      || session.devtoolsUrl
+      || session.devtools_url
+      || session.url;
+
     if (!baseURL) {
-      return res.status(502).json({ error: 'Browserless did not return a liveURL', session });
+      // Return the full session object in the error so we can see what keys came back
+      return res.status(502).json({
+        error: 'Browserless did not return a liveURL',
+        receivedKeys: sessionKeys,
+        session,
+      });
     }
 
-    // Encode the login URL as a destination for the live viewer
+    // Append the login URL so the live tab navigates there on open
     const loginDest = encodeURIComponent(LOGIN_URLS[platform]);
-    const liveURL = `${baseURL}&url=${loginDest}`;
+    const liveURL = baseURL.includes('?')
+      ? `${baseURL}&url=${loginDest}`
+      : `${baseURL}?url=${loginDest}`;
 
     return res.status(200).json({ liveURL, sessionId: session.id || session.sessionId });
   } catch (err) {

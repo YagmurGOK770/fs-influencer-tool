@@ -751,7 +751,8 @@ async function openSessionModal(platform, triggerBtn) {
     const data = await resp.json();
 
     if (!resp.ok || !data.liveURL) {
-      alert('Could not open browser: ' + (data.error || 'unknown error'));
+      const detail = data.receivedKeys ? `\n\nBrowserless returned keys: ${data.receivedKeys.join(', ')}` : '';
+      alert('Could not open browser: ' + (data.error || 'unknown error') + detail);
       return;
     }
 
