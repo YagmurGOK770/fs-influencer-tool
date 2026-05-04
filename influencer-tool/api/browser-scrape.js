@@ -220,10 +220,16 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
   // Fallback: scrape the search UI directly
   await page.goto(`https://www.instagram.com/explore/search/keyword/?q=${q}`, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForTimeout(3000);
+  // Scroll to load more results
+  await page.evaluate(() => window.scrollBy(0, 1500));
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => window.scrollBy(0, 1500));
+  await page.waitForTimeout(1000);
 
-  const uiResults = await page.evaluate((max) => {
-    // Account result rows on the search page have a profile-pic <img> next to a username link
-    const links = Array.from(document.querySelectorAll('a[href^="/"][role="link"]'));
+  const SKIP_USERNAMES = new Set(['p','reels','explore','accounts','direct','stories','tv','reel','about','press','blog','jobs','help','api','privacy','terms','hashtag','locations','music']);
+
+  const uiResults = await page.evaluate((max, skip) => {
+    const links = Array.from(document.querySelectorAll('a[href^="/"]'));
     const seen = new Set();
     const out = [];
     for (const a of links) {
@@ -231,19 +237,16 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
       const m = href.match(/^\/([A-Za-z0-9._]+)\/?$/);
       if (!m) continue;
       const username = m[1];
-      if (seen.has(username) || ['p','reels','explore','accounts','direct','stories'].includes(username)) continue;
+      if (seen.has(username) || skip.includes(username)) continue;
       seen.add(username);
-      // Look for a sibling/nearby span that holds the display name
-      const card = a.closest('div[role="none"], div');
-      const nameEl = card ? card.querySelector('span:not(:has(*))') : null;
-      out.push({
-        username,
-        full_name: (nameEl?.textContent || '').trim(),
-      });
+      const card = a.closest('li, [role="listitem"], div');
+      const spans = card ? Array.from(card.querySelectorAll('span')) : [];
+      const nameEl = spans.find(s => !s.children.length && s.textContent.trim() && s.textContent.trim() !== username);
+      out.push({ username, full_name: (nameEl?.textContent || '').trim() });
       if (out.length >= max) break;
     }
     return out;
-  }, maxResults);
+  }, maxResults, [...SKIP_USERNAMES]);
 
   if (!uiResults.length) {
     throw new Error('Instagram returned no results — search may be rate-limited or blocked');
@@ -251,42 +254,40 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
 
   // Visit each profile to get follower count (search page doesn't show it)
   const enriched = [];
-  for (const u of uiResults.slice(0, Math.min(uiResults.length, 10))) {
+  for (const u of uiResults) {
     let followers = '';
     let bio = u.full_name || '';
     try {
-      await page.goto(`https://www.instagram.com/${u.username}/`, { waitUntil: 'domcontentloaded', timeout: 12000 });
-      await page.waitForTimeout(1500);
+      await page.goto(`https://www.instagram.com/${u.username}/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await page.waitForTimeout(2000);
       const profileData = await page.evaluate(() => {
-        // Try meta description: "X Followers, Y Following, Z Posts"
-        const meta = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
-        const mMatch = meta.match(/([\d,.]+[KkMmBb]?)\s*Followers?/i);
-        // Try JSON-LD / window._sharedData
-        let jsonFollowers = '';
-        try {
-          const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
-          for (const s of scripts) {
-            const d = JSON.parse(s.textContent || '');
-            if (d.interactionStatistic) {
-              const stat = Array.isArray(d.interactionStatistic) ? d.interactionStatistic : [d.interactionStatistic];
-              const f = stat.find(x => x.interactionType?.includes('Follow'));
-              if (f?.userInteractionCount) { jsonFollowers = String(f.userInteractionCount); break; }
+        // Primary: profile stats list — li[2] is the Followers item
+        // XPath equivalent: header section ul li:nth-child(2) span[title], or innermost span
+        let followers = '';
+        const followerLi = document.querySelector('header section ul li:nth-child(2)');
+        if (followerLi) {
+          // The count is in a span with a title attribute (abbreviated), or the innermost span
+          const titleSpan = followerLi.querySelector('span[title]');
+          if (titleSpan) {
+            followers = titleSpan.getAttribute('title').replace(/,/g, '');
+          } else {
+            // Innermost span holding the number (span > span > span from the XPath)
+            const spans = followerLi.querySelectorAll('span span span, span span, span');
+            for (const s of spans) {
+              const t = s.textContent.trim();
+              if (/^[\d.,]+[KkMm]?$/.test(t)) { followers = t; break; }
             }
           }
-        } catch {}
-        // Try page text — look for "followers" label near a number
-        let textFollowers = '';
-        const spans = Array.from(document.querySelectorAll('span, li'));
-        for (const el of spans) {
-          if (/followers/i.test(el.textContent) && el.textContent.length < 50) {
-            const numMatch = el.textContent.match(/([\d,.]+[KkMm]?)\s*[Ff]ollowers?/);
-            if (numMatch) { textFollowers = numMatch[1]; break; }
-          }
         }
-        return {
-          followers: jsonFollowers || (mMatch ? mMatch[1] : '') || textFollowers,
-          bio: document.querySelector('meta[property="og:description"]')?.getAttribute('content') || meta,
-        };
+        // Fallback: meta description "X Followers, Y Following, Z Posts"
+        if (!followers) {
+          const meta = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+          const m = meta.match(/([\d,.]+[KkMmBb]?)\s*Followers?/i);
+          if (m) followers = m[1];
+        }
+        const bio = document.querySelector('meta[property="og:description"]')?.getAttribute('content')
+          || document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+        return { followers, bio };
       });
       followers = profileData.followers || '';
       bio = profileData.bio || bio;
