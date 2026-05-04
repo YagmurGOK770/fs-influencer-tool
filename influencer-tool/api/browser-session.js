@@ -1,13 +1,12 @@
 // POST /api/browser-session
 // Body: { platform: 'instagram' | 'tiktok' | 'x' }
-// Creates a Browserless live session, navigates to the platform login page,
-// and returns a liveURL the frontend can open in a new tab for manual login.
+// Creates a Browserless persistent session and returns a liveURL the user opens
+// in a new tab to log in manually. No Playwright needed here — the browser is
+// controlled by the user, not the server.
 
 import { checkAuth } from './_auth.js';
-import { chromium } from 'playwright-core';
 
 const TOKEN = process.env.BROWSERLESS_TOKEN;
-const WS_ENDPOINT = `wss://production-lon.browserless.io/playwright/chromium?token=${TOKEN}`;
 
 const LOGIN_URLS = {
   instagram: 'https://www.instagram.com/accounts/login/',
@@ -29,26 +28,29 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Create a persistent Browserless session with 10-minute TTL
+    // Create a persistent Browserless session (10-minute TTL)
     const sessionResp = await fetch(
       `https://production-lon.browserless.io/session?token=${TOKEN}`,
       { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ttl: 600000 }) }
     );
     if (!sessionResp.ok) {
       const text = await sessionResp.text();
-      return res.status(502).json({ error: `Browserless session error: ${text.slice(0, 200)}` });
+      return res.status(502).json({ error: `Browserless error: ${text.slice(0, 200)}` });
     }
     const session = await sessionResp.json();
-    const { id: sessionId, liveURL, connectURL } = session;
+    console.log('[browser-session] session created:', JSON.stringify(session).slice(0, 300));
 
-    // Connect Playwright and navigate to login page so user lands there immediately
-    const browser = await chromium.connect({ wsEndpoint: connectURL || WS_ENDPOINT });
-    const context = browser.contexts()[0] || await browser.newContext();
-    const page = await context.newPage();
-    await page.goto(LOGIN_URLS[platform], { waitUntil: 'domcontentloaded', timeout: 20000 });
-    // Don't close — leave session live for manual login
+    // liveURL is the interactive browser the user opens — append the login URL so it navigates there
+    const baseURL = session.liveURL || session.live_url || session.url;
+    if (!baseURL) {
+      return res.status(502).json({ error: 'Browserless did not return a liveURL', session });
+    }
 
-    return res.status(200).json({ liveURL, sessionId });
+    // Encode the login URL as a destination for the live viewer
+    const loginDest = encodeURIComponent(LOGIN_URLS[platform]);
+    const liveURL = `${baseURL}&url=${loginDest}`;
+
+    return res.status(200).json({ liveURL, sessionId: session.id || session.sessionId });
   } catch (err) {
     console.error('[browser-session] error:', err.message);
     return res.status(500).json({ error: err.message });
