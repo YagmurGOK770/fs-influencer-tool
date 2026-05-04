@@ -44,29 +44,36 @@ export default async function handler(req, res) {
     catch (e) { return res.status(502).json({ error: `Non-JSON from Browserless: ${rawText.slice(0, 200)}` }); }
 
     const sessionId = session.id;
+    const sessionBqlEndpoint = session.browserQL; // e.g. https://production-lon.browserless.io/chromium/bql?sessionId=xxx
     if (!sessionId) {
       return res.status(502).json({ error: 'No session id returned', session });
     }
 
-    // Step 2: Use BrowserQL to navigate the session to the login page
+    console.log('[browser-session] session keys:', Object.keys(session).join(', '));
+    console.log('[browser-session] browserQL endpoint:', sessionBqlEndpoint);
+
+    // Step 2: Navigate the live session's browser to the login page using the session's own BrowserQL endpoint
     const loginUrl = LOGIN_URLS[platform];
-    const bqlQuery = `
-      mutation Navigate {
-        goto(url: "${loginUrl}", waitUntil: domContentLoaded) {
-          status
-        }
-      }
-    `;
-    const bqlResp = await fetch(
-      `https://production-lon.browserless.io/chromium/bql?token=${TOKEN}&sessionId=${sessionId}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: bqlQuery }),
-      }
-    );
+    const bqlEndpoint = sessionBqlEndpoint
+      ? `${sessionBqlEndpoint}${sessionBqlEndpoint.includes('?') ? '&' : '?'}token=${TOKEN}`
+      : `https://production-lon.browserless.io/chromium/bql?token=${TOKEN}&sessionId=${sessionId}`;
+
+    const bqlResp = await fetch(bqlEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: `
+          mutation Navigate($url: String!) {
+            goto(url: $url, waitUntil: domContentLoaded) {
+              status
+            }
+          }
+        `,
+        variables: { url: loginUrl },
+      }),
+    });
     const bqlText = await bqlResp.text();
-    console.log('[browser-session] BQL navigate response:', bqlText.slice(0, 300));
+    console.log('[browser-session] BQL navigate response:', bqlText.slice(0, 400));
     // Don't fail if BQL navigation fails — live URL still works, user can navigate manually
 
     const liveURL = `https://production-lon.browserless.io/live/?i=${sessionId}&token=${TOKEN}`;
