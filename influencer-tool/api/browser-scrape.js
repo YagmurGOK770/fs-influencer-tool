@@ -228,7 +228,7 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
 
   const SKIP_USERNAMES = new Set(['p','reels','explore','accounts','direct','stories','tv','reel','about','press','blog','jobs','help','api','privacy','terms','hashtag','locations','music']);
 
-  const uiResults = await page.evaluate((max, skip) => {
+  const uiResults = await page.evaluate(({ max, skip }) => {
     const links = Array.from(document.querySelectorAll('a[href^="/"]'));
     const seen = new Set();
     const out = [];
@@ -246,7 +246,7 @@ async function scrapeInstagram(page, keyword, maxResults, hadCookies) {
       if (out.length >= max) break;
     }
     return out;
-  }, maxResults, [...SKIP_USERNAMES]);
+  }, { max: maxResults, skip: [...SKIP_USERNAMES] });
 
   if (!uiResults.length) {
     throw new Error('Instagram returned no results — search may be rate-limited or blocked');
