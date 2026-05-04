@@ -42,31 +42,18 @@ export default async function handler(req, res) {
     console.log('[browser-session] session response keys:', sessionKeys.join(', '));
     console.log('[browser-session] session response:', JSON.stringify(session).slice(0, 500));
 
-    // Browserless V2 session API returns different keys depending on plan/version
-    // Try all known key names for the live viewer URL
-    const baseURL = session.liveURL
-      || session.live_url
-      || session.liveUrl
-      || session.devtoolsUrl
-      || session.devtools_url
-      || session.url;
-
-    if (!baseURL) {
-      // Return the full session object in the error so we can see what keys came back
-      return res.status(502).json({
-        error: 'Browserless did not return a liveURL',
-        receivedKeys: sessionKeys,
-        session,
-      });
+    // Browserless Sessions API returns: { id, connect (wsEndpoint), cloudEndpointId, ttl, stop, browserQL }
+    // The live viewer URL is constructed from the session id:
+    // https://production-lon.browserless.io/live/?i=<sessionId>
+    const sessionId = session.id;
+    if (!sessionId) {
+      return res.status(502).json({ error: 'Browserless did not return a session id', receivedKeys: sessionKeys });
     }
 
-    // Append the login URL so the live tab navigates there on open
     const loginDest = encodeURIComponent(LOGIN_URLS[platform]);
-    const liveURL = baseURL.includes('?')
-      ? `${baseURL}&url=${loginDest}`
-      : `${baseURL}?url=${loginDest}`;
+    const liveURL = `https://production-lon.browserless.io/live/?i=${sessionId}&url=${loginDest}`;
 
-    return res.status(200).json({ liveURL, sessionId: session.id || session.sessionId });
+    return res.status(200).json({ liveURL, sessionId });
   } catch (err) {
     console.error('[browser-session] error:', err.message);
     return res.status(500).json({ error: err.message });
