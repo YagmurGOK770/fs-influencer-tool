@@ -1,10 +1,11 @@
 // POST /api/browser-session
 // Body: { platform: 'instagram' | 'tiktok' | 'x' }
-// Creates a Browserless persistent session and returns a liveURL the user opens
-// in a new tab to log in manually. No Playwright needed here — the browser is
-// controlled by the user, not the server.
+// Creates a Browserless persistent session, navigates it to the platform login page
+// via Playwright using the session's own connectURL, then returns the liveURL
+// so the user can interact with it in a new tab.
 
 import { checkAuth } from './_auth.js';
+import { chromium } from 'playwright-core';
 
 const TOKEN = process.env.BROWSERLESS_TOKEN;
 
@@ -38,22 +39,24 @@ export default async function handler(req, res) {
       return res.status(502).json({ error: `Browserless error: ${text.slice(0, 200)}` });
     }
     const session = await sessionResp.json();
-    const sessionKeys = Object.keys(session);
-    console.log('[browser-session] session response keys:', sessionKeys.join(', '));
-    console.log('[browser-session] session response:', JSON.stringify(session).slice(0, 500));
+    // session keys: { id, connect (wsEndpoint), cloudEndpointId, ttl, stop, browserQL }
+    const { id: sessionId, connect: connectURL } = session;
 
-    // Browserless Sessions API returns: { id, connect (wsEndpoint), cloudEndpointId, ttl, stop, browserQL }
-    // The live viewer URL is constructed from the session id:
-    // https://production-lon.browserless.io/live/?i=<sessionId>
-    const sessionId = session.id;
-    if (!sessionId) {
-      return res.status(502).json({ error: 'Browserless did not return a session id', receivedKeys: sessionKeys });
+    if (!sessionId || !connectURL) {
+      return res.status(502).json({ error: 'Browserless session missing id or connect URL', session });
     }
 
-    const loginDest = encodeURIComponent(LOGIN_URLS[platform]);
-    const liveURL = `https://production-lon.browserless.io/live/?i=${sessionId}&token=${TOKEN}&url=${loginDest}`;
+    // Connect Playwright to this specific session and navigate to the login page
+    // so the live viewer shows the login page immediately when the user opens it
+    const browser = await chromium.connect({ wsEndpoint: connectURL });
+    const context = browser.contexts()[0] || await browser.newContext();
+    const page = context.pages()[0] || await context.newPage();
+    await page.goto(LOGIN_URLS[platform], { waitUntil: 'domcontentloaded', timeout: 20000 });
+    // Do NOT close the browser — session must stay open for the user to interact with
 
+    const liveURL = `https://production-lon.browserless.io/live/?i=${sessionId}&token=${TOKEN}`;
     return res.status(200).json({ liveURL, sessionId });
+
   } catch (err) {
     console.error('[browser-session] error:', err.message);
     return res.status(500).json({ error: err.message });
