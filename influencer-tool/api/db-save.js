@@ -1,9 +1,10 @@
 // POST /api/db-save
 // Body: { influencers: [...] }
 // Upserts each influencer by handle, writes snapshots for any changed fields.
+// Probes actual table columns on first call so unknown columns never break saves.
 
 import { createClient } from '@supabase/supabase-js';
-import { checkAuth, requireApiKey } from './_auth.js';
+import { checkAuth } from './_auth.js';
 
 const TRACKED_FIELDS = [
   'name', 'platform', 'ig_handle', 'ig_followers',
@@ -16,29 +17,61 @@ const TRACKED_FIELDS = [
 
 function toRow(inf) {
   return {
-    handle:         (inf.handle || '').toLowerCase().trim(),
-    name:           inf.name          || null,
-    platform:       inf.platform      || null,
-    ig_handle:      inf.igHandle      || null,
-    ig_followers:   inf.igFollowers   || null,
-    tt_handle:      inf.ttHandle      || null,
-    tt_followers:   inf.ttFollowers   || null,
-    yt_handle:      inf.ytHandle      || null,
-    yt_followers:   inf.ytFollowers   || null,
-    x_handle:       inf.xHandle       || null,
-    x_followers:    inf.xFollowers    || null,
-    followers:      inf.followers     || null,
-    content_labels: inf.contentLabels || null,
-    who_they_are:   inf.whoTheyAre    || null,
-    what_they_post: inf.whatTheyPost  || null,
-    tone_style:     inf.toneStyle     || null,
-    target_audience:inf.targetAudience|| null,
-    why_follow:     inf.whyFollow     || null,
-    found_via:      inf.foundVia      || null,
-    niche:          inf.niche         || null,
-    location:       inf.location      || null,
-    bucket:         inf.bucket        || null,
+    handle:          (inf.handle || '').toLowerCase().trim(),
+    name:            inf.name           || null,
+    platform:        inf.platform       || null,
+    ig_handle:       inf.igHandle       || null,
+    ig_followers:    inf.igFollowers    || null,
+    tt_handle:       inf.ttHandle       || null,
+    tt_followers:    inf.ttFollowers    || null,
+    yt_handle:       inf.ytHandle       || null,
+    yt_followers:    inf.ytFollowers    || null,
+    x_handle:        inf.xHandle        || null,
+    x_followers:     inf.xFollowers     || null,
+    followers:       inf.followers      || null,
+    content_labels:  inf.contentLabels  || null,
+    who_they_are:    inf.whoTheyAre     || null,
+    what_they_post:  inf.whatTheyPost   || null,
+    tone_style:      inf.toneStyle      || null,
+    target_audience: inf.targetAudience || null,
+    why_follow:      inf.whyFollow      || null,
+    found_via:       inf.foundVia       || null,
+    niche:           inf.niche          || null,
+    location:        inf.location       || null,
+    bucket:          inf.bucket         || null,
   };
+}
+
+// Cache known columns across warm invocations
+let knownColumns = null;
+
+async function getKnownColumns(supabase) {
+  if (knownColumns) return knownColumns;
+  // Fetch one row with no data to get column names from the response shape
+  const { data, error } = await supabase
+    .from('influencers')
+    .select('*')
+    .limit(1);
+  if (!error && data) {
+    if (data.length > 0) {
+      knownColumns = new Set(Object.keys(data[0]));
+    } else {
+      // Table is empty — insert a dummy probe row then delete it
+      // Instead just assume all columns exist; errors will surface per-row
+      knownColumns = null;
+      return null;
+    }
+  }
+  return knownColumns;
+}
+
+function filterRow(row, cols) {
+  if (!cols) return row;
+  const out = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (cols.has(k)) out[k] = v;
+  }
+  return out;
 }
 
 export default async function handler(req, res) {
@@ -59,13 +92,17 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'influencers array is required' });
   }
 
+  const cols = await getKnownColumns(supabase);
+
   const saved = [];
   const snapshots = [];
   const errors = [];
 
   for (const inf of influencers) {
-    const row = toRow(inf);
-    if (!row.handle) continue;
+    const fullRow = toRow(inf);
+    if (!fullRow.handle) continue;
+
+    const row = filterRow(fullRow, cols);
 
     // Fetch existing record to diff against
     const { data: existing } = await supabase
@@ -83,6 +120,8 @@ export default async function handler(req, res) {
 
     if (error) {
       errors.push({ handle: row.handle, error: error.message });
+      // Reset column cache in case schema changed
+      knownColumns = null;
       continue;
     }
 
@@ -91,6 +130,7 @@ export default async function handler(req, res) {
     // Diff and write snapshots for changed fields
     if (existing) {
       for (const field of TRACKED_FIELDS) {
+        if (cols && !cols.has(field)) continue;
         const oldVal = existing[field] ?? null;
         const newVal = row[field] ?? null;
         if (oldVal !== newVal) {
@@ -114,5 +154,6 @@ export default async function handler(req, res) {
     saved: saved.length,
     snapshots: snapshots.length,
     errors,
+    missing_columns: cols ? [] : ['unknown — table may be empty'],
   });
 }
