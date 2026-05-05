@@ -1,13 +1,20 @@
 // GET /api/db-changes
-// Returns influencers that have meaningful tracked changes:
-// followers (ig/tt/yt/x/total), platform, content_labels, who_they_are.
+// Returns all influencers that have snapshots, grouped by run.
+// Runs where every change has old_value = null are "first seen" entries.
 
 import { createClient } from '@supabase/supabase-js';
 import { checkAuth } from './_auth.js';
 
 const TRACKED = new Set([
-  'ig_followers', 'tt_followers', 'yt_followers', 'x_followers', 'followers',
-  'platform', 'content_labels', 'who_they_are'
+  'name', 'platform',
+  'ig_handle', 'ig_followers',
+  'tt_handle', 'tt_followers',
+  'yt_handle', 'yt_followers',
+  'x_handle', 'x_followers',
+  'followers',
+  'content_labels', 'who_they_are', 'what_they_post',
+  'tone_style', 'target_audience', 'why_follow',
+  'found_via', 'niche', 'location',
 ]);
 
 export default async function handler(req, res) {
@@ -23,7 +30,6 @@ export default async function handler(req, res) {
     process.env.SUPABASE_SERVICE_KEY
   );
 
-  // Fetch all snapshots with influencer info, ordered by influencer then date
   const { data: snapshots, error } = await supabase
     .from('influencer_snapshots')
     .select(`
@@ -44,12 +50,14 @@ export default async function handler(req, res) {
   }
 
   if (!snapshots || snapshots.length === 0) {
-    return res.status(200).json({ influencers: [] });
+    return res.status(200).json({ influencers: [], total: 0 });
   }
 
-  // Group by handle → then by run_at (ISO date string truncated to minute for grouping)
+  // Group by handle → run_at (to-the-second precision for batched saves)
   const byHandle = {};
   for (const s of snapshots) {
+    if (!TRACKED.has(s.field_name)) continue;
+
     if (!byHandle[s.handle]) {
       const inf = s.influencers || {};
       byHandle[s.handle] = {
@@ -63,8 +71,8 @@ export default async function handler(req, res) {
       };
     }
 
-    // Group changes within the same run (bucket by minute)
-    const runKey = s.run_at ? s.run_at.slice(0, 16) : 'unknown';
+    // Group by exact second — batched saves share the same run_at
+    const runKey = s.run_at ? s.run_at.slice(0, 19) : 'unknown';
     if (!byHandle[s.handle].runs[runKey]) {
       byHandle[s.handle].runs[runKey] = {
         runAt: s.run_at,
@@ -72,23 +80,32 @@ export default async function handler(req, res) {
       };
     }
 
-    if (!TRACKED.has(s.field_name)) continue;
     byHandle[s.handle].runs[runKey].changes.push({
       field: s.field_name,
       oldValue: s.old_value,
-      newValue: s.new_value
+      newValue: s.new_value,
     });
   }
 
-  // Convert to array, drop runs/influencers with no tracked changes
+  // Convert to array; tag runs as "firstSeen" when all changes have null old_value
   const influencers = Object.values(byHandle)
     .map(inf => ({
       ...inf,
       runs: Object.values(inf.runs)
         .filter(r => r.changes.length > 0)
+        .map(r => ({
+          ...r,
+          firstSeen: r.changes.every(c => c.oldValue === null),
+        }))
         .sort((a, b) => new Date(b.runAt) - new Date(a.runAt))
     }))
-    .filter(inf => inf.runs.length > 0);
+    .filter(inf => inf.runs.length > 0)
+    .sort((a, b) => {
+      // Sort influencers by their most recent run date
+      const aLatest = new Date(a.runs[0]?.runAt || 0);
+      const bLatest = new Date(b.runs[0]?.runAt || 0);
+      return bLatest - aLatest;
+    });
 
   return res.status(200).json({ influencers, total: influencers.length });
 }

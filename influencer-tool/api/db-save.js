@@ -1,6 +1,7 @@
 // POST /api/db-save
 // Body: { influencers: [...] }
 // Upserts each influencer by handle, writes snapshots for any changed fields.
+// For brand-new influencers, writes an initial "first seen" snapshot (old_value = null).
 // Probes actual table columns on first call so unknown columns never break saves.
 
 import { createClient } from '@supabase/supabase-js';
@@ -47,20 +48,9 @@ let knownColumns = null;
 
 async function getKnownColumns(supabase) {
   if (knownColumns) return knownColumns;
-  // Fetch one row with no data to get column names from the response shape
-  const { data, error } = await supabase
-    .from('influencers')
-    .select('*')
-    .limit(1);
-  if (!error && data) {
-    if (data.length > 0) {
-      knownColumns = new Set(Object.keys(data[0]));
-    } else {
-      // Table is empty — insert a dummy probe row then delete it
-      // Instead just assume all columns exist; errors will surface per-row
-      knownColumns = null;
-      return null;
-    }
+  const { data, error } = await supabase.from('influencers').select('*').limit(1);
+  if (!error && data && data.length > 0) {
+    knownColumns = new Set(Object.keys(data[0]));
   }
   return knownColumns;
 }
@@ -98,6 +88,10 @@ export default async function handler(req, res) {
   const snapshots = [];
   const errors = [];
 
+  // Use a single timestamp for this whole batch so all snapshots from one save
+  // are grouped together as one "run" in the changes view.
+  const runAt = new Date().toISOString();
+
   for (const inf of influencers) {
     const fullRow = toRow(inf);
     if (!fullRow.handle) continue;
@@ -120,15 +114,14 @@ export default async function handler(req, res) {
 
     if (error) {
       errors.push({ handle: row.handle, error: error.message });
-      // Reset column cache in case schema changed
       knownColumns = null;
       continue;
     }
 
     saved.push(row.handle);
 
-    // Diff and write snapshots for changed fields
     if (existing) {
+      // Existing record — diff and write snapshots for changed fields only
       for (const field of TRACKED_FIELDS) {
         if (cols && !cols.has(field)) continue;
         const oldVal = existing[field] ?? null;
@@ -140,6 +133,24 @@ export default async function handler(req, res) {
             field_name: field,
             old_value: oldVal,
             new_value: newVal,
+            run_at: runAt,
+          });
+        }
+      }
+    } else {
+      // Brand-new influencer — write a "first seen" snapshot for every non-null field
+      // so this discovery appears in the changes log with old_value = null.
+      for (const field of TRACKED_FIELDS) {
+        if (cols && !cols.has(field)) continue;
+        const newVal = row[field] ?? null;
+        if (newVal !== null) {
+          snapshots.push({
+            influencer_id: upserted.id,
+            handle: row.handle,
+            field_name: field,
+            old_value: null,
+            new_value: newVal,
+            run_at: runAt,
           });
         }
       }
@@ -154,6 +165,5 @@ export default async function handler(req, res) {
     saved: saved.length,
     snapshots: snapshots.length,
     errors,
-    missing_columns: cols ? [] : ['unknown — table may be empty'],
   });
 }

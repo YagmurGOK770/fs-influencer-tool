@@ -2034,11 +2034,16 @@ function wordDiff(oldStr, newStr) {
 }
 
 const FIELD_LABELS = {
-  platform: 'Platform',
-  ig_followers: 'IG Followers', tt_followers: 'TT Followers',
-  yt_followers: 'YT Followers', x_followers: 'X Followers',
-  followers: 'Total Followers', content_labels: 'Content Labels',
-  who_they_are: 'Who They Are'
+  name: 'Name', platform: 'Platform',
+  ig_handle: 'Instagram', ig_followers: 'IG Followers',
+  tt_handle: 'TikTok', tt_followers: 'TT Followers',
+  yt_handle: 'YouTube', yt_followers: 'YT Followers',
+  x_handle: 'X', x_followers: 'X Followers',
+  followers: 'Total Followers',
+  content_labels: 'Content Labels', who_they_are: 'Who They Are',
+  what_they_post: 'What They Post', tone_style: 'Tone & Style',
+  target_audience: 'Target Audience', why_follow: 'Why Follow',
+  found_via: 'Found Via', niche: 'Niche', location: 'Location',
 };
 
 function renderChanges(influencers) {
@@ -2054,14 +2059,34 @@ function renderChanges(influencers) {
   }
 
   container.innerHTML = influencers.map((inf, idx) => {
-    const totalChanges = inf.runs.reduce((sum, r) => sum + r.changes.length, 0);
+    const updateRuns = inf.runs.filter(r => !r.firstSeen);
+    const totalChanges = updateRuns.reduce((sum, r) => sum + r.changes.length, 0);
     const runsHtml = inf.runs.map(run => {
       const date = new Date(run.runAt);
       const dateStr = date.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
       const timeStr = date.toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit' });
+
+      if (run.firstSeen) {
+        // "First discovered" run — show as a summary card, not a diff
+        const fields = run.changes.filter(c => c.newValue);
+        const followerChange = fields.find(c => c.field === 'followers');
+        const platformChange = fields.find(c => c.field === 'platform');
+        const foundVia = fields.find(c => c.field === 'found_via');
+        const summaryParts = [
+          platformChange ? platformChange.newValue : null,
+          followerChange ? followerChange.newValue + ' followers' : null,
+          foundVia ? 'via ' + foundVia.newValue : null,
+        ].filter(Boolean).join(' · ');
+        return `
+          <div class="cl-run">
+            <div class="cl-run-date" style="color:var(--green);border-color:var(--green-border)">
+              ✦ First discovered — ${dateStr} at ${timeStr}${summaryParts ? ' · ' + summaryParts : ''}
+            </div>
+          </div>`;
+      }
+
       const diffsHtml = run.changes.map(c => {
         if (c.field === 'who_they_are') {
-          // Bio shown as placeholder; async comparison fills it in
           const rowId = `bio-${idx}-${run.runAt.replace(/\W/g,'')}-${c.field}`;
           setTimeout(() => compareBio(rowId, c.oldValue, c.newValue), 0);
           return `
@@ -2071,7 +2096,7 @@ function renderChanges(influencers) {
             </div>`;
         }
         if (!c.oldValue && !c.newValue) return '';
-        const isSingleVal = ['platform','ig_followers','tt_followers','yt_followers','x_followers','followers'].includes(c.field);
+        const isSingleVal = ['platform','name','ig_handle','tt_handle','yt_handle','x_handle','ig_followers','tt_followers','yt_followers','x_followers','followers','found_via','niche','location'].includes(c.field);
         let oldHtml, newHtml;
         if (isSingleVal) {
           oldHtml = c.oldValue || '<span class="cl-null">—</span>';
@@ -2101,6 +2126,7 @@ function renderChanges(influencers) {
         </div>`;
     }).filter(Boolean).join('');
 
+    const hasDiscovery = inf.runs.some(r => r.firstSeen);
     return `
       <div class="cl-card">
         <div class="cl-card-header" id="clh${idx}" onclick="toggleClCard(${idx})">
@@ -2109,8 +2135,9 @@ function renderChanges(influencers) {
             <div class="cl-card-handle">${inf.handle}${inf.platform ? ' · ' + inf.platform : ''}${inf.followers ? ' · ' + inf.followers : ''}</div>
           </div>
           <div class="cl-card-meta">
-            <span class="cl-runs-badge">${inf.runs.length} run${inf.runs.length !== 1 ? 's' : ''}</span>
-            <span class="cl-changes-badge">${totalChanges} change${totalChanges !== 1 ? 's' : ''}</span>
+            ${hasDiscovery ? '<span class="cl-runs-badge" style="background:var(--green-bg);color:var(--green)">✦ New</span>' : ''}
+            ${updateRuns.length > 0 ? `<span class="cl-runs-badge">${updateRuns.length} update${updateRuns.length !== 1 ? 's' : ''}</span>` : ''}
+            ${totalChanges > 0 ? `<span class="cl-changes-badge">${totalChanges} change${totalChanges !== 1 ? 's' : ''}</span>` : ''}
             <span class="cl-chevron" id="clc${idx}">▾</span>
           </div>
         </div>
