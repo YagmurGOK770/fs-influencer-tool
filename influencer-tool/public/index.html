@@ -368,6 +368,7 @@ td{padding:9px 10px;vertical-align:middle}
           <div class="rev-actions">
             <button class="btn-outline" onclick="deselectAll()">Deselect all</button>
             <button class="btn-orange" onclick="exportSelected()">Export approved →</button>
+            <button class="btn-green" id="saveToDatabaseBtn" onclick="saveApprovedToDb()">Save to DB</button>
           </div>
         </div>
 
@@ -1508,7 +1509,7 @@ function parseFollowers(str) {
 }
 
 // ── Import results from Claude search run in main conversation ──
-function importResults(jsonText, { keepModalOpen = false } = {}) {
+function importResults(jsonText, { keepModalOpen = false, skipRelevanceFilter = false } = {}) {
   try {
     const clean = jsonText.replace(/```json\n?|```\n?/g,'').trim();
     const arr = JSON.parse(clean.slice(clean.indexOf('['), clean.lastIndexOf(']')+1));
@@ -1545,7 +1546,7 @@ base.forEach(r => {
       const fNum = hasFollowers ? parseFollowers(r.followers) : null;
       if(fNum !== null && cfg.minFollowers > 0 && fNum < cfg.minFollowers) { skippedFollowers++; continue; }
 
-      if(score < MIN_RELEVANCE) { skippedRelevance++; continue; }
+      if(!skipRelevanceFilter && score < MIN_RELEVANCE) { skippedRelevance++; continue; }
 
       existingHandles.add(h);
       // Map platform handle to correct field
@@ -1818,7 +1819,7 @@ async function runLiveSearch() {
   btn.disabled = false;
   updateComboRunBtn();
 
-  const newEntries = importResults(JSON.stringify(allInfluencers), { keepModalOpen: true });
+  const newEntries = importResults(JSON.stringify(allInfluencers), { keepModalOpen: true, skipRelevanceFilter: true });
 
   if (!newEntries || !newEntries.length) {
     document.getElementById('importModal').style.display = 'none';
@@ -1860,26 +1861,50 @@ async function runLiveSearch() {
   }
 
   applyFilter();
-  status.textContent = `✓ Enrichment done — saving ${newEntries.length} profiles to database…`;
+  status.textContent = `✓ Enrichment done — ${newEntries.length} profiles ready. Review below and click "Save to DB" to confirm.`;
+  await new Promise(r => setTimeout(r, 1500));
+  document.getElementById('importModal').style.display = 'none';
+}
+
+async function saveApprovedToDb() {
+  const approved = allRows.filter(r => r.isNew && r.ok);
+  if (!approved.length) { alert('No approved influencers to save. Tick at least one checkbox first.'); return; }
+
+  const btn = document.getElementById('saveToDatabaseBtn');
+  btn.disabled = true;
+  btn.textContent = `Saving ${approved.length}…`;
 
   try {
     const saveResp = await fetch('/api/db-save', {
       method: 'POST',
       headers: getApiHeaders(),
-      body: JSON.stringify({ influencers: newEntries })
+      body: JSON.stringify({ influencers: approved })
     });
     if (saveResp.ok) {
       const saveData = await saveResp.json();
-      status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles saved to DB (${saveData.snapshots || 0} changes logged).`;
+      btn.textContent = `✓ ${saveData.saved} saved`;
+      btn.style.background = 'var(--green)';
+      // Mark saved rows so they no longer show as pending
+      approved.forEach(r => { r.isNew = false; r.ok = false; });
+      applyFilter();
+      window.BASE_DATA = allRows;
+      document.getElementById('reviewBanner').classList.remove('show');
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = 'Save to DB';
+        btn.style.background = '';
+      }, 3000);
     } else {
-      status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles ready (DB save failed, check logs).`;
+      const err = await saveResp.json().catch(() => ({}));
+      btn.disabled = false;
+      btn.textContent = 'Save to DB';
+      alert('DB save failed: ' + (err.error || saveResp.statusText));
     }
   } catch (e) {
-    status.textContent = `✓ Search + enrichment complete — ${newEntries.length} profiles ready (DB save error: ${e.message}).`;
+    btn.disabled = false;
+    btn.textContent = 'Save to DB';
+    alert('DB save error: ' + e.message);
   }
-
-  await new Promise(r => setTimeout(r, 2000));
-  document.getElementById('importModal').style.display = 'none';
 }
 
 // ── Main tab switching ──
