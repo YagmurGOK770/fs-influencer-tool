@@ -1912,7 +1912,8 @@ async function saveApprovedToDb() {
       approved.forEach(r => { r.isNew = false; r.ok = false; });
       applyFilter();
       window.BASE_DATA = allRows;
-      document.getElementById('reviewBanner').classList.remove('show');
+      const stillNew = allRows.some(r => r.isNew);
+      if (!stillNew) document.getElementById('reviewBanner').classList.remove('show');
       setTimeout(() => {
         btn.disabled = false;
         btn.textContent = 'Save to DB';
