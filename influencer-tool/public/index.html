@@ -178,6 +178,7 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .fpill.active{background:var(--text);color:white;border-color:var(--text)}
 .fpill.fnew.active{background:var(--green);border-color:var(--green)}
 .fpill.fex.active{background:var(--muted);border-color:var(--muted)}
+.fpill.fbanned.active{background:var(--red);border-color:var(--red)}
 .fcount{display:inline-flex;align-items:center;justify-content:center;border-radius:100px;font-size:10px;min-width:17px;height:15px;padding:0 3px;margin-left:3px}
 .fpill.active .fcount{background:rgba(255,255,255,.25)}
 .fpill:not(.active) .fcount{background:var(--border);color:var(--muted)}
@@ -243,6 +244,14 @@ td{padding:9px 10px;vertical-align:middle}
 .pbadge.x{background:var(--x-bg);color:var(--x);border:1px solid #ccc}
 
 .new-badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:100px;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);white-space:nowrap}
+.banned-badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:100px;background:var(--red-bg);color:var(--red);border:1px solid rgba(192,57,43,.3);white-space:nowrap}
+tbody tr.isbanned{background:#fff5f5}
+tbody tr.isbanned:hover{background:#fee}
+tbody tr.isbanned td:nth-child(1),tbody tr.isbanned td:nth-child(2),tbody tr.isbanned td:nth-child(3){background:#fff5f5}
+tbody tr.isbanned:hover td:nth-child(1),tbody tr.isbanned:hover td:nth-child(2),tbody tr.isbanned:hover td:nth-child(3){background:#fee}
+tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
+.btn-red{padding:7px 14px;border-radius:var(--rs);font-family:var(--sans);font-size:12px;font-weight:800;cursor:pointer;border:none;background:var(--red);color:white;box-shadow:0 2px 5px rgba(192,57,43,.25);transition:all .15s}
+.btn-red:hover{background:#a93226}
 .approve-cb{width:15px;height:15px;cursor:pointer;accent-color:var(--green)}
 .kw-tag{display:inline-block;font-size:10px;font-weight:700;font-family:var(--mono);background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);border-radius:100px;padding:2px 8px;white-space:nowrap}
 .lbl-tag{display:inline-block;font-size:10px;font-weight:600;background:var(--surface);border:1px solid var(--border);border-radius:100px;padding:2px 8px;white-space:nowrap;color:var(--text);margin:1px 2px 1px 0}
@@ -367,6 +376,7 @@ td{padding:9px 10px;vertical-align:middle}
           </div>
           <div class="rev-actions">
             <button class="btn-outline" onclick="deselectAll()">Deselect all</button>
+            <button class="btn-red" onclick="banSelected()">⛔ Ban selected</button>
             <button class="btn-orange" onclick="exportSelected()">Export approved →</button>
             <button class="btn-green" id="saveToDatabaseBtn" onclick="saveApprovedToDb()">Save to DB</button>
           </div>
@@ -377,6 +387,7 @@ td{padding:9px 10px;vertical-align:middle}
             <button class="fpill active" onclick="setFilter('all',this)">All <span class="fcount" id="fcAll">0</span></button>
             <button class="fpill fnew" onclick="setFilter('new',this)">✦ New <span class="fcount" id="fcNew">0</span></button>
             <button class="fpill fex" onclick="setFilter('exists',this)">Existing <span class="fcount" id="fcEx">0</span></button>
+            <button class="fpill fbanned" onclick="setFilter('banned',this)" id="bannedPill" style="display:none">⛔ Banned <span class="fcount" id="fcBanned">0</span></button>
           </div>
           <select class="bucket-select" id="bucketFilter" onchange="onBucketFilter()">
             <option value="">All buckets</option>
@@ -516,6 +527,7 @@ let searchQ = '';
 let activeBucket = '';
 let ran = false;
 let running = false;
+window.BANNED_HANDLES = new Set(); // normalised lowercase handles
 let browserSession = {}; // tracks which platforms have been used this session
 
 function platClass(p) {
@@ -875,6 +887,7 @@ function applyFilter() {
   filtered = allRows.filter(r => {
     if (activeFilter === 'new' && !r.isNew) return false;
     if (activeFilter === 'exists' && r.isNew) return false;
+    if (activeFilter === 'banned' && !r.isBanned) return false;
     if (activeBucket && (r.bucket||'') !== activeBucket) return false;
     if (q) {
       const hay = (r.handle+r.name+r.platform+r.contentLabels+r.whoTheyAre+r.whatTheyPost+r.toneStyle+r.targetAudience+r.whyFollow+r.igHandle+r.ttHandle+r.ytHandle+r.xHandle+r.foundVia+(r.bucket||'')).toLowerCase();
@@ -937,9 +950,13 @@ async function saveBucket(handle, value) {
 function updateCounts() {
   const nc = allRows.filter(r => r.isNew).length;
   const ec = allRows.filter(r => !r.isNew).length;
+  const bc = allRows.filter(r => r.isBanned).length;
   document.getElementById('fcAll').textContent = allRows.length;
   document.getElementById('fcNew').textContent = nc;
   document.getElementById('fcEx').textContent = ec;
+  document.getElementById('fcBanned').textContent = bc;
+  const bannedPill = document.getElementById('bannedPill');
+  if (bannedPill) bannedPill.style.display = bc > 0 ? '' : 'none';
   document.getElementById('sTot').textContent = allRows.length;
   document.getElementById('sNew').textContent = ran ? nc : '—';
   updateApproved();
@@ -1095,12 +1112,16 @@ function renderTable() {
   page.forEach(r => {
     const tr = document.createElement('tr');
     if (r.isNew) tr.classList.add('isnew');
+    if (r.isBanned) tr.classList.add('isbanned');
     const pc = platClass(r.platform), pl = platLabel(r.platform);
     const labels = (r.contentLabels||'').split('·').map(l=>l.trim()).filter(Boolean);
     const labelHtml = labels.slice(0,3).map(l=>`<span class="lbl-tag">${l}</span>`).join(' ');
+    const numCell = r.isNew
+      ? (r.isBanned ? '<span class="banned-badge">BANNED</span>' : '<span style="color:var(--green);font-weight:800;font-size:10px">NEW</span>')
+      : (r.num||'');
     tr.innerHTML = `
       <td style="text-align:center">${r.isNew ? `<input type="checkbox" class="approve-cb" ${r.ok?'checked':''} onchange="toggleOk('${r.handle}','${r.platform}',this.checked)"/>` : ''}</td>
-      <td class="td-num">${r.isNew ? '<span style="color:var(--green);font-weight:800;font-size:10px">NEW</span>' : (r.num||'')}</td>
+      <td class="td-num">${numCell}</td>
       <td style="font-weight:600;font-size:12.5px">${nameLink(r)}</td>
       <td style="font-size:11px;color:var(--muted);white-space:nowrap">${r.platform||'—'}</td>
       <td class="td-handle">${handleLink(r.igHandle,'Instagram')}</td>
@@ -1119,7 +1140,9 @@ function renderTable() {
       <td class="td-trunc" style="max-width:200px" title="${(r.targetAudience||'').replace(/"/g,'&quot;')}">${r.targetAudience||'—'}</td>
       <td class="td-trunc" style="max-width:200px" title="${(r.whyFollow||'').replace(/"/g,'&quot;')}">${r.whyFollow||'—'}</td>
       <td>${r.foundVia ? '<span class="kw-tag">' + r.foundVia + '</span>' : '—'}</td>
-      <td><input class="bucket-input" type="text" list="bucketList" placeholder="+ add bucket" value="${(r.bucket||'').replace(/"/g,'&quot;')}" onblur="saveBucket('${r.handle}',this.value)" onkeydown="if(event.key==='Enter')this.blur()"/></td>
+      <td>
+        ${r.isBanned && !r.isNew ? `<button class="btn-outline" style="font-size:11px;padding:3px 8px" onclick="unbanInfluencer('${r.handle}')">Unban</button>` : `<input class="bucket-input" type="text" list="bucketList" placeholder="+ add bucket" value="${(r.bucket||'').replace(/"/g,'&quot;')}" onblur="saveBucket('${r.handle}',this.value)" onkeydown="if(event.key==='Enter')this.blur()"/>`}
+      </td>
     `;
     tbody.appendChild(tr);
   });
@@ -1574,7 +1597,8 @@ base.forEach(r => {
         source: r.source||'', foundBy:'Agent',
         foundVia: r.foundVia||r.source||'',
         relevanceScore: score,
-        isNew:true, ok:true
+        isNew:true, ok:true,
+        isBanned: window.BANNED_HANDLES.has(h),
       });
     }
 
@@ -1907,6 +1931,51 @@ async function saveApprovedToDb() {
   }
 }
 
+async function banSelected() {
+  const toBan = allRows.filter(r => r.isNew && r.ok);
+  if (!toBan.length) { alert('No influencers selected. Tick at least one checkbox first.'); return; }
+  if (!confirm(`Ban ${toBan.length} influencer(s)? They will be flagged in future searches.`)) return;
+
+  const handles = toBan.map(r => (r.handle||'').toLowerCase().replace(/[@\s]/g,''));
+  try {
+    const resp = await fetch('/api/ban', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ handles })
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      alert('Ban failed: ' + (err.error || resp.statusText));
+      return;
+    }
+    // Update local state
+    handles.forEach(h => window.BANNED_HANDLES.add(h));
+    toBan.forEach(r => { r.isBanned = true; r.isNew = false; r.ok = false; });
+    applyFilter();
+    window.BASE_DATA = allRows;
+    const hasNewLeft = allRows.some(r => r.isNew);
+    if (!hasNewLeft) document.getElementById('reviewBanner').classList.remove('show');
+  } catch (e) {
+    alert('Ban error: ' + e.message);
+  }
+}
+
+async function unbanInfluencer(handle) {
+  const h = (handle||'').toLowerCase().replace(/[@\s]/g,'');
+  try {
+    await fetch('/api/ban', {
+      method: 'DELETE',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ handles: [h] })
+    });
+    window.BANNED_HANDLES.delete(h);
+    allRows.forEach(r => { if ((r.handle||'').toLowerCase().replace(/[@\s]/g,'') === h) r.isBanned = false; });
+    applyFilter();
+  } catch (e) {
+    alert('Unban error: ' + e.message);
+  }
+}
+
 // ── Main tab switching ──
 function switchMainTab(tab) {
   const isDash = tab === 'dash';
@@ -2102,21 +2171,37 @@ let eQueue = [];
 
 // Init — load from localStorage if available
 async function eInit() {
+  // Load influencers and banned list in parallel
+  const [influencerResp, banResp] = await Promise.allSettled([
+    fetch('/api/db-load', { headers: getApiHeaders() }),
+    fetch('/api/ban', { headers: getApiHeaders() }),
+  ]);
+
+  // Process banned list first so influencers can be flagged immediately
   try {
-    const resp = await fetch('/api/db-load', { headers: getApiHeaders() });
-    console.log('[db-load] status:', resp.status);
-    const data = await resp.json();
-    console.log('[db-load] response:', data);
-    if (resp.ok) {
-      if (data.influencers && data.influencers.length > 0) {
-        allRows = data.influencers.map((inf, i) => ({ ...inf, num: i + 1, ok: false, isNew: false }));
-        window.BASE_DATA = allRows;
-        console.log('[db-load] allRows set:', allRows.length);
-        updateBucketFilter();
-        applyFilter();
-        setStatus('review');
-      } else {
-        console.warn('[db-load] response ok but influencers empty or missing');
+    if (banResp.status === 'fulfilled' && banResp.value.ok) {
+      const banData = await banResp.value.json();
+      (banData.banned || []).forEach(b => window.BANNED_HANDLES.add((b.handle||'').toLowerCase().replace(/[@\s]/g,'')));
+    }
+  } catch (e) { console.warn('[ban-load] error:', e.message); }
+
+  try {
+    const resp = influencerResp.status === 'fulfilled' ? influencerResp.value : null;
+    if (resp) {
+      console.log('[db-load] status:', resp.status);
+      const data = await resp.json();
+      console.log('[db-load] response:', data);
+      if (resp.ok) {
+        if (data.influencers && data.influencers.length > 0) {
+          allRows = data.influencers.map((inf, i) => ({ ...inf, num: i + 1, ok: false, isNew: false }));
+          window.BASE_DATA = allRows;
+          console.log('[db-load] allRows set:', allRows.length);
+          updateBucketFilter();
+          applyFilter();
+          setStatus('review');
+        } else {
+          console.warn('[db-load] response ok but influencers empty or missing');
+        }
       }
     }
   } catch (e) {
