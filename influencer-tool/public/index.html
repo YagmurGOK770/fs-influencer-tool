@@ -493,7 +493,6 @@ td{padding:9px 10px;vertical-align:middle}
 
 <script>
 const EXISTING_DATA = [];
-const NEW_POOL = [{"num": "", "handle": "@londonbites_", "name": "Sarah K.", "platform": "Instagram", "followers": "82K", "niche": "Food, Lifestyle", "location": "London", "source": "#londoneats", "foundBy": "Agent", "foundVia": "#londoneats", "isNew": true, "ok": true}, {"num": "", "handle": "@eatwithamber", "name": "Amber Liu", "platform": "TikTok", "followers": "145K", "niche": "Food, Travel", "location": "London", "source": "Google search", "foundBy": "Agent", "foundVia": "london food", "isNew": true, "ok": true}, {"num": "", "handle": "@londonstreetfood", "name": "Marcus T.", "platform": "TikTok", "followers": "33K", "niche": "Food", "location": "London", "source": "#londonstreetfood", "foundBy": "Agent", "foundVia": "#londonrestaurants", "isNew": true, "ok": true}, {"num": "", "handle": "@thefoodiediaries", "name": "Priya Sharma", "platform": "Instagram", "followers": "210K", "niche": "Food, Lifestyle", "location": "London", "source": "Feedspot", "foundBy": "Agent", "foundVia": "#londonfoodie", "isNew": true, "ok": true}, {"num": "", "handle": "@bitesoflondon", "name": "James W.", "platform": "YouTube", "followers": "67K", "niche": "Food, Restaurant", "location": "London", "source": "#londonfoodie", "foundBy": "Agent", "foundVia": "#londonfoodie", "isNew": true, "ok": true}, {"num": "", "handle": "@ldn_foodcritic", "name": "Nina Osei", "platform": "Instagram", "followers": "88K", "niche": "Food, Travel", "location": "London", "source": "Google search", "foundBy": "Agent", "foundVia": "london food", "isNew": true, "ok": true}, {"num": "", "handle": "@hungrylondoner", "name": "Tariq Patel", "platform": "TikTok", "followers": "54K", "niche": "Food", "location": "London", "source": "#ukfoodie", "foundBy": "Agent", "foundVia": "#ukfoodie", "isNew": true, "ok": true}, {"num": "", "handle": "@londonfoodguide_", "name": "Elle M.", "platform": "Instagram", "followers": "120K", "niche": "Food, Dining", "location": "London", "source": "#londonrestaurants", "foundBy": "Agent", "foundVia": "#londonrestaurants", "isNew": true, "ok": true}, {"num": "", "handle": "@UKFoodCritic", "name": "James H.", "platform": "X", "followers": "48K", "niche": "Food, Reviews", "location": "London", "source": "X search", "foundBy": "Agent", "foundVia": "london food influencer", "isNew": true, "ok": true}, {"num": "", "handle": "@LondonBitesX", "name": "", "platform": "X", "followers": "22K", "niche": "Food, Lifestyle", "location": "London", "source": "X search", "foundBy": "Agent", "foundVia": "#londoneats", "isNew": true, "ok": true}, {"num": "", "handle": "@supper_sorted", "name": "Dom & Faye", "platform": "YouTube", "followers": "38K", "niche": "Food, Cooking", "location": "London", "source": "#ukfoodie", "foundBy": "Agent", "foundVia": "#ukfoodie", "isNew": true, "ok": true}];
 const PAGE_SIZE = 50;
 
 // Auth header builder — prompts for password once per session if APP_PASSWORD is set on the server
@@ -1882,10 +1881,6 @@ async function runLiveSearch() {
   await new Promise(r => setTimeout(r, 2000));
   document.getElementById('importModal').style.display = 'none';
 }
-
-
-// Tab switching removed — single-tab layout
-function switchTab() {}
 
 // ── Main tab switching ──
 function switchMainTab(tab) {
