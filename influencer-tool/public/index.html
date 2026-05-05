@@ -886,7 +886,7 @@ function applyFilter() {
   const q = searchQ.toLowerCase();
   filtered = allRows.filter(r => {
     if (activeFilter === 'new' && !r.isNew) return false;
-    if (activeFilter === 'exists' && r.isNew) return false;
+    if (activeFilter === 'exists' && (r.isNew || r.isBanned)) return false;
     if (activeFilter === 'banned' && !r.isBanned) return false;
     if (activeBucket && (r.bucket||'') !== activeBucket) return false;
     if (q) {
