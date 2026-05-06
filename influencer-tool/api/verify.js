@@ -234,13 +234,17 @@ export default async function handler(req, res) {
     // 15s timeout on all page.evaluate calls
     page.setDefaultTimeout(15000);
 
-    // For Instagram: navigate to instagram.com once so cookies are active for the domain
-    // before making fetch() calls. Skip for others — they use direct API fetches.
-    if (platform === 'instagram') {
-      await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+    // For YouTube we navigate per-handle (page.goto). For all others we use
+    // fetch() inside page.evaluate() which picks up cookies from the context
+    // automatically — no need to navigate to the platform home first.
+    // Navigate to a neutral page so the browser has a real origin to fetch from.
+    if (platform !== 'youtube') {
+      const origin = { instagram: 'https://www.instagram.com', tiktok: 'https://www.tiktok.com', x: 'https://x.com' }[platform] || 'about:blank';
+      await page.goto(origin + '/favicon.ico', { waitUntil: 'commit', timeout: 15000 }).catch(() => {});
+      // If we ended up on a login page the cookie is expired
       const url = page.url();
-      if (url.includes('/accounts/login') || url.includes('/challenge/')) {
-        return res.status(401).json({ error: 'cookie_expired', message: 'Instagram cookie expired — paste a fresh one via 🔑' });
+      if (url.includes('login') || url.includes('/challenge/')) {
+        return res.status(401).json({ error: 'cookie_expired', message: `${platform} cookie expired — paste a fresh one via 🔑` });
       }
     }
 
