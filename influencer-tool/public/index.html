@@ -2012,6 +2012,43 @@ async function loadChanges() {
   }
 }
 
+// Label-set diff for content_labels ("A · B · C" format)
+// Returns HTML showing removed labels in red and added labels in green.
+// Labels that are present in both (even with minor wording differences) are shown neutrally.
+// "Minor difference" = one is a substring of the other, or they share >70% chars.
+function labelDiff(oldStr, newStr) {
+  const split = s => (s||'').split('·').map(l => l.trim()).filter(Boolean);
+  const oldLabels = split(oldStr);
+  const newLabels = split(newStr);
+
+  // Fuzzy match: two labels are "the same" if one contains the other
+  // or their longest common substring covers >70% of the shorter one
+  function isSame(a, b) {
+    const al = a.toLowerCase(), bl = b.toLowerCase();
+    if (al === bl) return true;
+    if (al.includes(bl) || bl.includes(al)) return true;
+    // count shared chars (simple)
+    const shorter = al.length < bl.length ? al : bl;
+    let shared = 0;
+    for (const ch of shorter) if (bl.includes(ch)) shared++;
+    return shared / shorter.length > 0.7;
+  }
+
+  const matched = new Set();
+  const oldHtml = oldLabels.map(ol => {
+    const found = newLabels.findIndex((nl, i) => !matched.has(i) && isSame(ol, nl));
+    if (found !== -1) { matched.add(found); return `<span class="lbl-tag">${ol}</span>`; }
+    return `<span class="lbl-tag" style="background:var(--red-bg);color:var(--red);border-color:rgba(192,57,43,.3);text-decoration:line-through">${ol}</span>`;
+  }).join(' ');
+
+  const newHtml = newLabels.map((nl, i) => {
+    if (matched.has(i)) return `<span class="lbl-tag">${nl}</span>`;
+    return `<span class="lbl-tag" style="background:var(--green-bg);color:var(--green);border-color:var(--green-border)">${nl}</span>`;
+  }).join(' ');
+
+  return { oldHtml, newHtml };
+}
+
 // Word-level diff: returns HTML with <mark> on changed words
 function wordDiff(oldStr, newStr) {
   const ow = (oldStr||'').split(/\s+/);
@@ -2088,17 +2125,33 @@ function renderChanges(influencers) {
           </div>`;
       }
 
+      const NARRATIVE_FIELDS = new Set(['who_they_are','why_follow','target_audience','tone_style','what_they_post']);
       const diffsHtml = run.changes.map(c => {
-        if (c.field === 'who_they_are') {
-          const rowId = `bio-${idx}-${run.runAt.replace(/\W/g,'')}-${c.field}`;
-          setTimeout(() => compareBio(rowId, c.oldValue, c.newValue), 0);
+        if (!c.oldValue && !c.newValue) return '';
+
+        // Narrative fields — LLM decides if meaning actually changed
+        if (NARRATIVE_FIELDS.has(c.field)) {
+          const rowId = `semantic-${idx}-${run.runAt.replace(/\W/g,'')}-${c.field}`;
+          setTimeout(() => compareNarrative(rowId, c.field, c.oldValue, c.newValue), 0);
           return `
             <div class="cl-diff-row" id="${rowId}">
               <div class="cl-field-name">${FIELD_LABELS[c.field]}</div>
-              <div class="cl-bio-checking" colspan="2">Comparing context…</div>
+              <div class="cl-bio-checking" style="grid-column:2/4">Comparing context…</div>
             </div>`;
         }
-        if (!c.oldValue && !c.newValue) return '';
+
+        // Content labels — smart set diff
+        if (c.field === 'content_labels') {
+          const d = labelDiff(c.oldValue, c.newValue);
+          return `
+            <div class="cl-diff-row">
+              <div class="cl-field-name">${FIELD_LABELS[c.field]}</div>
+              <div class="cl-old" style="background:none;border:none;padding:0">${d.oldHtml || '<span class="cl-null">—</span>'}</div>
+              <div class="cl-new" style="background:none;border:none;padding:0">${d.newHtml || '<span class="cl-null">—</span>'}</div>
+            </div>`;
+        }
+
+        // Simple scalar fields — show raw before/after
         const isSingleVal = ['platform','name','ig_handle','tt_handle','yt_handle','x_handle','ig_followers','tt_followers','yt_followers','x_followers','followers','found_via','niche','location'].includes(c.field);
         let oldHtml, newHtml;
         if (isSingleVal) {
@@ -2149,33 +2202,32 @@ function renderChanges(influencers) {
   }).join('');
 }
 
-async function compareBio(rowId, oldValue, newValue) {
+async function compareNarrative(rowId, field, oldValue, newValue) {
   const row = document.getElementById(rowId);
   if (!row) return;
+  const label = FIELD_LABELS[field] || field;
   try {
     const resp = await fetch('/api/compare-bio', {
       method: 'POST',
       headers: getApiHeaders(),
-      body: JSON.stringify({ oldValue, newValue })
+      body: JSON.stringify({ oldValue, newValue, field })
     });
     const data = await resp.json();
-    if (data.error) throw new Error(data.error + (data.raw ? ' | raw: ' + data.raw : ''));
+    if (data.error) throw new Error(data.error);
     if (!data.changed) {
-      // Same context — show as a muted "no meaningful change" note
       row.innerHTML = `
-        <div class="cl-field-name">${FIELD_LABELS['who_they_are']}</div>
-        <div class="cl-bio-same" style="grid-column:2/4">Same focus — ${data.reason || 'no meaningful change detected'}</div>`;
+        <div class="cl-field-name">${label}</div>
+        <div class="cl-bio-same" style="grid-column:2/4">Same meaning — ${data.reason || 'no meaningful change detected'}</div>`;
     } else {
-      const d = wordDiff(oldValue||'', newValue||'');
       row.innerHTML = `
-        <div class="cl-field-name">${FIELD_LABELS['who_they_are']}</div>
-        <div class="cl-old">${d.oldHtml || '<span class="cl-null">empty</span>'}</div>
-        <div class="cl-new">${d.newHtml || '<span class="cl-null">empty</span>'}</div>`;
+        <div class="cl-field-name">${label}</div>
+        <div class="cl-old">${oldValue || '<span class="cl-null">—</span>'}</div>
+        <div class="cl-new">${newValue || '<span class="cl-null">—</span>'}</div>`;
     }
   } catch(err) {
-    console.error('compareBio error:', err);
+    console.error('compareNarrative error:', err);
     row.innerHTML = `
-      <div class="cl-field-name">${FIELD_LABELS['who_they_are']}</div>
+      <div class="cl-field-name">${label}</div>
       <div class="cl-old">${oldValue||'—'}</div>
       <div class="cl-new">${newValue||'—'}</div>`;
   }
