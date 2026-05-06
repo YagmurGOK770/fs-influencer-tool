@@ -2125,7 +2125,7 @@ function renderChanges(influencers) {
           </div>`;
       }
 
-      const NARRATIVE_FIELDS = new Set(['who_they_are','why_follow','target_audience','tone_style','what_they_post']);
+      const NARRATIVE_FIELDS = new Set(['who_they_are','what_they_post']);
       const diffsHtml = run.changes.map(c => {
         if (!c.oldValue && !c.newValue) return '';
 

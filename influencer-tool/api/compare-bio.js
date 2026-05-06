@@ -41,16 +41,15 @@ export default async function handler(req, res) {
       max_tokens: 120,
       messages: [{
         role: 'user',
-        content: `These are two versions of ${fieldContext}. Has the meaning or focus meaningfully changed, or is it essentially the same thing described differently?
+        content: `These are two versions of ${fieldContext}. Are they still describing broadly the same person/content, or has the core identity meaningfully shifted?
 
 Before: "${oldValue}"
 After: "${newValue}"
 
-Reply with ONLY a valid JSON object, no markdown, no extra text:
-{"changed": true, "reason": "one short sentence"} or {"changed": false, "reason": "one short sentence"}
+Be lenient — if the overall story is the same, return changed: false. Only return changed: true if there is a clear, significant shift in who they are or what they create (e.g. switched niche entirely, became a different type of creator).
 
-Count as NOT changed: same meaning in different words, minor rephrasing, added detail that doesn't change the core idea.
-Count as changed: different focus, different audience, different style described, meaningfully new information.`
+Reply with ONLY a valid JSON object, no markdown, no extra text:
+{"changed": true, "reason": "one short sentence"} or {"changed": false, "reason": "one short sentence"}`
       }]
     });
   } catch (apiErr) {
