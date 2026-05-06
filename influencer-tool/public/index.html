@@ -558,10 +558,10 @@ function addKw() {
 const PLATFORM_ID_MAP = { ig:'instagram', tt:'tiktok', yt:'youtube', x:'x' };
 
 const DEFAULT_SOURCES = [
-  { id:'ig',  icon:'IG',  iconClass:'ig',  name:'Instagram',     desc:'Google search · live verify',  url:'', builtin:true, on:true },
-  { id:'tt',  icon:'TT',  iconClass:'tt',  name:'TikTok',        desc:'Google search',                 url:'', builtin:true, on:true },
-  { id:'yt',  icon:'YT',  iconClass:'yt',  name:'YouTube',       desc:'Google search',                 url:'', builtin:true, on:true },
-  { id:'x',   icon:'𝕏',   iconClass:'x',   name:'X / Twitter',   desc:'Google search',                 url:'', builtin:true, on:true },
+  { id:'ig',  icon:'IG',  iconClass:'ig',  name:'Instagram',     desc:'Google search · live verify 🔑', url:'', builtin:true, on:true },
+  { id:'tt',  icon:'TT',  iconClass:'tt',  name:'TikTok',        desc:'Google search · live verify 🔑', url:'', builtin:true, on:true },
+  { id:'yt',  icon:'YT',  iconClass:'yt',  name:'YouTube',       desc:'Google search · live verify',    url:'', builtin:true, on:true },
+  { id:'x',   icon:'𝕏',   iconClass:'x',   name:'X / Twitter',   desc:'Google search · live verify 🔑', url:'', builtin:true, on:true },
   { id:'web', icon:'WEB', iconClass:'web', name:'Ranking pages', desc:'Feedspot, blogs',         url:'', builtin:true, on:true },
   { id:'tribe',     icon:'TRB', iconClass:'cust', name:'Tribe Group', desc:'Influencer marketplace', url:'https://www.tribegroup.co/', builtin:false, on:true },
   { id:'collabstr', icon:'CLB', iconClass:'cust', name:'Collabstr',   desc:'Creator directory',      url:'https://collabstr.com/',     builtin:false, on:true },
@@ -609,10 +609,10 @@ function renderSources() {
       ? ''
       : `<button class="src-delete" onclick="event.stopPropagation();deleteSource(${i})" title="Remove">×</button>`;
 
-    // Session cookie button — for platforms used in verification (Instagram only for now)
+    // Session cookie button — for platforms that need a login session to verify follower counts
     const platformKey = PLATFORM_ID_MAP[s.id];
     let nativeControls = '';
-    if (platformKey === 'instagram') {
+    if (platformKey === 'instagram' || platformKey === 'tiktok' || platformKey === 'x') {
       nativeControls = `<button class="native-badge" onclick="event.stopPropagation();openSessionModal('${platformKey}',this)" title="Paste your ${s.name} session cookie (used to verify follower counts)">🔑</button>`;
     }
 
@@ -689,59 +689,91 @@ function deleteSource(i) {
 
 // ── Session cookie helper (used for follower verification) ───────────────
 
-// Verify Instagram candidates via /api/verify — uses the saved sessionid cookie
-// to load each profile and replace the AI-estimated follower count with the live one.
-async function verifyInfluencerFollowers(influencers, status) {
-  // Collect IG handles to verify (anything with an igHandle, or whose primary handle is Instagram)
-  const toVerify = [];
-  for (const inf of influencers) {
-    const handle = inf.igHandle || (
-      String(inf.platform || '').toLowerCase().includes('instagram') ? inf.handle : null
-    );
-    if (handle) toVerify.push({ inf, handle });
-  }
+// Map each platform to which fields on an influencer hold its handle, and where
+// to write back the verified follower count.
+const PLATFORM_VERIFY_CONFIG = {
+  instagram: {
+    label: 'Instagram',
+    getHandle: inf => inf.igHandle || (String(inf.platform||'').toLowerCase().includes('instagram') ? inf.handle : null),
+    applyResult: (inf, r) => {
+      if (r.followers) { inf.igFollowers = r.followers; inf.followers = r.followers; }
+      if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
+      if (r.fullName && !inf.name) inf.name = r.fullName;
+      if (r.isVerified !== undefined) inf.isVerified = r.isVerified;
+      if (r.postCount) inf.postCount = r.postCount;
+    },
+  },
+  tiktok: {
+    label: 'TikTok',
+    getHandle: inf => inf.ttHandle || (String(inf.platform||'').toLowerCase().includes('tiktok') ? inf.handle : null),
+    applyResult: (inf, r) => {
+      if (r.followers) { inf.ttFollowers = r.followers; if (!inf.igHandle) inf.followers = r.followers; }
+      if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
+      if (r.fullName && !inf.name) inf.name = r.fullName;
+      if (r.isVerified !== undefined && !inf.igHandle) inf.isVerified = r.isVerified;
+    },
+  },
+  youtube: {
+    label: 'YouTube',
+    getHandle: inf => inf.ytHandle || (String(inf.platform||'').toLowerCase().includes('youtube') ? inf.handle : null),
+    applyResult: (inf, r) => {
+      if (r.followers) { inf.ytFollowers = r.followers; if (!inf.igHandle && !inf.ttHandle) inf.followers = r.followers; }
+      if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
+      if (r.fullName && !inf.name) inf.name = r.fullName;
+    },
+  },
+  x: {
+    label: 'X / Twitter',
+    getHandle: inf => inf.xHandle || (String(inf.platform||'').toLowerCase().match(/\bx\b|twitter/) ? inf.handle : null),
+    applyResult: (inf, r) => {
+      if (r.followers) { inf.xFollowers = r.followers; if (!inf.igHandle && !inf.ttHandle && !inf.ytHandle) inf.followers = r.followers; }
+      if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
+      if (r.fullName && !inf.name) inf.name = r.fullName;
+      if (r.isVerified !== undefined && !inf.igHandle) inf.isVerified = r.isVerified;
+    },
+  },
+};
 
-  if (!toVerify.length) {
-    if (status) status.textContent = `⚠ No Instagram handles to verify — skipping verification.`;
-    await new Promise(r => setTimeout(r, 800));
-    return;
-  }
+async function verifyPlatform(platform, influencers, statusEl) {
+  const cfg = PLATFORM_VERIFY_CONFIG[platform];
+  const toVerify = influencers
+    .map(inf => ({ inf, handle: cfg.getHandle(inf) }))
+    .filter(x => x.handle);
 
-  if (status) status.textContent = `🔍 Verifying ${toVerify.length} Instagram profiles via saved session…`;
+  if (!toVerify.length) return { verified: 0, failed: 0, skipped: true };
 
-  // Verify in batches of 10 so a single browser run isn't too long
   const BATCH_SIZE = 10;
   let verifiedCount = 0;
   let failedCount = 0;
 
   for (let b = 0; b < toVerify.length; b += BATCH_SIZE) {
     const batch = toVerify.slice(b, b + BATCH_SIZE);
-    if (status) status.textContent = `🔍 Verifying batch ${Math.floor(b / BATCH_SIZE) + 1}/${Math.ceil(toVerify.length / BATCH_SIZE)} (${b + 1}–${Math.min(b + BATCH_SIZE, toVerify.length)} of ${toVerify.length})…`;
+    const batchNum = Math.floor(b / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(toVerify.length / BATCH_SIZE);
+    if (statusEl) setStatusText(`🔍 [${cfg.label}] Verifying batch ${batchNum}/${totalBatches} (${b + 1}–${Math.min(b + BATCH_SIZE, toVerify.length)} of ${toVerify.length})…`);
 
     try {
       const resp = await fetch('/api/verify', {
         method: 'POST',
         headers: getApiHeaders(),
-        body: JSON.stringify({
-          platform: 'instagram',
-          handles: batch.map(b => b.handle),
-        }),
+        body: JSON.stringify({ platform, handles: batch.map(x => x.handle) }),
       });
       const data = await resp.json();
 
       if (!resp.ok || data.error) {
         if (data.error === 'cookie_missing' || data.error === 'cookie_expired') {
-          const retry = confirm(`Saved Instagram session is missing or expired.\n\nClick OK to paste a fresh sessionid cookie, then retry verification.`);
+          const platformLabel = { instagram: 'Instagram', tiktok: 'TikTok', x: 'X / Twitter' }[platform] || platform;
+          const retry = confirm(`Saved ${platformLabel} session is missing or expired.\n\nClick OK to paste a fresh cookie, then retry verification.`);
           if (retry) {
-            await openSessionModal('instagram', null);
-            b -= BATCH_SIZE; // retry this batch
+            await openSessionModal(platform, null);
+            b -= BATCH_SIZE;
             continue;
           } else {
-            logLine(`⚠ Verification skipped — no valid session cookie`, 'warn');
-            return;
+            logLine(`⚠ ${cfg.label} verification skipped — no valid session`, 'warn');
+            return { verified: verifiedCount, failed: failedCount };
           }
         }
-        logLine(`⚠ Verify batch failed: ${data.error || resp.statusText}`, 'warn');
+        logLine(`⚠ ${cfg.label} verify batch failed: ${data.error || resp.statusText}`, 'warn');
         failedCount += batch.length;
         continue;
       }
@@ -750,25 +782,45 @@ async function verifyInfluencerFollowers(influencers, status) {
       for (const { inf, handle } of batch) {
         const r = results[handle];
         if (!r || !r.ok) { failedCount++; continue; }
-        if (r.followers) {
-          inf.followers = r.followers;
-          inf.igFollowers = r.followers;
-          verifiedCount++;
-        }
-        if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
-        if (r.fullName && !inf.name) inf.name = r.fullName;
-        if (r.isVerified !== undefined) inf.isVerified = r.isVerified;
-        if (r.postCount) inf.postCount = r.postCount;
+        cfg.applyResult(inf, r);
+        verifiedCount++;
       }
     } catch (err) {
-      logLine(`⚠ Verify batch error: ${err.message}`, 'warn');
+      logLine(`⚠ ${cfg.label} verify error: ${err.message}`, 'warn');
       failedCount += batch.length;
     }
   }
 
-  if (status) {
-    status.textContent = `✓ Verified ${verifiedCount}/${toVerify.length} (${failedCount} could not be verified) — applying filters…`;
+  return { verified: verifiedCount, failed: failedCount };
+}
+
+async function verifyInfluencerFollowers(influencers, statusEl) {
+  const platforms = ['instagram', 'tiktok', 'youtube', 'x'];
+  let totalVerified = 0;
+  let totalFailed = 0;
+  let anyHandles = false;
+
+  for (const platform of platforms) {
+    const cfg = PLATFORM_VERIFY_CONFIG[platform];
+    const hasHandles = influencers.some(inf => cfg.getHandle(inf));
+    if (!hasHandles) continue;
+    anyHandles = true;
+
+    if (statusEl) setStatusText(`🔍 Verifying ${cfg.label} profiles…`);
+    const { verified, failed, skipped } = await verifyPlatform(platform, influencers, statusEl);
+    if (!skipped) {
+      totalVerified += verified;
+      totalFailed += failed;
+    }
   }
+
+  if (!anyHandles) {
+    if (statusEl) setStatusText(`⚠ No handles found to verify — skipping.`);
+    await new Promise(r => setTimeout(r, 800));
+    return;
+  }
+
+  if (statusEl) setStatusText(`✓ Verified ${totalVerified} profiles (${totalFailed} could not be verified) — applying filters…`);
   await new Promise(r => setTimeout(r, 1000));
 }
 
