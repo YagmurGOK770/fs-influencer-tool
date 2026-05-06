@@ -1767,9 +1767,12 @@ function minimizeSearchModal() {
 function restoreSearchModal() {
   document.getElementById('searchMiniBar').style.display = 'none';
   document.getElementById('importModal').style.display = 'flex';
-  // Scroll status into view
+  // Scroll modal body to bottom so status is visible
   const s = document.getElementById('searchStatus');
-  if (s && s.style.display !== 'none') s.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (s && s.style.display !== 'none') {
+    const modalBody = s.closest('[style*="overflow-y"]') || s.parentElement;
+    if (modalBody) modalBody.scrollTop = modalBody.scrollHeight;
+  }
 }
 
 function toggleComboGroup(grpName, checked) {
@@ -1808,8 +1811,11 @@ async function runLiveSearch() {
   status.style.background = 'var(--green-light)';
   status.style.borderColor = 'var(--green-border)';
   status.style.color = 'var(--green)';
-  // Scroll status row into view so user sees it started
-  setTimeout(() => status.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 50);
+  // Scroll the modal body to the bottom so the status line is visible
+  setTimeout(() => {
+    const modalBody = _statusEl.closest('[style*="overflow-y"]') || _statusEl.parentElement;
+    if (modalBody) modalBody.scrollTop = modalBody.scrollHeight;
+  }, 50);
 
   // Disable checkboxes during run
   document.querySelectorAll('.combo-check').forEach(cb => cb.disabled = true);
