@@ -1767,9 +1767,6 @@ function minimizeSearchModal() {
 function restoreSearchModal() {
   document.getElementById('searchMiniBar').style.display = 'none';
   document.getElementById('importModal').style.display = 'flex';
-  // Scroll modal body to bottom so status is visible
-  const modalBody = document.getElementById('modalScrollBody');
-  if (modalBody) modalBody.scrollTop = modalBody.scrollHeight;
 }
 
 function toggleComboGroup(grpName, checked) {
@@ -1808,11 +1805,6 @@ async function runLiveSearch() {
   status.style.background = 'var(--green-light)';
   status.style.borderColor = 'var(--green-border)';
   status.style.color = 'var(--green)';
-  // Scroll the modal body to the bottom so the status line is visible
-  setTimeout(() => {
-    const modalBody = document.getElementById('modalScrollBody');
-    if (modalBody) modalBody.scrollTop = modalBody.scrollHeight;
-  }, 50);
 
   // Disable checkboxes during run
   document.querySelectorAll('.combo-check').forEach(cb => cb.disabled = true);
@@ -2651,14 +2643,15 @@ document.addEventListener('DOMContentLoaded', eInit);
 
       <div id="combosContainer"></div>
 
-      <div id="searchStatus" style="display:none;padding:12px;background:var(--green-light);border:1.5px solid var(--green-border);border-radius:var(--rs);font-size:12px;color:var(--green);margin-top:14px;font-family:var(--mono)"></div>
-
       <div id="searchRawResult" style="display:none;margin-top:14px">
         <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px">Couldn't auto-parse — paste JSON manually if needed</div>
         <textarea id="importText" placeholder="JSON array will appear here if auto-parse fails..." style="width:100%;height:130px;font-size:11px;font-family:var(--mono);padding:10px;border:1.5px solid var(--border);border-radius:var(--rs);background:var(--bg);resize:vertical;color:var(--text);line-height:1.5"></textarea>
         <button class="btn-sm" style="margin-top:7px" onclick="importResults(document.getElementById('importText').value)">Import this JSON</button>
       </div>
     </div>
+
+    <!-- Status bar pinned above footer — always visible, no scrolling needed -->
+    <div id="searchStatus" style="display:none;padding:10px 24px;background:var(--green-light);border-top:1.5px solid var(--green-border);font-size:12px;color:var(--green);font-family:var(--mono);flex-shrink:0"></div>
 
     <div style="padding:14px 24px;background:var(--surface);border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-shrink:0">
       <button class="run-btn" id="liveSearchBtn" style="margin-top:0;flex:1" onclick="runLiveSearch()">
