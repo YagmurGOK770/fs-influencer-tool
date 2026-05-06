@@ -2219,10 +2219,11 @@ async function compareNarrative(rowId, field, oldValue, newValue) {
         <div class="cl-field-name">${label}</div>
         <div class="cl-bio-same" style="grid-column:2/4">Same meaning — ${data.reason || 'no meaningful change detected'}</div>`;
     } else {
+      const d = wordDiff(oldValue||'', newValue||'');
       row.innerHTML = `
         <div class="cl-field-name">${label}</div>
-        <div class="cl-old">${oldValue || '<span class="cl-null">—</span>'}</div>
-        <div class="cl-new">${newValue || '<span class="cl-null">—</span>'}</div>`;
+        <div class="cl-old">${d.oldHtml || '<span class="cl-null">—</span>'}</div>
+        <div class="cl-new">${d.newHtml || '<span class="cl-null">—</span>'}</div>`;
     }
   } catch(err) {
     console.error('compareNarrative error:', err);
