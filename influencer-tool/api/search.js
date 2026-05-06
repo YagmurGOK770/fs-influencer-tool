@@ -24,18 +24,31 @@ function buildPrompt({ keywords, location, platform, sources, minFollowers }) {
       .join('\n');
   }
 
+  const isYouTube = String(platform).toLowerCase().includes('youtube');
+
+  const youtubeBlock = isYouTube ? `
+
+YOUTUBE SEARCH STRATEGY — follow this to find channel creators:
+- Search: site:youtube.com "${kwList}" ${location} — look for channel URLs like youtube.com/@handle or youtube.com/channel/
+- Search: youtube "${kwList}" "${location}" food channel subscribers — find ranked lists and articles about top channels
+- Search: best ${location} food YouTube channels ${kwList} — food/restaurant-focused blogs that rank channels
+- Search: youtube.com/@* ${location} food — find individual channel pages
+- For each channel found, note their subscriber count from search snippets or the channel page
+- The "handle" field should be their YouTube @handle (e.g. @londoneatswith)
+- Prefer channels with regular uploads and genuine ${location} focus over one-off video makers` : '';
+
   return `You are a food-influencer research assistant. Use the web_search tool to find real food influencers active on social media.
 
 Search keywords: ${kwList}
 Location focus: ${location}
 Platform focus: ${platform}
-Minimum followers: ${minFollowers.toLocaleString()}${sourcesBlock}
+Minimum followers/subscribers: ${minFollowers.toLocaleString()}${sourcesBlock}${youtubeBlock}
 
 INCLUSION RULES — be strict:
 - The influencer must be clearly based in ${location} OR predominantly post about ${location} food, restaurants, or dining
 - Their bio, handle, or content must show genuine ${location} focus (not just one visit)
 - They must have a real, verifiable social media presence
-- Skip anyone whose follower count is below ${minFollowers.toLocaleString()}
+- Skip anyone whose follower/subscriber count is below ${minFollowers.toLocaleString()}
 - Skip generic lifestyle/travel accounts that don't focus on food
 
 OUTPUT FORMAT — this is critical:
