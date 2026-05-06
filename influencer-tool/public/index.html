@@ -67,6 +67,32 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .cl-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .cl-toolbar-title{font-size:13px;font-weight:700;color:var(--text)}
 .cl-toolbar-sub{font-size:12px;color:var(--muted);margin-top:2px}
+/* Coverage tab */
+.cov-page{max-width:1100px;margin:0 auto;padding:1.5rem 1.5rem 3rem}
+.cov-stats{display:flex;gap:14px;margin-bottom:20px;flex-wrap:wrap}
+.cov-stat{background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:14px 20px;flex:1;min-width:140px;box-shadow:var(--shadow-sm)}
+.cov-stat-num{font-size:26px;font-weight:800;color:var(--text);line-height:1}
+.cov-stat-label{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.06em}
+.cov-stat.found .cov-stat-num{color:var(--green)}
+.cov-stat.missing .cov-stat-num{color:var(--orange)}
+.cov-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}
+.cov-filters{display:flex;gap:6px}
+.cov-pill{font-size:12px;font-weight:600;padding:5px 14px;border-radius:100px;border:1.5px solid var(--border);background:var(--white);cursor:pointer;color:var(--muted);transition:.15s}
+.cov-pill.active{background:var(--green-bg);border-color:var(--green-border);color:var(--green)}
+.cov-table{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--white);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow-sm);border:1px solid var(--border)}
+.cov-table th{background:var(--surface);padding:9px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);white-space:nowrap}
+.cov-table td{padding:9px 12px;border-bottom:1px solid var(--bg);vertical-align:middle}
+.cov-table tr:last-child td{border-bottom:none}
+.cov-table tr:hover td{background:var(--surface)}
+.cov-badge{display:inline-block;font-size:10px;font-weight:700;border-radius:100px;padding:2px 9px;white-space:nowrap}
+.cov-badge.found{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)}
+.cov-badge.missing{background:#fff5f0;color:var(--orange);border:1px solid var(--orange-border)}
+.cov-import-area{background:var(--white);border:1.5px dashed var(--border);border-radius:var(--r);padding:20px 24px;margin-bottom:20px}
+.cov-import-title{font-size:13px;font-weight:700;margin-bottom:6px}
+.cov-import-sub{font-size:12px;color:var(--muted);margin-bottom:12px}
+.cov-csv-input{width:100%;height:120px;font-size:11px;font-family:var(--mono);padding:10px;border:1.5px solid var(--border);border-radius:var(--rs);background:var(--bg);resize:vertical;color:var(--text);line-height:1.5}
+.cov-import-actions{display:flex;gap:8px;margin-top:10px;align-items:center}
+.cov-import-status{font-size:12px;color:var(--muted);font-family:var(--mono)}
 .nav-brand{display:flex;align-items:center;gap:10px}
 .nav-icon{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#2d8a4e,#1a65b8);display:flex;align-items:center;justify-content:center;font-size:14px}
 .nav-title{font-weight:800;font-size:15px;letter-spacing:-.3px}
@@ -310,6 +336,7 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
     <div class="nav-tabs">
       <button class="nav-tab active" id="tabDashBtn" onclick="switchMainTab('dash')">Dashboard</button>
       <button class="nav-tab" id="tabChangesBtn" onclick="switchMainTab('changes')">Change Log <span class="badge" id="changesBadge" style="display:none">0</span></button>
+      <button class="nav-tab" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
     </div>
   </div>
   <div class="nav-right">
@@ -2081,12 +2108,14 @@ async function unbanInfluencer(handle) {
 
 // ── Main tab switching ──
 function switchMainTab(tab) {
-  const isDash = tab === 'dash';
-  document.getElementById('mainDash').style.display = isDash ? '' : 'none';
-  document.getElementById('mainChanges').style.display = isDash ? 'none' : '';
-  document.getElementById('tabDashBtn').classList.toggle('active', isDash);
-  document.getElementById('tabChangesBtn').classList.toggle('active', !isDash);
-  if (!isDash) loadChanges();
+  document.getElementById('mainDash').style.display    = tab === 'dash'     ? '' : 'none';
+  document.getElementById('mainChanges').style.display = tab === 'changes'  ? '' : 'none';
+  document.getElementById('mainCoverage').style.display= tab === 'coverage' ? '' : 'none';
+  document.getElementById('tabDashBtn').classList.toggle('active',     tab === 'dash');
+  document.getElementById('tabChangesBtn').classList.toggle('active',  tab === 'changes');
+  document.getElementById('tabCoverageBtn').classList.toggle('active', tab === 'coverage');
+  if (tab === 'changes')  loadChanges();
+  if (tab === 'coverage') loadCoverage();
 }
 
 async function loadChanges() {
@@ -2668,6 +2697,151 @@ function eExportXlsx() {
 
 document.addEventListener('DOMContentLoaded', eInit);
 
+// ── Coverage tab ──────────────────────────────────────────────────────────
+
+let covAllRows = [];
+let covFilter = 'all';
+
+function setCovFilter(f, btn) {
+  covFilter = f;
+  document.querySelectorAll('.cov-pill').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  renderCovTable();
+}
+
+function parseCsv(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (!lines.length) return [];
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
+  return lines.slice(1).map(line => {
+    // Handle quoted fields
+    const vals = [];
+    let cur = '', inQ = false;
+    for (const ch of line + ',') {
+      if (ch === '"') { inQ = !inQ; }
+      else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
+      else cur += ch;
+    }
+    const obj = {};
+    headers.forEach((h, i) => { if (vals[i] !== undefined) obj[h] = vals[i]; });
+    return obj;
+  }).filter(r => Object.values(r).some(v => v));
+}
+
+function csvRowToInfluencer(r) {
+  // Accept flexible header names
+  const get = (...keys) => { for (const k of keys) if (r[k]) return r[k]; return ''; };
+  const platform = get('platform');
+  const handle   = get('handle', 'ig_handle', 'tt_handle', 'yt_handle', 'x_handle');
+  return {
+    name:         get('name', 'full_name'),
+    platform,
+    handle:       handle || get('name','full_name').toLowerCase().replace(/\s+/g,'_'),
+    igHandle:     platform?.toLowerCase().includes('instagram') ? handle : (get('ig_handle') || ''),
+    ttHandle:     platform?.toLowerCase().includes('tiktok')    ? handle : (get('tt_handle') || ''),
+    ytHandle:     platform?.toLowerCase().includes('youtube')   ? handle : (get('yt_handle') || ''),
+    xHandle:      platform?.toLowerCase().match(/\bx\b|twitter/) ? handle : (get('x_handle') || ''),
+    followers:    get('followers', 'subscriber_count', 'subscribers'),
+    location:     get('location', 'city', 'country'),
+    bucket:       get('bucket', 'category', 'tier'),
+    niche:        get('niche', 'content_type'),
+    notes:        get('notes', 'note', 'comment'),
+  };
+}
+
+async function importManualCsv() {
+  const raw = document.getElementById('covCsvInput').value.trim();
+  const status = document.getElementById('covImportStatus');
+  if (!raw) { status.textContent = '⚠ Nothing to import.'; return; }
+
+  const parsed = parseCsv(raw);
+  if (!parsed.length) { status.textContent = '⚠ Could not parse CSV — check headers.'; return; }
+
+  const influencers = parsed.map(csvRowToInfluencer).filter(r => r.name || r.handle);
+  if (!influencers.length) { status.textContent = '⚠ No valid rows found.'; return; }
+
+  status.textContent = `⏳ Importing ${influencers.length} rows…`;
+  try {
+    const resp = await fetch('/api/manual-import', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ influencers }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { status.textContent = `⚠ ${data.error}`; return; }
+    status.textContent = `✓ Saved ${data.saved} rows to DB.`;
+    document.getElementById('covCsvInput').value = '';
+    document.getElementById('covImportArea').style.display = 'none';
+    document.getElementById('covShowImportBtn').style.display = 'inline-flex';
+    await loadCoverage();
+  } catch (e) {
+    status.textContent = `⚠ ${e.message}`;
+  }
+}
+
+async function loadCoverage() {
+  document.getElementById('covStats').style.display = 'none';
+  document.getElementById('covToolbar').style.display = 'none';
+  document.getElementById('covTableWrap').style.display = 'none';
+  document.getElementById('covEmpty').style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/manual-coverage', { headers: getApiHeaders() });
+    const data = await resp.json();
+    if (!resp.ok) { alert('Coverage load failed: ' + data.error); return; }
+
+    covAllRows = data.rows || [];
+
+    if (!covAllRows.length) {
+      document.getElementById('covEmpty').style.display = 'block';
+      return;
+    }
+
+    // Stats
+    document.getElementById('covTotal').textContent   = data.total;
+    document.getElementById('covFound').textContent   = data.found;
+    document.getElementById('covMissing').textContent = data.missing;
+    document.getElementById('covPct').textContent     = data.total ? Math.round(data.found / data.total * 100) + '%' : '—';
+    document.getElementById('covStats').style.display = 'flex';
+    document.getElementById('covToolbar').style.display = 'flex';
+    document.getElementById('covTableWrap').style.display = 'block';
+    document.getElementById('covShowImportBtn').style.display = 'inline-flex';
+    document.getElementById('covImportArea').style.display = 'none';
+
+    renderCovTable();
+  } catch (e) {
+    alert('Coverage load error: ' + e.message);
+  }
+}
+
+function renderCovTable() {
+  const rows = covFilter === 'all'     ? covAllRows
+             : covFilter === 'found'   ? covAllRows.filter(r => r.found)
+             : covAllRows.filter(r => !r.found);
+
+  document.getElementById('covFilterLabel').textContent = `Showing ${rows.length} of ${covAllRows.length}`;
+
+  const tbody = document.getElementById('covTableBody');
+  tbody.innerHTML = rows.map(r => {
+    const badge = r.found
+      ? `<span class="cov-badge found">Found</span>`
+      : `<span class="cov-badge missing">Missing</span>`;
+    const toolFollowers = r.found ? (r.toolFollowers || '—') : '—';
+    const handle = r.igHandle || r.ttHandle || r.ytHandle || r.xHandle || r.handle || '—';
+    return `<tr>
+      <td style="font-weight:600">${r.name || '—'}</td>
+      <td>${r.platform || '—'}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${handle}</td>
+      <td style="font-family:var(--mono);font-size:11px">${r.followers || '—'}</td>
+      <td>${r.location || '—'}</td>
+      <td>${r.bucket || '—'}</td>
+      <td>${badge}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:${r.found ? 'var(--green)' : 'var(--muted2)'}">${toolFollowers}</td>
+      <td style="font-size:11px;color:var(--muted)">${r.notes || ''}</td>
+    </tr>`;
+  }).join('');
+}
+
 </script>
 <!-- Import modal -->
 <div id="importModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:999;align-items:center;justify-content:center;padding:1rem">
@@ -2740,6 +2914,78 @@ document.addEventListener('DOMContentLoaded', eInit);
 </div>
 
 <datalist id="bucketList"></datalist>
+
+<!-- Coverage page -->
+<div id="mainCoverage" style="display:none">
+  <div class="cov-page">
+
+    <div class="cl-toolbar" style="margin-bottom:20px">
+      <div>
+        <div class="cl-toolbar-title">Coverage</div>
+        <div class="cl-toolbar-sub">Your manual baseline vs what the tool has found — matched by name</div>
+      </div>
+      <button class="btn-sm" onclick="loadCoverage()">↻ Refresh</button>
+    </div>
+
+    <!-- Import area -->
+    <div class="cov-import-area" id="covImportArea">
+      <div class="cov-import-title">Import your manual list</div>
+      <div class="cov-import-sub">Paste CSV with headers: <code>name, platform, handle, followers, location, bucket, notes</code> — or any subset. One row per influencer.</div>
+      <textarea class="cov-csv-input" id="covCsvInput" placeholder="name,platform,handle,followers,location&#10;Jamie Oliver,YouTube,@jamieoliver,5.2M,London UK&#10;Ottolenghi,Instagram,@ottolenghi,800K,London UK"></textarea>
+      <div class="cov-import-actions">
+        <button class="btn-sm" onclick="importManualCsv()">Import to DB</button>
+        <button class="btn-sm" onclick="document.getElementById('covImportArea').style.display='none'">Hide</button>
+        <span class="cov-import-status" id="covImportStatus"></span>
+      </div>
+    </div>
+    <button class="btn-sm" id="covShowImportBtn" style="display:none;margin-bottom:16px" onclick="document.getElementById('covImportArea').style.display='';document.getElementById('covShowImportBtn').style.display='none'">+ Import / update list</button>
+
+    <!-- Stats -->
+    <div class="cov-stats" id="covStats" style="display:none">
+      <div class="cov-stat"><div class="cov-stat-num" id="covTotal">—</div><div class="cov-stat-label">Manual list</div></div>
+      <div class="cov-stat found"><div class="cov-stat-num" id="covFound">—</div><div class="cov-stat-label">Found by tool</div></div>
+      <div class="cov-stat missing"><div class="cov-stat-num" id="covMissing">—</div><div class="cov-stat-label">Not yet found</div></div>
+      <div class="cov-stat"><div class="cov-stat-num" id="covPct">—</div><div class="cov-stat-label">Coverage</div></div>
+    </div>
+
+    <!-- Filter pills -->
+    <div class="cov-toolbar" id="covToolbar" style="display:none">
+      <div class="cov-filters">
+        <button class="cov-pill active" data-filter="all"     onclick="setCovFilter('all',this)">All</button>
+        <button class="cov-pill"        data-filter="missing" onclick="setCovFilter('missing',this)">Missing only</button>
+        <button class="cov-pill"        data-filter="found"   onclick="setCovFilter('found',this)">Found only</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted)" id="covFilterLabel"></div>
+    </div>
+
+    <!-- Table -->
+    <div id="covTableWrap" style="display:none;overflow-x:auto">
+      <table class="cov-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Platform</th>
+            <th>Handle</th>
+            <th>Followers (manual)</th>
+            <th>Location</th>
+            <th>Bucket</th>
+            <th>Status</th>
+            <th>Tool followers</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="covTableBody"></tbody>
+      </table>
+    </div>
+
+    <div id="covEmpty" class="cl-empty" style="display:none">
+      <div class="cl-empty-icon">📋</div>
+      <div class="cl-empty-title">No manual list yet</div>
+      <div>Paste your CSV above and click "Import to DB" to get started.</div>
+    </div>
+
+  </div>
+</div>
 
 </body>
 </html>
