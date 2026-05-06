@@ -770,6 +770,7 @@ async function verifyPlatform(platform, influencers, statusEl) {
   if (!toVerify.length) return { verified: 0, failed: 0, skipped: true };
 
   const BATCH_SIZE = 10;
+  const FETCH_TIMEOUT_MS = 120000; // 2 min max per batch
   let verifiedCount = 0;
   let failedCount = 0;
 
@@ -780,25 +781,30 @@ async function verifyPlatform(platform, influencers, statusEl) {
     if (statusEl) setStatusText(`🔍 [${cfg.label}] Verifying batch ${batchNum}/${totalBatches} (${b + 1}–${Math.min(b + BATCH_SIZE, toVerify.length)} of ${toVerify.length})…`);
 
     try {
-      const resp = await fetch('/api/verify', {
-        method: 'POST',
-        headers: getApiHeaders(),
-        body: JSON.stringify({ platform, handles: batch.map(x => x.handle) }),
-      });
-      const data = await resp.json();
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+      let resp, data;
+      try {
+        resp = await fetch('/api/verify', {
+          method: 'POST',
+          headers: getApiHeaders(),
+          body: JSON.stringify({ platform, handles: batch.map(x => x.handle) }),
+          signal: ctrl.signal,
+        });
+        data = await resp.json();
+      } finally {
+        clearTimeout(timer);
+      }
 
       if (!resp.ok || data.error) {
-        if (data.error === 'cookie_missing' || data.error === 'cookie_expired') {
-          const platformLabel = { instagram: 'Instagram', tiktok: 'TikTok', x: 'X / Twitter' }[platform] || platform;
-          const retry = confirm(`Saved ${platformLabel} session is missing or expired.\n\nClick OK to paste a fresh cookie, then retry verification.`);
-          if (retry) {
-            await openSessionModal(platform, null);
-            b -= BATCH_SIZE;
-            continue;
-          } else {
-            logLine(`⚠ ${cfg.label} verification skipped — no valid session`, 'warn');
-            return { verified: verifiedCount, failed: failedCount };
-          }
+        if (data.error === 'cookie_missing') {
+          // No session saved — skip this platform entirely, don't block
+          logLine(`ℹ ${cfg.label} verification skipped — no session cookie saved (use 🔑 to add one)`, 'info');
+          return { verified: 0, failed: 0, skipped: true };
+        }
+        if (data.error === 'cookie_expired') {
+          logLine(`⚠ ${cfg.label} session expired — skipping. Use 🔑 to refresh.`, 'warn');
+          return { verified: verifiedCount, failed: failedCount };
         }
         logLine(`⚠ ${cfg.label} verify batch failed: ${data.error || resp.statusText}`, 'warn');
         failedCount += batch.length;
@@ -813,6 +819,10 @@ async function verifyPlatform(platform, influencers, statusEl) {
         verifiedCount++;
       }
     } catch (err) {
+      if (err.name === 'AbortError') {
+        logLine(`⚠ ${cfg.label} verify timed out — skipping remaining batches`, 'warn');
+        break;
+      }
       logLine(`⚠ ${cfg.label} verify error: ${err.message}`, 'warn');
       failedCount += batch.length;
     }
@@ -825,29 +835,29 @@ async function verifyInfluencerFollowers(influencers, statusEl) {
   const platforms = ['instagram', 'tiktok', 'youtube', 'x'];
   let totalVerified = 0;
   let totalFailed = 0;
-  let anyHandles = false;
+  let ranPlatforms = [];
 
   for (const platform of platforms) {
     const cfg = PLATFORM_VERIFY_CONFIG[platform];
+    // Only attempt platforms that have actual handles in this batch
     const hasHandles = influencers.some(inf => cfg.getHandle(inf));
     if (!hasHandles) continue;
-    anyHandles = true;
 
-    if (statusEl) setStatusText(`🔍 Verifying ${cfg.label} profiles…`);
     const { verified, failed, skipped } = await verifyPlatform(platform, influencers, statusEl);
     if (!skipped) {
       totalVerified += verified;
       totalFailed += failed;
+      ranPlatforms.push(cfg.label);
     }
   }
 
-  if (!anyHandles) {
-    if (statusEl) setStatusText(`⚠ No handles found to verify — skipping.`);
+  if (!ranPlatforms.length) {
+    if (statusEl) setStatusText(`⚠ No handles to verify — skipping verification step.`);
     await new Promise(r => setTimeout(r, 800));
     return;
   }
 
-  if (statusEl) setStatusText(`✓ Verified ${totalVerified} profiles (${totalFailed} could not be verified) — applying filters…`);
+  if (statusEl) setStatusText(`✓ Verified ${totalVerified} profiles across ${ranPlatforms.join(', ')} (${totalFailed} could not be verified)`);
   await new Promise(r => setTimeout(r, 1000));
 }
 

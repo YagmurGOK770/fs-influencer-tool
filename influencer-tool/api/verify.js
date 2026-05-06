@@ -257,20 +257,8 @@ export default async function handler(req, res) {
     if (cookies) await applyCookies(context, cookies);
     const page = await context.newPage();
 
-    // Session validity check (skipped for YouTube)
-    if (needsSession) {
-      const checker = SESSION_CHECKERS[platform];
-      if (checker) {
-        const valid = await checker(page);
-        if (!valid) {
-          return res.status(401).json({
-            error: 'cookie_expired',
-            message: `Saved ${platform} cookie expired — paste a fresh one via 🔑`,
-          });
-        }
-        await randDelay(page, 1000, 2000);
-      }
-    }
+    // Skip the home-page session pre-check — it's slow and unreliable.
+    // Instead detect expiry from the first real API call (401/403 → cookie_expired).
 
     const verifier = VERIFIERS[platform];
     const results = {};
