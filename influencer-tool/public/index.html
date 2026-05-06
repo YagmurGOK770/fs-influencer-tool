@@ -718,10 +718,22 @@ function deleteSource(i) {
 
 // Map each platform to which fields on an influencer hold its handle, and where
 // to write back the verified follower count.
+// Returns true only when the platform field lists this platform as the ONLY platform.
+// Prevents inf.handle leaking into YouTube/TikTok/X verify when an influencer is
+// listed as e.g. "Instagram | YouTube" — only the dedicated handle fields are safe there.
+function isSolePlatform(inf, keyword) {
+  const p = String(inf.platform || '').toLowerCase().trim();
+  // Strip punctuation/separators and split into individual platform tokens
+  const tokens = p.split(/[\s|,/&+]+/).map(t => t.trim()).filter(Boolean);
+  // Only match if there's exactly one token and it contains the keyword
+  return tokens.length === 1 && tokens[0].includes(keyword);
+}
+
 const PLATFORM_VERIFY_CONFIG = {
   instagram: {
     label: 'Instagram',
-    getHandle: inf => inf.igHandle || (String(inf.platform||'').toLowerCase().includes('instagram') ? inf.handle : null),
+    // Only use inf.handle fallback when Instagram is the sole listed platform
+    getHandle: inf => inf.igHandle || (isSolePlatform(inf, 'instagram') ? inf.handle : null),
     applyResult: (inf, r) => {
       if (r.followers) { inf.igFollowers = r.followers; inf.followers = r.followers; }
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
@@ -732,7 +744,7 @@ const PLATFORM_VERIFY_CONFIG = {
   },
   tiktok: {
     label: 'TikTok',
-    getHandle: inf => inf.ttHandle || (String(inf.platform||'').toLowerCase().includes('tiktok') ? inf.handle : null),
+    getHandle: inf => inf.ttHandle || (isSolePlatform(inf, 'tiktok') ? inf.handle : null),
     applyResult: (inf, r) => {
       if (r.followers) { inf.ttFollowers = r.followers; if (!inf.igHandle) inf.followers = r.followers; }
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
@@ -742,7 +754,7 @@ const PLATFORM_VERIFY_CONFIG = {
   },
   youtube: {
     label: 'YouTube',
-    getHandle: inf => inf.ytHandle || (String(inf.platform||'').toLowerCase().includes('youtube') ? inf.handle : null),
+    getHandle: inf => inf.ytHandle || (isSolePlatform(inf, 'youtube') ? inf.handle : null),
     applyResult: (inf, r) => {
       if (r.followers) { inf.ytFollowers = r.followers; if (!inf.igHandle && !inf.ttHandle) inf.followers = r.followers; }
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
@@ -751,7 +763,7 @@ const PLATFORM_VERIFY_CONFIG = {
   },
   x: {
     label: 'X / Twitter',
-    getHandle: inf => inf.xHandle || (String(inf.platform||'').toLowerCase().match(/\bx\b|twitter/) ? inf.handle : null),
+    getHandle: inf => inf.xHandle || (isSolePlatform(inf, 'x') || isSolePlatform(inf, 'twitter') ? inf.handle : null),
     applyResult: (inf, r) => {
       if (r.followers) { inf.xFollowers = r.followers; if (!inf.igHandle && !inf.ttHandle && !inf.ytHandle) inf.followers = r.followers; }
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
