@@ -1768,11 +1768,8 @@ function restoreSearchModal() {
   document.getElementById('searchMiniBar').style.display = 'none';
   document.getElementById('importModal').style.display = 'flex';
   // Scroll modal body to bottom so status is visible
-  const s = document.getElementById('searchStatus');
-  if (s && s.style.display !== 'none') {
-    const modalBody = s.closest('[style*="overflow-y"]') || s.parentElement;
-    if (modalBody) modalBody.scrollTop = modalBody.scrollHeight;
-  }
+  const modalBody = document.getElementById('modalScrollBody');
+  if (modalBody) modalBody.scrollTop = modalBody.scrollHeight;
 }
 
 function toggleComboGroup(grpName, checked) {
@@ -1813,7 +1810,7 @@ async function runLiveSearch() {
   status.style.color = 'var(--green)';
   // Scroll the modal body to the bottom so the status line is visible
   setTimeout(() => {
-    const modalBody = _statusEl.closest('[style*="overflow-y"]') || _statusEl.parentElement;
+    const modalBody = document.getElementById('modalScrollBody');
     if (modalBody) modalBody.scrollTop = modalBody.scrollHeight;
   }, 50);
 
@@ -2646,7 +2643,7 @@ document.addEventListener('DOMContentLoaded', eInit);
       </div>
     </div>
 
-    <div style="padding:16px 24px;overflow-y:auto;flex:1">
+    <div id="modalScrollBody" style="padding:16px 24px;overflow-y:auto;flex:1">
       <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
         <button class="btn-sm" style="font-size:11px" onclick="document.querySelectorAll('.combo-check').forEach(cb=>cb.checked=true);updateComboRunBtn()">Select all</button>
         <button class="btn-sm" style="font-size:11px" onclick="document.querySelectorAll('.combo-check').forEach(cb=>cb.checked=false);updateComboRunBtn()">Deselect all</button>
