@@ -1,8 +1,7 @@
 // POST /api/verify
 // Body: { platform: 'instagram'|'tiktok'|'youtube'|'x', handles: ['@user1', ...] }
-// Fetches each profile via the platform's internal API using the saved session cookie.
-// YouTube is public — no session needed.
-// Returns live follower count, bio, verified status, and post count for each handle.
+// Returns live follower count, bio, verified status for each handle.
+// YouTube is public — no session needed. Others require a saved session cookie.
 
 import { checkAuth } from './_auth.js';
 import { chromium } from 'playwright-core';
@@ -11,6 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 const TOKEN = process.env.BROWSERLESS_TOKEN;
 const WS_ENDPOINT = `wss://production-lon.browserless.io/playwright/chromium?token=${TOKEN}`;
 
+// Short random delay between handles to avoid rate-limiting
 const randDelay = (page, min, max) => page.waitForTimeout(min + Math.random() * (max - min));
 
 async function loadSavedCookies(platform) {
@@ -28,18 +28,21 @@ async function applyCookies(context, cookies) {
   if (cleaned.length) await context.addCookies(cleaned);
 }
 
-function stripAt(handle) {
-  return String(handle || '').replace(/^@/, '').trim();
+function stripAt(h) {
+  return String(h || '').replace(/^@/, '').trim();
 }
 
 // ── Instagram ──────────────────────────────────────────────────────────────
 async function verifyInstagram(page, username) {
   return page.evaluate(async (u) => {
     try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
       const resp = await fetch(
         `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(u)}`,
-        { headers: { 'x-ig-app-id': '936619743392459', 'accept': '*/*' }, credentials: 'include' }
+        { headers: { 'x-ig-app-id': '936619743392459', 'accept': '*/*' }, credentials: 'include', signal: ctrl.signal }
       );
+      clearTimeout(t);
       if (resp.status === 401 || resp.status === 403) return { ok: false, reason: 'cookie_expired' };
       if (resp.status === 404) return { ok: false, reason: 'not_found' };
       if (!resp.ok) return { ok: false, reason: `http_${resp.status}` };
@@ -55,7 +58,7 @@ async function verifyInstagram(page, username) {
         isVerified: !!user.is_verified,
         postCount:  String(user.edge_owner_to_timeline_media?.count ?? user.media_count ?? ''),
       };
-    } catch (e) { return { ok: false, reason: e.message }; }
+    } catch (e) { return { ok: false, reason: e.name === 'AbortError' ? 'timeout' : e.message }; }
   }, username);
 }
 
@@ -63,11 +66,13 @@ async function verifyInstagram(page, username) {
 async function verifyTikTok(page, username) {
   return page.evaluate(async (u) => {
     try {
-      // TikTok's web API — requires session cookie for follower counts
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
       const resp = await fetch(
         `https://www.tiktok.com/api/user/detail/?uniqueId=${encodeURIComponent(u)}&aid=1988&app_language=en&app_name=tiktok_web`,
-        { headers: { 'accept': 'application/json, text/plain, */*', 'referer': 'https://www.tiktok.com/' }, credentials: 'include' }
+        { headers: { 'accept': 'application/json, text/plain, */*', 'referer': 'https://www.tiktok.com/' }, credentials: 'include', signal: ctrl.signal }
       );
+      clearTimeout(t);
       if (resp.status === 401 || resp.status === 403) return { ok: false, reason: 'cookie_expired' };
       if (resp.status === 404) return { ok: false, reason: 'not_found' };
       if (!resp.ok) return { ok: false, reason: `http_${resp.status}` };
@@ -84,23 +89,20 @@ async function verifyTikTok(page, username) {
         isVerified: !!user.verified,
         postCount:  String(stats?.videoCount ?? ''),
       };
-    } catch (e) { return { ok: false, reason: e.message }; }
+    } catch (e) { return { ok: false, reason: e.name === 'AbortError' ? 'timeout' : e.message }; }
   }, username);
 }
 
 // ── YouTube ────────────────────────────────────────────────────────────────
-// Public — no session needed. Navigates to /@handle and reads the page JSON.
+// Public — no session. Navigates to /@handle and reads embedded ytInitialData.
 async function verifyYouTube(page, username) {
   try {
-    const url = `https://www.youtube.com/@${username}`;
-    const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const resp = await page.goto(`https://www.youtube.com/@${username}`, { waitUntil: 'domcontentloaded', timeout: 12000 });
     if (!resp || resp.status() === 404) return { ok: false, reason: 'not_found' };
 
-    // YouTube embeds channel data in a ytInitialData JSON blob in the page
     const data = await page.evaluate(() => {
       try {
-        const scripts = [...document.querySelectorAll('script')];
-        for (const s of scripts) {
+        for (const s of document.querySelectorAll('script')) {
           const m = s.textContent.match(/var ytInitialData\s*=\s*(\{.+?\});/s);
           if (m) return JSON.parse(m[1]);
         }
@@ -110,24 +112,17 @@ async function verifyYouTube(page, username) {
 
     if (!data) return { ok: false, reason: 'no_page_data' };
 
-    // Subscriber count lives in channelMetadataRenderer or c4TabbedHeaderRenderer
-    const header = data?.header?.c4TabbedHeaderRenderer
-      || data?.header?.pageHeaderRenderer
-      || {};
-    const meta = data?.metadata?.channelMetadataRenderer || {};
-
+    const header = data?.header?.c4TabbedHeaderRenderer || data?.header?.pageHeaderRenderer || {};
+    const meta   = data?.metadata?.channelMetadataRenderer || {};
     const subText =
       header?.subscriberCountText?.simpleText ||
-      header?.subscriberCountText?.runs?.[0]?.text ||
-      '';
-    const description = meta?.description || '';
-    const channelName = meta?.title || header?.title || '';
+      header?.subscriberCountText?.runs?.[0]?.text || '';
 
     return {
-      ok: true,
+      ok:         true,
       followers:  subText.replace(/\s*subscribers?/i, '').trim(),
-      bio:        description.slice(0, 200),
-      fullName:   channelName,
+      bio:        (meta?.description || '').slice(0, 200),
+      fullName:   meta?.title || header?.title || '',
       isPrivate:  false,
       isVerified: !!(header?.badges?.some?.(b => b?.metadataBadgeRenderer?.style === 'BADGE_STYLE_TYPE_VERIFIED')),
       postCount:  '',
@@ -139,9 +134,8 @@ async function verifyYouTube(page, username) {
 async function verifyX(page, username) {
   return page.evaluate(async (u) => {
     try {
-      // Twitter's internal GraphQL endpoint for user by screen name
       const variables = encodeURIComponent(JSON.stringify({ screen_name: u, withSafetyModeUserFields: true }));
-      const features = encodeURIComponent(JSON.stringify({
+      const features  = encodeURIComponent(JSON.stringify({
         hidden_profile_subscriptions_enabled: true,
         rweb_tipjar_consumption_enabled: true,
         responsive_web_graphql_exclude_directive_enabled: true,
@@ -155,6 +149,8 @@ async function verifyX(page, username) {
         responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
         responsive_web_graphql_timeline_navigation_enabled: true,
       }));
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
       const resp = await fetch(
         `https://x.com/i/api/graphql/NimuplG1OB7Fd2btCLdBOw/UserByScreenName?variables=${variables}&features=${features}`,
         {
@@ -165,8 +161,10 @@ async function verifyX(page, username) {
             'content-type': 'application/json',
           },
           credentials: 'include',
+          signal: ctrl.signal,
         }
       );
+      clearTimeout(t);
       if (resp.status === 401 || resp.status === 403) return { ok: false, reason: 'cookie_expired' };
       if (resp.status === 404) return { ok: false, reason: 'not_found' };
       if (!resp.ok) return { ok: false, reason: `http_${resp.status}` };
@@ -174,7 +172,7 @@ async function verifyX(page, username) {
       const user = json?.data?.user?.result?.legacy;
       if (!user) return { ok: false, reason: 'no_user_data' };
       return {
-        ok: true,
+        ok:         true,
         followers:  String(user.followers_count ?? ''),
         bio:        user.description || '',
         fullName:   user.name || '',
@@ -182,32 +180,9 @@ async function verifyX(page, username) {
         isVerified: !!(json?.data?.user?.result?.is_blue_verified || user.verified),
         postCount:  String(user.statuses_count ?? ''),
       };
-    } catch (e) { return { ok: false, reason: e.message }; }
+    } catch (e) { return { ok: false, reason: e.name === 'AbortError' ? 'timeout' : e.message }; }
   }, username);
 }
-
-// ── Session check helpers ───────────────────────────────────────────────────
-async function checkInstagramSession(page) {
-  await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
-  return !page.url().includes('/accounts/login') && !page.url().includes('/challenge/');
-}
-
-async function checkTikTokSession(page) {
-  await page.goto('https://www.tiktok.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
-  // TikTok keeps you on tiktok.com whether logged in or not; check for login redirect
-  return !page.url().includes('/login');
-}
-
-async function checkXSession(page) {
-  await page.goto('https://x.com/home', { waitUntil: 'domcontentloaded', timeout: 15000 });
-  return !page.url().includes('/i/flow/login') && !page.url().includes('login');
-}
-
-const SESSION_CHECKERS = {
-  instagram: checkInstagramSession,
-  tiktok:    checkTikTokSession,
-  x:         checkXSession,
-};
 
 const VERIFIERS = {
   instagram: verifyInstagram,
@@ -226,13 +201,13 @@ export default async function handler(req, res) {
 
   const { platform, handles } = req.body || {};
   if (!VERIFIERS[platform]) {
-    return res.status(400).json({ error: `Unsupported platform: ${platform}. Must be instagram, tiktok, youtube, or x.` });
+    return res.status(400).json({ error: `Unsupported platform: ${platform}` });
   }
   if (!Array.isArray(handles) || !handles.length) {
     return res.status(400).json({ error: 'handles[] is required' });
   }
 
-  // YouTube is public — no session cookie needed
+  // YouTube is public — no cookie needed
   const needsSession = platform !== 'youtube';
   let cookies = null;
   if (needsSession) {
@@ -253,49 +228,62 @@ export default async function handler(req, res) {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 800 },
     });
-
     if (cookies) await applyCookies(context, cookies);
-    const page = await context.newPage();
 
-    // Skip the home-page session pre-check — it's slow and unreliable.
-    // Instead detect expiry from the first real API call (401/403 → cookie_expired).
+    const page = await context.newPage();
+    // 15s timeout on all page.evaluate calls
+    page.setDefaultTimeout(15000);
+
+    // For Instagram: navigate to instagram.com once so cookies are active for the domain
+    // before making fetch() calls. Skip for others — they use direct API fetches.
+    if (platform === 'instagram') {
+      await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
+      const url = page.url();
+      if (url.includes('/accounts/login') || url.includes('/challenge/')) {
+        return res.status(401).json({ error: 'cookie_expired', message: 'Instagram cookie expired — paste a fresh one via 🔑' });
+      }
+    }
 
     const verifier = VERIFIERS[platform];
-    const results = {};
+    const results  = {};
 
     for (let i = 0; i < handles.length; i++) {
       const username = stripAt(handles[i]);
       if (!username) continue;
 
-      if (i > 0) await randDelay(page, 1200, 2500);
+      // Small delay between handles to avoid rate-limiting (skip for YouTube which does page.goto)
+      if (i > 0 && platform !== 'youtube') await randDelay(page, 600, 1200);
+
       if (page.isClosed()) {
-        console.log(`[verify:${platform}] page closed mid-loop, returning partial results`);
+        console.log(`[verify:${platform}] page closed mid-loop`);
         break;
       }
 
       try {
         const result = await verifier(page, username);
         results[handles[i]] = result;
-        console.log(`[verify:${platform}] ${username}: followers=${result.followers || '—'} ok=${result.ok}`);
+        console.log(`[verify:${platform}] ${username}: followers=${result.followers || '—'} ok=${result.ok} reason=${result.reason || ''}`);
 
         if (!result.ok && result.reason === 'cookie_expired') {
           console.log(`[verify:${platform}] cookie expired mid-batch, stopping`);
           break;
         }
       } catch (e) {
-        console.log(`[verify:${platform}] ${username} failed: ${e.message.slice(0, 100)}`);
-        results[handles[i]] = { ok: false, reason: e.message.slice(0, 100) };
-        if (e.message.includes('closed') || e.message.includes('Target')) break;
+        const msg = e.message.slice(0, 120);
+        console.log(`[verify:${platform}] ${username} threw: ${msg}`);
+        results[handles[i]] = { ok: false, reason: msg };
+        // Stop if the browser context itself died
+        if (msg.includes('closed') || msg.includes('Target') || msg.includes('disconnected')) break;
       }
     }
 
     return res.status(200).json({ results });
 
   } catch (err) {
-    console.error(`[verify:${platform}] error:`, err.message);
+    console.error(`[verify:${platform}] fatal:`, err.message);
     return res.status(500).json({ error: err.message });
   } finally {
     if (context) try { await context.close(); } catch (_) {}
-    if (browser) try { await browser.close(); } catch (_) {}
+    if (browser)  try { await browser.close();  } catch (_) {}
   }
 }
