@@ -1,8 +1,7 @@
 // POST /api/verify
 // Body: { platform: 'instagram', handles: ['@user1', '@user2', ...] }
-// Visits each profile via Browserless using the saved session cookie,
-// returns live follower count + bio for each handle.
-// Used to verify candidates that came from the Google/Claude search path.
+// Fetches each profile via the Instagram internal JSON API using the saved session cookie.
+// Returns live follower count, bio, verified status, and post count for each handle.
 
 import { checkAuth } from './_auth.js';
 import { chromium } from 'playwright-core';
@@ -10,12 +9,6 @@ import { createClient } from '@supabase/supabase-js';
 
 const TOKEN = process.env.BROWSERLESS_TOKEN;
 const WS_ENDPOINT = `wss://production-lon.browserless.io/playwright/chromium?token=${TOKEN}`;
-
-const PROFILE_URL = {
-  instagram: u => `https://www.instagram.com/${u}/`,
-  tiktok:    u => `https://www.tiktok.com/@${u}`,
-  x:         u => `https://x.com/${u}`,
-};
 
 const randDelay = (page, min, max) => page.waitForTimeout(min + Math.random() * (max - min));
 
@@ -39,48 +32,52 @@ function stripAt(handle) {
 }
 
 async function verifyInstagram(page, username) {
-  await page.goto(`https://www.instagram.com/${username}/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-  await randDelay(page, 1500, 3000);
-
-  // Skip if redirected to login / error / challenge
-  const url = page.url();
-  if (!url.includes(`/${username}`) || url.includes('/accounts/login') || url.includes('/challenge/')) {
-    return { ok: false, reason: 'redirected', finalUrl: url };
-  }
-
-  // Occasional human-like scroll
-  if (Math.random() < 0.3) {
-    await page.evaluate(() => window.scrollBy(0, 300 + Math.random() * 300));
-    await randDelay(page, 600, 1300);
-  }
-
-  const data = await page.evaluate(() => {
-    let followers = '';
-    const followerLi = document.querySelector('header section ul li:nth-child(2)');
-    if (followerLi) {
-      const titleSpan = followerLi.querySelector('span[title]');
-      if (titleSpan) {
-        followers = titleSpan.getAttribute('title').replace(/,/g, '');
-      } else {
-        const spans = followerLi.querySelectorAll('span span span, span span, span');
-        for (const s of spans) {
-          const t = s.textContent.trim();
-          if (/^[\d.,]+[KkMm]?$/.test(t)) { followers = t; break; }
+  // Use Instagram's internal profile JSON API — far more stable than DOM scraping.
+  // The session cookie applied to the browser context authenticates this request.
+  const result = await page.evaluate(async (u) => {
+    try {
+      const resp = await fetch(
+        `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(u)}`,
+        {
+          headers: {
+            'x-ig-app-id': '936619743392459',
+            'accept': '*/*',
+          },
+          credentials: 'include',
         }
-      }
-    }
-    if (!followers) {
-      const meta = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
-      const m = meta.match(/([\d,.]+[KkMmBb]?)\s*Followers?/i);
-      if (m) followers = m[1];
-    }
-    const bio = document.querySelector('meta[property="og:description"]')?.getAttribute('content')
-      || document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
-    const isPrivate = !!document.querySelector('h2')?.textContent?.match(/Private|This Account is Private/i);
-    return { followers, bio, isPrivate };
-  });
+      );
 
-  return { ok: true, ...data };
+      if (resp.status === 401 || resp.status === 403) {
+        return { ok: false, reason: 'cookie_expired' };
+      }
+      if (resp.status === 404) {
+        return { ok: false, reason: 'not_found' };
+      }
+      if (!resp.ok) {
+        return { ok: false, reason: `http_${resp.status}` };
+      }
+
+      const json = await resp.json();
+      const user = json?.data?.user;
+      if (!user) {
+        return { ok: false, reason: 'no_user_data' };
+      }
+
+      return {
+        ok: true,
+        followers:   String(user.edge_followed_by?.count ?? user.follower_count ?? ''),
+        bio:         user.biography || '',
+        fullName:    user.full_name || '',
+        isPrivate:   !!user.is_private,
+        isVerified:  !!user.is_verified,
+        postCount:   String(user.edge_owner_to_timeline_media?.count ?? user.media_count ?? ''),
+      };
+    } catch (e) {
+      return { ok: false, reason: e.message };
+    }
+  }, username);
+
+  return result;
 }
 
 export default async function handler(req, res) {
@@ -114,7 +111,7 @@ export default async function handler(req, res) {
     await applyCookies(context, cookies);
     const page = await context.newPage();
 
-    // Quick session check — visit IG home, if we get bounced to login, the cookie is dead
+    // Quick session check — visit IG home; if bounced to login the cookie is dead
     await page.goto('https://www.instagram.com/', { waitUntil: 'domcontentloaded', timeout: 15000 });
     if (page.url().includes('/accounts/login') || page.url().includes('/challenge/')) {
       return res.status(401).json({ error: 'cookie_expired', message: 'Saved Instagram cookie expired — paste a fresh one via 🔑' });
@@ -126,13 +123,9 @@ export default async function handler(req, res) {
       const username = stripAt(handles[i]);
       if (!username) continue;
 
-      // Human-paced gap between profile visits
-      if (i > 0) {
-        await randDelay(page, 3000, 6500);
-        await page.mouse.move(100 + Math.random() * 800, 100 + Math.random() * 500, { steps: 6 });
-      }
+      // Human-paced gap between API calls to avoid rate limiting
+      if (i > 0) await randDelay(page, 1200, 2500);
 
-      // Bail out if browser died mid-loop — return what we have
       if (page.isClosed()) {
         console.log('[verify] page closed mid-loop, returning partial results');
         break;
@@ -141,7 +134,13 @@ export default async function handler(req, res) {
       try {
         const result = await verifyInstagram(page, username);
         results[handles[i]] = result;
-        console.log(`[verify] ${username}: followers=${result.followers || '—'} ok=${result.ok}`);
+        console.log(`[verify] ${username}: followers=${result.followers || '—'} verified=${result.isVerified} ok=${result.ok}`);
+
+        // If session expired mid-batch, stop and surface the error
+        if (!result.ok && result.reason === 'cookie_expired') {
+          console.log('[verify] cookie expired mid-batch, stopping');
+          break;
+        }
       } catch (e) {
         console.log(`[verify] ${username} failed: ${e.message.slice(0, 100)}`);
         results[handles[i]] = { ok: false, reason: e.message.slice(0, 100) };

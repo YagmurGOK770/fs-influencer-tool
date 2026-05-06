@@ -758,6 +758,9 @@ async function verifyInfluencerFollowers(influencers, status) {
           verifiedCount++;
         }
         if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
+        if (r.fullName && !inf.name) inf.name = r.fullName;
+        if (r.isVerified !== undefined) inf.isVerified = r.isVerified;
+        if (r.postCount) inf.postCount = r.postCount;
       }
     } catch (err) {
       logLine(`⚠ Verify batch error: ${err.message}`, 'warn');
@@ -1124,8 +1127,8 @@ function renderTable() {
       <td class="td-num">${numCell}</td>
       <td style="font-weight:600;font-size:12.5px">${nameLink(r)}</td>
       <td style="font-size:11px;color:var(--muted);white-space:nowrap">${r.platform||'—'}</td>
-      <td class="td-handle">${handleLink(r.igHandle,'Instagram')}</td>
-      <td class="td-follow">${r.igFollowers||'—'}</td>
+      <td class="td-handle">${handleLink(r.igHandle,'Instagram')}${r.isVerified ? ' <span title="Verified account" style="color:var(--blue);font-size:11px">✓</span>' : ''}</td>
+      <td class="td-follow" title="${r.postCount ? r.postCount + ' posts' : ''}">${r.igFollowers||'—'}</td>
       <td class="td-handle">${handleLink(r.ttHandle,'TikTok')}</td>
       <td class="td-follow">${r.ttFollowers||'—'}</td>
       <td class="td-handle">${handleLink(r.ytHandle,'YouTube')}</td>

@@ -28,6 +28,8 @@ function toFrontend(row) {
     niche:         row.niche         || '',
     location:      row.location      || '',
     bucket:        row.bucket        || '',
+    isVerified:    row.is_verified   || false,
+    postCount:     row.post_count    || '',
     createdAt:     row.created_at,
     updatedAt:     row.updated_at,
   };
