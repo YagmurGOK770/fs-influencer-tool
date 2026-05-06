@@ -2709,43 +2709,106 @@ function setCovFilter(f, btn) {
   renderCovTable();
 }
 
-function parseCsv(text) {
-  const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  if (!lines.length) return [];
-  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'));
-  return lines.slice(1).map(line => {
-    // Handle quoted fields
-    const vals = [];
-    let cur = '', inQ = false;
-    for (const ch of line + ',') {
-      if (ch === '"') { inQ = !inQ; }
-      else if (ch === ',' && !inQ) { vals.push(cur.trim()); cur = ''; }
-      else cur += ch;
+// Split a CSV line respecting quoted fields (handles embedded commas and newlines in quotes)
+function splitCsvLine(line) {
+  const vals = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; } // escaped quote
+      else inQ = !inQ;
+    } else if (ch === ',' && !inQ) {
+      vals.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
     }
+  }
+  vals.push(cur.trim());
+  return vals;
+}
+
+function parseCsv(text) {
+  // Normalise line endings, collapse multi-line quoted cells to single line
+  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Re-join lines that are inside a quoted field
+  const fixedLines = [];
+  let buf = '', inQ = false;
+  for (const ch of normalised) {
+    if (ch === '"') inQ = !inQ;
+    if (ch === '\n' && !inQ) { fixedLines.push(buf); buf = ''; }
+    else buf += ch === '\n' ? ' ' : ch;
+  }
+  if (buf) fixedLines.push(buf);
+
+  const lines = fixedLines.filter(l => l.trim());
+  if (!lines.length) return [];
+
+  // Detect headers — our CSV has: #, Handle, Name (if found), Platform(s), Follower Count, Primary Niche, Location, Source
+  const rawHeaders = splitCsvLine(lines[0]).map(h =>
+    h.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+  );
+
+  return lines.slice(1).map(line => {
+    const vals = splitCsvLine(line);
     const obj = {};
-    headers.forEach((h, i) => { if (vals[i] !== undefined) obj[h] = vals[i]; });
+    rawHeaders.forEach((h, i) => { obj[h] = (vals[i] || '').trim(); });
     return obj;
   }).filter(r => Object.values(r).some(v => v));
 }
 
+function normalisePlatform(raw) {
+  const s = (raw || '').toLowerCase().trim();
+  if (s.includes('instagram'))  return 'Instagram';
+  if (s.includes('tik'))        return 'TikTok';
+  if (s.includes('you'))        return 'YouTube';
+  if (s.match(/\bx\b|twitter/)) return 'X';
+  return raw || '';
+}
+
+function normaliseHandle(raw) {
+  return (raw || '').replace(/^@/, '').replace(/\s+/g, '').toLowerCase();
+}
+
+function normaliseFollowers(raw) {
+  // Strip spaces inside numbers like "162,6K" → "162.6K", preserve "1.1M" etc.
+  return (raw || '').replace(/\s/g, '').replace(/,(\d)/g, '.$1');
+}
+
 function csvRowToInfluencer(r) {
-  // Accept flexible header names
-  const get = (...keys) => { for (const k of keys) if (r[k]) return r[k]; return ''; };
-  const platform = get('platform');
-  const handle   = get('handle', 'ig_handle', 'tt_handle', 'yt_handle', 'x_handle');
+  // Map our specific CSV headers: #, handle, name_if_found, platforms, follower_count, primary_niche, location, source
+  const rawHandle   = r['handle'] || r['handle_'] || '';
+  const rawName     = r['name_if_found'] || r['name'] || r['name__if_found_'] || '';
+  const rawPlatform = r['platform_s_'] || r['platforms'] || r['platform'] || '';
+  const rawFollowers= r['follower_count'] || r['followers'] || '';
+  const rawNiche    = r['primary_niche'] || r['niche'] || '';
+  const rawLocation = r['location'] || '';
+  const rawSource   = r['source'] || '';
+
+  const handle   = normaliseHandle(rawHandle);
+  const platform = normalisePlatform(rawPlatform);
+  const followers = normaliseFollowers(rawFollowers);
+
+  // Skip the header-description row (row 2 in the sheet — all platforms listed, no handle)
+  if (!handle && !rawName.trim()) return null;
+
+  // Fall back to name-derived handle if handle is blank
+  const finalHandle = handle || rawName.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 40);
+  if (!finalHandle) return null;
+
   return {
-    name:         get('name', 'full_name'),
+    name:      rawName.trim(),
     platform,
-    handle:       handle || get('name','full_name').toLowerCase().replace(/\s+/g,'_'),
-    igHandle:     platform?.toLowerCase().includes('instagram') ? handle : (get('ig_handle') || ''),
-    ttHandle:     platform?.toLowerCase().includes('tiktok')    ? handle : (get('tt_handle') || ''),
-    ytHandle:     platform?.toLowerCase().includes('youtube')   ? handle : (get('yt_handle') || ''),
-    xHandle:      platform?.toLowerCase().match(/\bx\b|twitter/) ? handle : (get('x_handle') || ''),
-    followers:    get('followers', 'subscriber_count', 'subscribers'),
-    location:     get('location', 'city', 'country'),
-    bucket:       get('bucket', 'category', 'tier'),
-    niche:        get('niche', 'content_type'),
-    notes:        get('notes', 'note', 'comment'),
+    handle:    finalHandle,
+    igHandle:  platform === 'Instagram' ? handle : '',
+    ttHandle:  platform === 'TikTok'    ? handle : '',
+    ytHandle:  platform === 'YouTube'   ? handle : '',
+    xHandle:   platform === 'X'         ? handle : '',
+    followers,
+    niche:     rawNiche,
+    location:  rawLocation,
+    notes:     rawSource,  // store "Source" column in notes
   };
 }
 
@@ -2757,7 +2820,7 @@ async function importManualCsv() {
   const parsed = parseCsv(raw);
   if (!parsed.length) { status.textContent = '⚠ Could not parse CSV — check headers.'; return; }
 
-  const influencers = parsed.map(csvRowToInfluencer).filter(r => r.name || r.handle);
+  const influencers = parsed.map(csvRowToInfluencer).filter(r => r && (r.name || r.handle));
   if (!influencers.length) { status.textContent = '⚠ No valid rows found.'; return; }
 
   status.textContent = `⏳ Importing ${influencers.length} rows…`;
@@ -2930,8 +2993,8 @@ function renderCovTable() {
     <!-- Import area -->
     <div class="cov-import-area" id="covImportArea">
       <div class="cov-import-title">Import your manual list</div>
-      <div class="cov-import-sub">Paste CSV with headers: <code>name, platform, handle, followers, location, bucket, notes</code> — or any subset. One row per influencer.</div>
-      <textarea class="cov-csv-input" id="covCsvInput" placeholder="name,platform,handle,followers,location&#10;Jamie Oliver,YouTube,@jamieoliver,5.2M,London UK&#10;Ottolenghi,Instagram,@ottolenghi,800K,London UK"></textarea>
+      <div class="cov-import-sub">Paste your CSV as-is — supports the sheet format: <code>#, Handle, Name (if found), Platform(s), Follower Count, Primary Niche, Location, Source</code></div>
+      <textarea class="cov-csv-input" id="covCsvInput" placeholder="#,Handle,Name (if found),Platform(s),Follower Count,Primary Niche,Location,Source&#10;1,@ottolenghi,Yotam Ottolenghi,Instagram,2.6M,Food,London,starngage&#10;2,@jacksdiningroom,Jack,Tik Tok,2.1M,&quot;Food, Travel&quot;,London,#londoneats"></textarea>
       <div class="cov-import-actions">
         <button class="btn-sm" onclick="importManualCsv()">Import to DB</button>
         <button class="btn-sm" onclick="document.getElementById('covImportArea').style.display='none'">Hide</button>
