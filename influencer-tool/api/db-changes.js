@@ -13,8 +13,7 @@ const TRACKED = new Set([
   'x_handle', 'x_followers',
   'followers',
   'content_labels', 'who_they_are', 'what_they_post',
-  'tone_style', 'target_audience', 'why_follow',
-  'found_via', 'niche', 'location',
+  'location',
 ]);
 
 export default async function handler(req, res) {
