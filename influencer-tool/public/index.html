@@ -269,6 +269,7 @@ td{padding:9px 10px;vertical-align:middle}
 
 .new-badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:100px;background:var(--green-bg);color:var(--green);border:1px solid var(--green-border);white-space:nowrap}
 .banned-badge{font-size:10px;font-weight:800;padding:2px 8px;border-radius:100px;background:var(--red-bg);color:var(--red);border:1px solid rgba(192,57,43,.3);white-space:nowrap}
+.private-badge{font-size:10px;color:var(--muted);margin-left:3px;cursor:default;vertical-align:middle}
 tbody tr.isbanned{background:#fff5f5}
 tbody tr.isbanned:hover{background:#fee}
 tbody tr.isbanned td:nth-child(1),tbody tr.isbanned td:nth-child(2),tbody tr.isbanned td:nth-child(3){background:#fff5f5}
@@ -753,6 +754,7 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.fullName && !inf.name) inf.name = r.fullName;
       if (r.isVerified !== undefined) inf.isVerified = r.isVerified;
       if (r.postCount) inf.postCount = r.postCount;
+      if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
     },
   },
   tiktok: {
@@ -763,6 +765,7 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
       if (r.fullName && !inf.name) inf.name = r.fullName;
       if (r.isVerified !== undefined && !inf.igHandle) inf.isVerified = r.isVerified;
+      if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
     },
   },
   youtube: {
@@ -772,6 +775,7 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.followers) { inf.ytFollowers = r.followers; if (!inf.igHandle && !inf.ttHandle) inf.followers = r.followers; }
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
       if (r.fullName && !inf.name) inf.name = r.fullName;
+      if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
     },
   },
   x: {
@@ -782,6 +786,7 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
       if (r.fullName && !inf.name) inf.name = r.fullName;
       if (r.isVerified !== undefined && !inf.igHandle) inf.isVerified = r.isVerified;
+      if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
     },
   },
 };
@@ -841,6 +846,7 @@ async function verifyPlatform(platform, influencers, statusEl) {
         const r = results[handle];
         if (!r || !r.ok) { failedCount++; continue; }
         cfg.applyResult(inf, r);
+        inf.followerVerified = true;
         verifiedCount++;
       }
     } catch (err) {
@@ -1257,15 +1263,15 @@ function renderTable() {
       <td class="td-num">${numCell}</td>
       <td style="font-weight:600;font-size:12.5px">${nameLink(r)}</td>
       <td style="font-size:11px;color:var(--muted);white-space:nowrap">${r.platform||'—'}</td>
-      <td class="td-handle">${handleLink(r.igHandle,'Instagram')}${r.isVerified ? ' <span title="Verified account" style="color:var(--blue);font-size:11px">✓</span>' : ''}</td>
+      <td class="td-handle">${handleLink(r.igHandle,'Instagram')}${r.isVerified ? ' <span title="Verified account" style="color:var(--blue);font-size:11px">✓</span>' : ''}${r.isPrivate ? ' <span class="private-badge" title="Private account">🔒</span>' : ''}</td>
       <td class="td-follow" title="${r.postCount ? r.postCount + ' posts' : ''}">${r.igFollowers||'—'}</td>
-      <td class="td-handle">${handleLink(r.ttHandle,'TikTok')}</td>
+      <td class="td-handle">${handleLink(r.ttHandle,'TikTok')}${r.isPrivate && !r.igHandle ? ' <span class="private-badge" title="Private account">🔒</span>' : ''}</td>
       <td class="td-follow">${r.ttFollowers||'—'}</td>
       <td class="td-handle">${handleLink(r.ytHandle,'YouTube')}</td>
       <td class="td-follow">${r.ytFollowers||'—'}</td>
-      <td class="td-handle">${handleLink(r.xHandle,'X')}</td>
+      <td class="td-handle">${handleLink(r.xHandle,'X')}${r.isPrivate && !r.igHandle && !r.ttHandle ? ' <span class="private-badge" title="Private account">🔒</span>' : ''}</td>
       <td class="td-follow">${r.xFollowers||'—'}</td>
-      <td class="td-follow" style="font-weight:700;color:var(--text)">${r.followers||'—'}</td>
+      <td class="td-follow" style="font-weight:700;color:${(r.igFollowers||r.ttFollowers||r.ytFollowers||r.xFollowers)?'var(--text)':'var(--muted)'}" title="${(r.igFollowers||r.ttFollowers||r.ytFollowers||r.xFollowers) ? 'Verified follower count' : 'AI estimate — not yet verified'}">${r.followers||'—'}${(r.igFollowers||r.ttFollowers||r.ytFollowers||r.xFollowers) ? '' : ' <span style="font-size:10px;font-weight:400;color:var(--orange)">est.</span>'}</td>
       <td>${labelHtml || (r.niche ? '<span class="lbl-tag">'+r.niche+'</span>' : '—')}</td>
       <td class="td-trunc" style="max-width:200px" title="${(r.whoTheyAre||'').replace(/"/g,'&quot;')}">${r.whoTheyAre||'—'}</td>
       <td class="td-trunc" style="max-width:200px" title="${(r.whatTheyPost||'').replace(/"/g,'&quot;')}">${r.whatTheyPost||'—'}</td>
@@ -1731,6 +1737,9 @@ base.forEach(r => {
         xHandle:    (plat === 'x' || plat.includes('twitter')) ? normHandle : '',
         xFollowers: (plat === 'x' || plat.includes('twitter')) ? (r.followers||'') : '',
         followers:  r.followers||'',
+        followerVerified: r.followerVerified || false,
+        isPrivate:  r.isPrivate || false,
+        aiFollowers: r.followerVerified ? null : (r.followers || null),
         whoTheyAre: '', whatTheyPost: '', toneStyle: '',
         targetAudience: '', whyFollow: '',
         contentLabels: r.niche||'',
@@ -2003,6 +2012,11 @@ async function runLiveSearch() {
 
   btn.disabled = false;
   updateComboRunBtn();
+
+  const unverifiedCount = allInfluencers.filter(inf => !inf.followerVerified).length;
+  if (unverifiedCount > 0) {
+    logLine(`⚠ ${unverifiedCount} candidate${unverifiedCount > 1 ? 's' : ''} could not be verified — follower counts are AI estimates`, 'warn');
+  }
 
   const newEntries = importResults(JSON.stringify(allInfluencers), { keepModalOpen: true, skipRelevanceFilter: true });
 
