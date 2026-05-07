@@ -716,6 +716,19 @@ function deleteSource(i) {
 
 // ── Session cookie helper (used for follower verification) ───────────────
 
+// Module-level status text helper so verifyPlatform/verifyInfluencerFollowers
+// (defined at module scope) can update both the in-modal status banner AND
+// the floating mini bar without depending on a closure inside runLiveSearch.
+function setStatusText(txt) {
+  const status = document.getElementById('searchStatus');
+  if (status) status.textContent = txt;
+  const bar = document.getElementById('searchMiniBar');
+  if (bar && bar.style.display !== 'none') {
+    const miniText = document.getElementById('searchMiniText');
+    if (miniText) miniText.textContent = txt;
+  }
+}
+
 // Map each platform to which fields on an influencer hold its handle, and where
 // to write back the verified follower count.
 // Returns true only when the platform field lists this platform as the ONLY platform.
@@ -1889,14 +1902,7 @@ async function runLiveSearch() {
   if (!selected.length) return;
 
   const btn = document.getElementById('liveSearchBtn');
-  const _statusEl = document.getElementById('searchStatus');
-  // Proxy so any .textContent write also syncs the mini bar
-  const status = _statusEl;
-  function setStatusText(txt) {
-    status.textContent = txt;
-    const bar = document.getElementById('searchMiniBar');
-    if (bar && bar.style.display !== 'none') document.getElementById('searchMiniText').textContent = txt;
-  }
+  const status = document.getElementById('searchStatus');
   btn.disabled = true;
   status.style.display = 'block';
   status.style.background = 'var(--green-light)';
@@ -1986,8 +1992,14 @@ async function runLiveSearch() {
   status.style.color = 'var(--green)';
   setStatusText(`✓ Found ${allInfluencers.length} candidates. Verifying Instagram followers…`);
 
-  // ── Verification step: visit each IG profile via Browserless to get a live follower count ──
-  await verifyInfluencerFollowers(allInfluencers, status);
+  // ── Verification step: call platform APIs directly from Node to fetch live counts ──
+  try {
+    await verifyInfluencerFollowers(allInfluencers, status);
+  } catch (err) {
+    console.error('verify step failed:', err);
+    setStatusText(`⚠ Verification step errored — continuing without verified counts. (${err.message})`);
+    await new Promise(r => setTimeout(r, 1200));
+  }
 
   btn.disabled = false;
   updateComboRunBtn();
