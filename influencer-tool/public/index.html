@@ -1622,24 +1622,28 @@ function getActiveSources() {
 // ── AI provider + model selector ──────────────────────────────────────────────
 const PROVIDER_MODELS = {
   anthropic: [
-    { id: 'claude-sonnet-4-6',        label: 'Claude Sonnet 4.6  (recommended)' },
-    { id: 'claude-opus-4-7',          label: 'Claude Opus 4.7    (most capable)' },
-    { id: 'claude-haiku-4-5-20251001',label: 'Claude Haiku 4.5   (fastest)' },
+    { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet 4.6  (recommended)' },
+    { id: 'claude-opus-4-7',           label: 'Claude Opus 4.7    (most capable)' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5   (fastest)' },
   ],
   openai: [
-    { id: 'gpt-5.5',                  label: 'GPT-5.5             (recommended)' },
-    { id: 'gpt-5.5-pro-2026-04-23',   label: 'GPT-5.5 Pro        (most capable)' },
-    { id: 'gpt-5',                    label: 'GPT-5' },
-    { id: 'gpt-4o',                   label: 'GPT-4o              (legacy)' },
+    { id: 'gpt-5.5',       label: 'GPT-5.5' },
+    { id: 'gpt-5.4',       label: 'GPT-5.4' },
+    { id: 'gpt-5.4-mini',  label: 'GPT-5.4 mini' },
+    { id: 'gpt-5.4-nano',  label: 'GPT-5.4 nano' },
+    { id: 'gpt-5',         label: 'GPT-5' },
+    { id: 'gpt-5-mini',    label: 'GPT-5 mini' },
   ],
   gemini: [
-    { id: 'gemini-2.5-flash',         label: 'Gemini 2.5 Flash    (recommended)' },
-    { id: 'gemini-2.5-pro',           label: 'Gemini 2.5 Pro      (most capable)' },
-    { id: 'gemini-2.5-flash-lite',    label: 'Gemini 2.5 Flash Lite (fastest)' },
+    { id: 'gemini-3.1-pro',        label: 'Gemini 3.1 Pro' },
+    { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite' },
+    { id: 'gemini-3-flash',        label: 'Gemini 3 Flash' },
+    { id: 'gemini-2.5-pro',        label: 'Gemini 2.5 Pro' },
   ],
   grok: [
-    { id: 'grok-4.3',                 label: 'Grok 4.3            (recommended)' },
-    { id: 'grok-3',                   label: 'Grok 3              (legacy)' },
+    { id: 'grok-4.3',                    label: 'Grok 4.3' },
+    { id: 'grok-4.1-fast-reasoning',     label: 'Grok 4.1 Fast (Reasoning)' },
+    { id: 'grok-4.1-fast-non-reasoning', label: 'Grok 4.1 Fast (Non-Reasoning)' },
   ],
 };
 
