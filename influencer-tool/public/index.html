@@ -338,6 +338,7 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
       <button class="nav-tab active" id="tabDashBtn" onclick="switchMainTab('dash')">Dashboard</button>
       <button class="nav-tab" id="tabChangesBtn" onclick="switchMainTab('changes')">Change Log <span class="badge" id="changesBadge" style="display:none">0</span></button>
       <button class="nav-tab" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
+      <button class="nav-tab" id="tabHistoryBtn" onclick="switchMainTab('history')">Search History</button>
     </div>
   </div>
   <div class="nav-right">
@@ -2036,6 +2037,22 @@ async function runLiveSearch() {
         }
       }
       setStatusText(`✓ [${i + 1}/${selected.length}] ${combo.label} — found ${newCount} new (${allInfluencers.length} total so far)`);
+
+      // Fire-and-forget: log this combo result for trend analysis
+      fetch('/api/log-search-run', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({
+          provider: combo.provider || 'anthropic',
+          model:    combo.model    || '',
+          platform: combo.platform || '',
+          keyword:  combo.keyword  || '',
+          location: combo.location || '',
+          minFollowers:    combo.minFollowers || 0,
+          candidatesFound: found.length,
+          newInSession:    newCount,
+        }),
+      }).catch(() => {}); // non-blocking, ignore errors
+
       await new Promise(r => setTimeout(r, 400));
     } catch (err) {
       setStatusText(`⚠ [${i + 1}/${selected.length}] Network error on: ${combo.label}. Continuing…`);
@@ -2219,11 +2236,14 @@ function switchMainTab(tab) {
   document.getElementById('mainDash').style.display    = tab === 'dash'     ? '' : 'none';
   document.getElementById('mainChanges').style.display = tab === 'changes'  ? '' : 'none';
   document.getElementById('mainCoverage').style.display= tab === 'coverage' ? '' : 'none';
+  document.getElementById('mainHistory').style.display = tab === 'history'  ? '' : 'none';
   document.getElementById('tabDashBtn').classList.toggle('active',     tab === 'dash');
   document.getElementById('tabChangesBtn').classList.toggle('active',  tab === 'changes');
   document.getElementById('tabCoverageBtn').classList.toggle('active', tab === 'coverage');
+  document.getElementById('tabHistoryBtn').classList.toggle('active',  tab === 'history');
   if (tab === 'changes')  loadChanges();
   if (tab === 'coverage') loadCoverage();
+  if (tab === 'history')  loadSearchHistory();
 }
 
 async function loadChanges() {
@@ -3157,6 +3177,127 @@ function renderCovTable() {
 
   </div>
 </div>
+
+<!-- ── Search History tab ──────────────────────────────────────── -->
+<div id="mainHistory" style="display:none">
+  <div class="cov-page">
+
+    <div class="cl-toolbar" style="margin-bottom:20px">
+      <div>
+        <div class="cl-toolbar-title">Search History</div>
+        <div class="cl-toolbar-sub">Trend analysis — which provider, model and platform finds the most new influencers</div>
+      </div>
+      <button class="btn-sm" onclick="loadSearchHistory()">↻ Refresh</button>
+    </div>
+
+    <div id="historyContent">
+      <div style="padding:2rem;text-align:center;color:var(--muted);font-size:13px">Loading…</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+async function loadSearchHistory() {
+  const container = document.getElementById('historyContent');
+  container.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--muted);font-size:13px">Loading…</div>';
+  try {
+    const resp = await fetch('/api/search-history', { headers: getApiHeaders() });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    renderSearchHistory(data);
+  } catch (e) {
+    container.innerHTML = `<div style="padding:2rem;color:var(--red);font-size:13px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
+  const container = document.getElementById('historyContent');
+  if (!runs.length) {
+    container.innerHTML = '<div class="cl-empty"><div class="cl-empty-icon">📊</div><div class="cl-empty-title">No search history yet</div><div>Run a search and results will be logged here automatically.</div></div>';
+    return;
+  }
+
+  const tblStyle = 'width:100%;border-collapse:collapse;font-size:12px;margin-bottom:28px';
+  const thStyle  = 'padding:7px 10px;text-align:left;border-bottom:2px solid var(--border);font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap';
+  const tdStyle  = 'padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap';
+  const tdNum    = tdStyle + ';text-align:right;font-family:var(--mono);font-weight:600';
+
+  // ── By Model ──
+  let modelRows = byModel.map(r => `
+    <tr>
+      <td style="${tdStyle}">${r.provider || '—'}</td>
+      <td style="${tdStyle}">${r.model || '—'}</td>
+      <td style="${tdNum}">${r.runs}</td>
+      <td style="${tdNum}">${r.candidates}</td>
+      <td style="${tdNum}">${r.runs ? Math.round(r.candidates / r.runs) : 0}</td>
+      <td style="${tdNum};color:var(--green);font-weight:800">${r.newInSession}</td>
+      <td style="${tdNum}">${r.runs ? Math.round(r.newInSession / r.runs) : 0}</td>
+    </tr>`).join('');
+
+  // ── By Platform ──
+  let platRows = byPlatform.map(r => `
+    <tr>
+      <td style="${tdStyle}">${r.platform || '—'}</td>
+      <td style="${tdNum}">${r.runs}</td>
+      <td style="${tdNum}">${r.candidates}</td>
+      <td style="${tdNum};color:var(--green);font-weight:800">${r.newInSession}</td>
+      <td style="${tdNum}">${r.runs ? Math.round(r.newInSession / r.runs) : 0}</td>
+    </tr>`).join('');
+
+  // ── Recent raw log ──
+  const fmtDate = s => s ? new Date(s).toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : '—';
+  let logRows = runs.slice(0, 100).map(r => `
+    <tr>
+      <td style="${tdStyle};color:var(--muted)">${fmtDate(r.created_at)}</td>
+      <td style="${tdStyle}">${r.provider || '—'}</td>
+      <td style="${tdStyle}">${r.model || '—'}</td>
+      <td style="${tdStyle}">${r.platform || '—'}</td>
+      <td style="${tdStyle};max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${(r.keyword||'').replace(/"/g,'&quot;')}">${r.keyword || '—'}</td>
+      <td style="${tdStyle}">${r.location || '—'}</td>
+      <td style="${tdNum}">${r.candidates_found ?? '—'}</td>
+      <td style="${tdNum};color:var(--green);font-weight:800">${r.new_in_session ?? '—'}</td>
+    </tr>`).join('');
+
+  container.innerHTML = `
+    <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;color:var(--text)">By Provider / Model</h3>
+    <table style="${tblStyle}">
+      <thead><tr>
+        <th style="${thStyle}">Provider</th><th style="${thStyle}">Model</th>
+        <th style="${thStyle};text-align:right">Runs</th>
+        <th style="${thStyle};text-align:right">Total candidates</th>
+        <th style="${thStyle};text-align:right">Avg / run</th>
+        <th style="${thStyle};text-align:right">Total new</th>
+        <th style="${thStyle};text-align:right">Avg new / run</th>
+      </tr></thead>
+      <tbody>${modelRows}</tbody>
+    </table>
+
+    <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;color:var(--text)">By Platform</h3>
+    <table style="${tblStyle}">
+      <thead><tr>
+        <th style="${thStyle}">Platform</th>
+        <th style="${thStyle};text-align:right">Runs</th>
+        <th style="${thStyle};text-align:right">Total candidates</th>
+        <th style="${thStyle};text-align:right">Total new</th>
+        <th style="${thStyle};text-align:right">Avg new / run</th>
+      </tr></thead>
+      <tbody>${platRows}</tbody>
+    </table>
+
+    <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;color:var(--text)">Recent runs (last 100)</h3>
+    <div style="overflow-x:auto">
+    <table style="${tblStyle}">
+      <thead><tr>
+        <th style="${thStyle}">Date</th><th style="${thStyle}">Provider</th><th style="${thStyle}">Model</th>
+        <th style="${thStyle}">Platform</th><th style="${thStyle}">Keyword</th><th style="${thStyle}">Location</th>
+        <th style="${thStyle};text-align:right">Candidates</th><th style="${thStyle};text-align:right">New</th>
+      </tr></thead>
+      <tbody>${logRows}</tbody>
+    </table>
+    </div>`;
+}
+</script>
 
 </body>
 </html>
