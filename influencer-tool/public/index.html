@@ -2039,7 +2039,7 @@ async function runLiveSearch() {
       setStatusText(`✓ [${i + 1}/${selected.length}] ${combo.label} — found ${newCount} new (${allInfluencers.length} total so far)`);
 
       // Fire-and-forget: log this combo result for trend analysis
-      fetch('/api/log-search-run', {
+      fetch('/api/search-history', {
         method: 'POST', headers: getApiHeaders(),
         body: JSON.stringify({
           provider: combo.provider || 'anthropic',
