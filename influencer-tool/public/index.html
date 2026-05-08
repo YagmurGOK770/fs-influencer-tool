@@ -2037,22 +2037,6 @@ async function runLiveSearch() {
         }
       }
       setStatusText(`✓ [${i + 1}/${selected.length}] ${combo.label} — found ${newCount} new (${allInfluencers.length} total so far)`);
-
-      // Fire-and-forget: log this combo result for trend analysis
-      fetch('/api/search-history', {
-        method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({
-          provider: combo.provider || 'anthropic',
-          model:    combo.model    || '',
-          platform: combo.platform || '',
-          keyword:  combo.keyword  || '',
-          location: combo.location || '',
-          minFollowers:    combo.minFollowers || 0,
-          candidatesFound: found.length,
-          newInSession:    newCount,
-        }),
-      }).catch(() => {}); // non-blocking, ignore errors
-
       await new Promise(r => setTimeout(r, 400));
     } catch (err) {
       setStatusText(`⚠ [${i + 1}/${selected.length}] Network error on: ${combo.label}. Continuing…`);
@@ -2096,6 +2080,26 @@ async function runLiveSearch() {
   }
 
   const newEntries = importResults(JSON.stringify(allInfluencers), { keepModalOpen: true, skipRelevanceFilter: true });
+
+  // Log one accurate session-level record after importResults has applied all filters
+  if (selected.length > 0) {
+    const platforms = [...new Set(selected.map(c => c.platform).filter(Boolean))].join(' / ');
+    const keywords  = selected.map(c => c.keyword).filter(Boolean).join(', ');
+    const first     = selected[0];
+    fetch('/api/search-history', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({
+        provider:        first.provider    || 'anthropic',
+        model:           first.model       || '',
+        platform:        platforms,
+        keyword:         keywords,
+        location:        first.location    || '',
+        minFollowers:    first.minFollowers || 0,
+        candidatesFound: allInfluencers.length,
+        newInSession:    newEntries ? newEntries.length : 0,
+      }),
+    }).catch(() => {});
+  }
 
   if (!newEntries || !newEntries.length) {
     document.getElementById('importModal').style.display = 'none';
