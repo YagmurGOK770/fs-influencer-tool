@@ -2098,7 +2098,7 @@ async function runLiveSearch() {
         candidatesFound: allInfluencers.length,
         newInSession:    newEntries ? newEntries.length : 0,
       }),
-    }).catch(() => {});
+    }).then(r => r.json()).then(d => { if (d.id) window._lastSearchRunId = d.id; }).catch(() => {});
   }
 
   if (!newEntries || !newEntries.length) {
@@ -2166,6 +2166,12 @@ async function saveApprovedToDb() {
       const saveData = await saveResp.json();
       btn.textContent = `✓ ${saveData.saved} saved`;
       btn.style.background = 'var(--green)';
+      if (window._lastSearchRunId) {
+        fetch('/api/search-history', {
+          method: 'PATCH', headers: getApiHeaders(),
+          body: JSON.stringify({ id: window._lastSearchRunId, accepted: saveData.saved }),
+        }).catch(() => {});
+      }
       // Mark saved rows so they no longer show as pending
       approved.forEach(r => { r.isNew = false; r.ok = false; });
       applyFilter();
@@ -2206,6 +2212,12 @@ async function banSelected() {
       const err = await resp.json().catch(() => ({}));
       alert('Ban failed: ' + (err.error || resp.statusText));
       return;
+    }
+    if (window._lastSearchRunId) {
+      fetch('/api/search-history', {
+        method: 'PATCH', headers: getApiHeaders(),
+        body: JSON.stringify({ id: window._lastSearchRunId, banned: handles.length }),
+      }).catch(() => {});
     }
     // Update local state
     handles.forEach(h => window.BANNED_HANDLES.add(h));
@@ -3227,6 +3239,16 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
   const tdStyle  = 'padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap';
   const tdNum    = tdStyle + ';text-align:right;font-family:var(--mono);font-weight:600';
 
+  const fmtAccepted = (a, n) => {
+    if (!a && a !== 0) return '<span style="color:var(--muted)">—</span>';
+    const pct = n ? Math.round(a / n * 100) : 0;
+    return `<span style="color:var(--green);font-weight:700">${a}</span> <span style="color:var(--muted);font-size:10px">${pct}%</span>`;
+  };
+  const fmtBanned = b => {
+    if (!b && b !== 0) return '<span style="color:var(--muted)">—</span>';
+    return b > 0 ? `<span style="color:var(--orange);font-weight:700">${b}</span>` : '0';
+  };
+
   // ── By Model ──
   let modelRows = byModel.map(r => `
     <tr>
@@ -3237,6 +3259,8 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
       <td style="${tdNum}">${r.runs ? Math.round(r.candidates / r.runs) : 0}</td>
       <td style="${tdNum};color:var(--green);font-weight:800">${r.newInSession}</td>
       <td style="${tdNum}">${r.runs ? Math.round(r.newInSession / r.runs) : 0}</td>
+      <td style="${tdNum}">${fmtAccepted(r.accepted, r.newInSession)}</td>
+      <td style="${tdNum}">${fmtBanned(r.banned)}</td>
     </tr>`).join('');
 
   // ── By Platform ──
@@ -3247,6 +3271,8 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
       <td style="${tdNum}">${r.candidates}</td>
       <td style="${tdNum};color:var(--green);font-weight:800">${r.newInSession}</td>
       <td style="${tdNum}">${r.runs ? Math.round(r.newInSession / r.runs) : 0}</td>
+      <td style="${tdNum}">${fmtAccepted(r.accepted, r.newInSession)}</td>
+      <td style="${tdNum}">${fmtBanned(r.banned)}</td>
     </tr>`).join('');
 
   // ── Recent raw log ──
@@ -3261,6 +3287,8 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
       <td style="${tdStyle}">${r.location || '—'}</td>
       <td style="${tdNum}">${r.candidates_found ?? '—'}</td>
       <td style="${tdNum};color:var(--green);font-weight:800">${r.new_in_session ?? '—'}</td>
+      <td style="${tdNum}">${fmtAccepted(r.accepted ?? null, r.new_in_session)}</td>
+      <td style="${tdNum}">${fmtBanned(r.banned ?? null)}</td>
     </tr>`).join('');
 
   container.innerHTML = `
@@ -3273,6 +3301,8 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
         <th style="${thStyle};text-align:right">Avg / run</th>
         <th style="${thStyle};text-align:right">Total new</th>
         <th style="${thStyle};text-align:right">Avg new / run</th>
+        <th style="${thStyle};text-align:right">Accepted</th>
+        <th style="${thStyle};text-align:right">Banned</th>
       </tr></thead>
       <tbody>${modelRows}</tbody>
     </table>
@@ -3285,6 +3315,8 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
         <th style="${thStyle};text-align:right">Total candidates</th>
         <th style="${thStyle};text-align:right">Total new</th>
         <th style="${thStyle};text-align:right">Avg new / run</th>
+        <th style="${thStyle};text-align:right">Accepted</th>
+        <th style="${thStyle};text-align:right">Banned</th>
       </tr></thead>
       <tbody>${platRows}</tbody>
     </table>
@@ -3295,7 +3327,10 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
       <thead><tr>
         <th style="${thStyle}">Date</th><th style="${thStyle}">Provider</th><th style="${thStyle}">Model</th>
         <th style="${thStyle}">Platform</th><th style="${thStyle}">Keyword</th><th style="${thStyle}">Location</th>
-        <th style="${thStyle};text-align:right">Candidates</th><th style="${thStyle};text-align:right">New</th>
+        <th style="${thStyle};text-align:right">Candidates</th>
+        <th style="${thStyle};text-align:right">New</th>
+        <th style="${thStyle};text-align:right">Accepted</th>
+        <th style="${thStyle};text-align:right">Banned</th>
       </tr></thead>
       <tbody>${logRows}</tbody>
     </table>
