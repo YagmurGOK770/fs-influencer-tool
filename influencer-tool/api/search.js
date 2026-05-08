@@ -1,11 +1,10 @@
 // POST /api/search
-// Body: { keywords: string[], location: string, platform: string, sources: [{name,url,desc}], minFollowers: number }
-// Returns: { influencers: [...], rawText: string, usage: {...} }
+// Body: { keywords, location, platform, sources, minFollowers, provider }
+// provider: 'anthropic' | 'openai' | 'gemini' | 'grok'  (default: 'anthropic')
+// Returns: { influencers: [...], rawText: string, usage: {...}, provider: string }
 
 import { checkAuth, requireApiKey } from './_auth.js';
 
-const MODEL = 'claude-sonnet-4-6';
-const MAX_TOKENS = 4096;
 const MAX_WEB_SEARCHES = 8;
 
 function buildPrompt({ keywords, location, platform, sources, minFollowers }) {
@@ -37,7 +36,7 @@ YOUTUBE SEARCH STRATEGY — follow this to find channel creators:
 - The "handle" field should be their YouTube @handle (e.g. @londoneatswith)
 - Prefer channels with regular uploads and genuine ${location} focus over one-off video makers` : '';
 
-  return `You are a food-influencer research assistant. Use the web_search tool to find real food influencers active on social media.
+  return `You are a food-influencer research assistant. Search the web to find real food influencers active on social media.
 
 Search keywords: ${kwList}
 Location focus: ${location}
@@ -92,6 +91,123 @@ function extractJsonArray(text) {
   return null;
 }
 
+// ── Anthropic Claude ──────────────────────────────────────────────────────────
+async function callAnthropic(prompt) {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: MAX_WEB_SEARCHES }],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Anthropic error ${resp.status}: ${err.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  const text = (data.content || [])
+    .filter(b => b.type === 'text')
+    .map(b => b.text || '')
+    .join('\n');
+  return { text, usage: data.usage };
+}
+
+// ── OpenAI GPT-5.5 ───────────────────────────────────────────────────────────
+async function callOpenAI(prompt) {
+  const resp = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-5.5',
+      tools: [{ type: 'web_search' }],
+      input: prompt,
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`OpenAI error ${resp.status}: ${err.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  const text = (data.output || [])
+    .filter(b => b.type === 'message')
+    .flatMap(b => b.content || [])
+    .filter(c => c.type === 'output_text')
+    .map(c => c.text || '')
+    .join('\n');
+  return { text, usage: data.usage };
+}
+
+// ── Google Gemini ─────────────────────────────────────────────────────────────
+async function callGemini(prompt) {
+  const model = 'gemini-2.5-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      tools: [{ google_search: {} }],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Gemini error ${resp.status}: ${err.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  const text = (data.candidates?.[0]?.content?.parts || [])
+    .filter(p => p.text)
+    .map(p => p.text)
+    .join('\n');
+  return { text, usage: data.usageMetadata };
+}
+
+// ── xAI Grok ──────────────────────────────────────────────────────────────────
+// Uses the xAI Responses API (mirrors OpenAI Responses API shape)
+async function callGrok(prompt) {
+  const resp = await fetch('https://api.x.ai/v1/responses', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'grok-4.3',
+      input: [{ role: 'user', content: prompt }],
+      tools: [{ type: 'web_search' }],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text();
+    throw new Error(`Grok error ${resp.status}: ${err.slice(0, 300)}`);
+  }
+  const data = await resp.json();
+  // Responses API output format mirrors OpenAI
+  const text = (data.output || [])
+    .filter(b => b.type === 'message')
+    .flatMap(b => b.content || [])
+    .filter(c => c.type === 'output_text')
+    .map(c => c.text || '')
+    .join('\n');
+  return { text, usage: data.usage };
+}
+
+const PROVIDERS = {
+  anthropic: callAnthropic,
+  openai:    callOpenAI,
+  gemini:    callGemini,
+  grok:      callGrok,
+};
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -99,9 +215,14 @@ export default async function handler(req, res) {
   }
 
   if (!checkAuth(req, res)) return;
-  if (!requireApiKey(res)) return;
 
-  const { keywords, location, platform, sources, minFollowers } = req.body || {};
+  const { keywords, location, platform, sources, minFollowers, provider = 'anthropic' } = req.body || {};
+
+  if (!PROVIDERS[provider]) {
+    return res.status(400).json({ error: `Unknown provider: ${provider}. Valid: ${Object.keys(PROVIDERS).join(', ')}` });
+  }
+
+  if (!requireApiKey(res, provider)) return;
 
   if (!Array.isArray(keywords) || keywords.length === 0) {
     return res.status(400).json({ error: 'keywords array is required' });
@@ -115,48 +236,11 @@ export default async function handler(req, res) {
     location,
     platform: platform || 'All platforms',
     sources: sources || [],
-    minFollowers: Number(minFollowers) || 10000
+    minFollowers: Number(minFollowers) || 10000,
   });
 
   try {
-    const apiResp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: 'user', content: prompt }],
-        tools: [
-          {
-            type: 'web_search_20250305',
-            name: 'web_search',
-            max_uses: MAX_WEB_SEARCHES
-          }
-        ]
-      })
-    });
-
-    if (!apiResp.ok) {
-      const errText = await apiResp.text();
-      console.error('Anthropic API error:', apiResp.status, errText);
-      return res.status(apiResp.status).json({
-        error: 'Anthropic API error',
-        status: apiResp.status,
-        detail: errText.slice(0, 500)
-      });
-    }
-
-    const data = await apiResp.json();
-
-    // Concatenate all text blocks from the response
-    const fullText = (data.content || [])
-      .filter(b => b.type === 'text')
-      .map(b => b.text || '')
-      .join('\n');
+    const { text: fullText, usage } = await PROVIDERS[provider](prompt);
 
     const influencers = extractJsonArray(fullText);
 
@@ -165,17 +249,14 @@ export default async function handler(req, res) {
         influencers: [],
         rawText: fullText,
         warning: 'Could not parse JSON array from response',
-        usage: data.usage
+        usage,
+        provider,
       });
     }
 
-    return res.status(200).json({
-      influencers,
-      rawText: fullText,
-      usage: data.usage
-    });
+    return res.status(200).json({ influencers, rawText: fullText, usage, provider });
   } catch (err) {
-    console.error('Search handler error:', err);
-    return res.status(500).json({ error: 'Server error', detail: String(err.message || err) });
+    console.error(`[search:${provider}] error:`, err.message);
+    return res.status(500).json({ error: err.message, provider });
   }
 }

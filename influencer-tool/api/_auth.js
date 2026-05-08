@@ -12,9 +12,17 @@ export function checkAuth(req, res) {
   return true;
 }
 
-export function requireApiKey(res) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.status(500).json({ error: 'Server misconfigured: ANTHROPIC_API_KEY not set' });
+const KEY_ENV = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openai:    'OPENAI_API_KEY',
+  gemini:    'GEMINI_API_KEY',
+  grok:      'XAI_API_KEY',
+};
+
+export function requireApiKey(res, provider = 'anthropic') {
+  const envVar = KEY_ENV[provider] || 'ANTHROPIC_API_KEY';
+  if (!process.env[envVar]) {
+    res.status(500).json({ error: `${envVar} not set in .env.local — add it to use the ${provider} provider` });
     return false;
   }
   return true;

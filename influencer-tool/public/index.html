@@ -458,6 +458,14 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
               <option>X only</option>
             </select>
           </div>
+          <div class="field"><div class="field-label">AI provider</div>
+            <select id="providerSelect">
+              <option value="anthropic">Claude Sonnet (Anthropic)</option>
+              <option value="openai">GPT-5.5 (OpenAI)</option>
+              <option value="gemini">Gemini 2.5 Flash (Google)</option>
+              <option value="grok">Grok 4.3 (xAI)</option>
+            </select>
+          </div>
           <div class="field">
             <div class="field-label">Search keywords</div>
             <div class="keywords" id="kwList">
@@ -1614,6 +1622,7 @@ function getConfig() {
     minFollowers: parseInt(document.getElementById('minFollowersInput').value)||0,
     location: document.getElementById('locationInput').value.trim()||'London, UK',
     platform: document.getElementById('platformSelect').value,
+    provider: document.getElementById('providerSelect').value || 'anthropic',
     keywords: getKeywords(),
     sources: getActiveSources()
   };
@@ -1809,6 +1818,7 @@ function buildSearchCombinations(cfg) {
         keyword: kw,
         location: cfg.location,
         minFollowers: cfg.minFollowers,
+        provider: cfg.provider,
         sources: [{ name: src.name, url: src.url || '', desc: src.desc || '' }]
       });
     }
@@ -1823,6 +1833,7 @@ function buildSearchCombinations(cfg) {
         keyword: kw,
         location: cfg.location,
         minFollowers: cfg.minFollowers,
+        provider: cfg.provider,
         sources: [{ name: src.name, url: src.url, desc: src.desc || '' }]
       });
     }
@@ -1931,7 +1942,7 @@ async function runLiveSearch() {
     setStatusText(`[${i + 1}/${selected.length}] ${combo.label} — ${elapsed}s elapsed…`);
 
     try {
-      setStatusText(`🌐 [${i + 1}/${selected.length}] Searching: ${combo.label}…`);
+      setStatusText(`🌐 [${i + 1}/${selected.length}] Searching via ${combo.provider || 'anthropic'}: ${combo.label}…`);
       const resp = await fetch('/api/search', {
         method: 'POST',
         headers: getApiHeaders(),
@@ -1940,7 +1951,8 @@ async function runLiveSearch() {
           location: combo.location,
           platform: combo.platform,
           sources: combo.sources,
-          minFollowers: combo.minFollowers
+          minFollowers: combo.minFollowers,
+          provider: combo.provider || 'anthropic',
         })
       });
 
