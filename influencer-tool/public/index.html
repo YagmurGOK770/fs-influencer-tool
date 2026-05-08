@@ -458,13 +458,16 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
               <option>X only</option>
             </select>
           </div>
-          <div class="field"><div class="field-label">AI provider</div>
-            <select id="providerSelect">
-              <option value="anthropic">Claude Sonnet (Anthropic)</option>
-              <option value="openai">GPT-5.5 (OpenAI)</option>
-              <option value="gemini">Gemini 2.5 Flash (Google)</option>
-              <option value="grok">Grok 4.3 (xAI)</option>
+          <div class="field"><div class="field-label">AI company</div>
+            <select id="providerSelect" onchange="onProviderChange()">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="gemini">Google</option>
+              <option value="grok">xAI</option>
             </select>
+          </div>
+          <div class="field"><div class="field-label">Model</div>
+            <select id="modelSelect"></select>
           </div>
           <div class="field">
             <div class="field-label">Search keywords</div>
@@ -1616,6 +1619,43 @@ function getActiveSources() {
   }));
 }
 
+// ── AI provider + model selector ──────────────────────────────────────────────
+const PROVIDER_MODELS = {
+  anthropic: [
+    { id: 'claude-sonnet-4-6',        label: 'Claude Sonnet 4.6  (recommended)' },
+    { id: 'claude-opus-4-7',          label: 'Claude Opus 4.7    (most capable)' },
+    { id: 'claude-haiku-4-5-20251001',label: 'Claude Haiku 4.5   (fastest)' },
+  ],
+  openai: [
+    { id: 'gpt-5.5',                  label: 'GPT-5.5             (recommended)' },
+    { id: 'gpt-5.5-pro-2026-04-23',   label: 'GPT-5.5 Pro        (most capable)' },
+    { id: 'gpt-5',                    label: 'GPT-5' },
+    { id: 'gpt-4o',                   label: 'GPT-4o              (legacy)' },
+  ],
+  gemini: [
+    { id: 'gemini-2.5-flash',         label: 'Gemini 2.5 Flash    (recommended)' },
+    { id: 'gemini-2.5-pro',           label: 'Gemini 2.5 Pro      (most capable)' },
+    { id: 'gemini-2.5-flash-lite',    label: 'Gemini 2.5 Flash Lite (fastest)' },
+  ],
+  grok: [
+    { id: 'grok-4.3',                 label: 'Grok 4.3            (recommended)' },
+    { id: 'grok-3',                   label: 'Grok 3              (legacy)' },
+  ],
+};
+
+function onProviderChange() {
+  const provider = document.getElementById('providerSelect').value;
+  const sel = document.getElementById('modelSelect');
+  sel.innerHTML = (PROVIDER_MODELS[provider] || [])
+    .map(m => `<option value="${m.id}">${m.label}</option>`)
+    .join('');
+}
+
+// Initialise model dropdown on page load
+(function initProviderModels() {
+  onProviderChange();
+})();
+
 // Read config values
 function getConfig() {
   return {
@@ -1623,6 +1663,7 @@ function getConfig() {
     location: document.getElementById('locationInput').value.trim()||'London, UK',
     platform: document.getElementById('platformSelect').value,
     provider: document.getElementById('providerSelect').value || 'anthropic',
+    model:    document.getElementById('modelSelect').value   || 'claude-sonnet-4-6',
     keywords: getKeywords(),
     sources: getActiveSources()
   };
@@ -1819,6 +1860,7 @@ function buildSearchCombinations(cfg) {
         location: cfg.location,
         minFollowers: cfg.minFollowers,
         provider: cfg.provider,
+        model:    cfg.model,
         sources: [{ name: src.name, url: src.url || '', desc: src.desc || '' }]
       });
     }
@@ -1834,6 +1876,7 @@ function buildSearchCombinations(cfg) {
         location: cfg.location,
         minFollowers: cfg.minFollowers,
         provider: cfg.provider,
+        model:    cfg.model,
         sources: [{ name: src.name, url: src.url, desc: src.desc || '' }]
       });
     }
@@ -1942,7 +1985,7 @@ async function runLiveSearch() {
     setStatusText(`[${i + 1}/${selected.length}] ${combo.label} — ${elapsed}s elapsed…`);
 
     try {
-      setStatusText(`🌐 [${i + 1}/${selected.length}] Searching via ${combo.provider || 'anthropic'}: ${combo.label}…`);
+      setStatusText(`🌐 [${i + 1}/${selected.length}] ${combo.model || combo.provider || 'claude'}: ${combo.label}…`);
       const resp = await fetch('/api/search', {
         method: 'POST',
         headers: getApiHeaders(),
@@ -1953,6 +1996,7 @@ async function runLiveSearch() {
           sources: combo.sources,
           minFollowers: combo.minFollowers,
           provider: combo.provider || 'anthropic',
+          model:    combo.model    || '',
         })
       });
 

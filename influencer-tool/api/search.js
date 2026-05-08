@@ -92,7 +92,7 @@ function extractJsonArray(text) {
 }
 
 // ── Anthropic Claude ──────────────────────────────────────────────────────────
-async function callAnthropic(prompt) {
+async function callAnthropic(prompt, model = 'claude-sonnet-4-6') {
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -101,7 +101,7 @@ async function callAnthropic(prompt) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model,
       max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: MAX_WEB_SEARCHES }],
@@ -119,8 +119,8 @@ async function callAnthropic(prompt) {
   return { text, usage: data.usage };
 }
 
-// ── OpenAI GPT-5.5 ───────────────────────────────────────────────────────────
-async function callOpenAI(prompt) {
+// ── OpenAI ────────────────────────────────────────────────────────────────────
+async function callOpenAI(prompt, model = 'gpt-5.5') {
   const resp = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: {
@@ -128,7 +128,7 @@ async function callOpenAI(prompt) {
       'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'gpt-5.5',
+      model,
       tools: [{ type: 'web_search' }],
       input: prompt,
     }),
@@ -148,8 +148,7 @@ async function callOpenAI(prompt) {
 }
 
 // ── Google Gemini ─────────────────────────────────────────────────────────────
-async function callGemini(prompt) {
-  const model = 'gemini-2.5-flash';
+async function callGemini(prompt, model = 'gemini-2.5-flash') {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
   const resp = await fetch(url, {
     method: 'POST',
@@ -173,7 +172,7 @@ async function callGemini(prompt) {
 
 // ── xAI Grok ──────────────────────────────────────────────────────────────────
 // Uses the xAI Responses API (mirrors OpenAI Responses API shape)
-async function callGrok(prompt) {
+async function callGrok(prompt, model = 'grok-4.3') {
   const resp = await fetch('https://api.x.ai/v1/responses', {
     method: 'POST',
     headers: {
@@ -181,7 +180,7 @@ async function callGrok(prompt) {
       'Authorization': `Bearer ${process.env.XAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: 'grok-4.3',
+      model,
       input: [{ role: 'user', content: prompt }],
       tools: [{ type: 'web_search' }],
     }),
@@ -216,7 +215,7 @@ export default async function handler(req, res) {
 
   if (!checkAuth(req, res)) return;
 
-  const { keywords, location, platform, sources, minFollowers, provider = 'anthropic' } = req.body || {};
+  const { keywords, location, platform, sources, minFollowers, provider = 'anthropic', model = '' } = req.body || {};
 
   if (!PROVIDERS[provider]) {
     return res.status(400).json({ error: `Unknown provider: ${provider}. Valid: ${Object.keys(PROVIDERS).join(', ')}` });
@@ -240,7 +239,7 @@ export default async function handler(req, res) {
   });
 
   try {
-    const { text: fullText, usage } = await PROVIDERS[provider](prompt);
+    const { text: fullText, usage } = await PROVIDERS[provider](prompt, model || undefined);
 
     const influencers = extractJsonArray(fullText);
 
@@ -256,7 +255,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({ influencers, rawText: fullText, usage, provider });
   } catch (err) {
-    console.error(`[search:${provider}] error:`, err.message);
-    return res.status(500).json({ error: err.message, provider });
+    console.error(`[search:${provider}:${model}] error:`, err.message);
+    return res.status(500).json({ error: err.message, provider, model });
   }
 }
