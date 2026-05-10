@@ -79,10 +79,22 @@ export default async function handler(req, res) {
       byPlatform[key].banned       += r.banned           || 0;
     }
 
+    const byKeyword = {};
+    for (const r of runs || []) {
+      const keywords = (r.keyword || '').split(',').map(k => k.trim()).filter(Boolean);
+      for (const kw of keywords) {
+        if (!byKeyword[kw]) byKeyword[kw] = { keyword: kw, runs: 0, candidates: 0, newInSession: 0 };
+        byKeyword[kw].runs++;
+        byKeyword[kw].candidates   += r.candidates_found || 0;
+        byKeyword[kw].newInSession += r.new_in_session   || 0;
+      }
+    }
+
     return res.status(200).json({
       runs:       runs || [],
       byModel:    Object.values(byModel).sort((a, b) => b.newInSession - a.newInSession),
       byPlatform: Object.values(byPlatform).sort((a, b) => b.newInSession - a.newInSession),
+      byKeyword:  Object.values(byKeyword).sort((a, b) => b.candidates - a.candidates),
     });
   }
 

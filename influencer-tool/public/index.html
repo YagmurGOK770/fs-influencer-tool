@@ -203,6 +203,13 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .fpill.fnew.active{background:var(--green);border-color:var(--green)}
 .fpill.fex.active{background:var(--muted);border-color:var(--muted)}
 .fpill.fbanned.active{background:var(--red);border-color:var(--red)}
+.pfill{font-size:11px;font-weight:700;padding:3px 11px;border-radius:100px;cursor:pointer;border:1.5px solid var(--border);background:white;transition:all .15s;color:var(--muted)}
+.pfill:hover{border-color:var(--border2);color:var(--text)}
+.pfill.active{background:var(--text);color:white;border-color:var(--text)}
+.pfill.pfig.active{background:#e1306c;border-color:#e1306c}
+.pfill.pftt.active{background:#010101;border-color:#010101}
+.pfill.pfyt.active{background:#ff0000;border-color:#ff0000}
+.pfill.pfx.active{background:#14171a;border-color:#14171a}
 .fcount{display:inline-flex;align-items:center;justify-content:center;border-radius:100px;font-size:10px;min-width:17px;height:15px;padding:0 3px;margin-left:3px}
 .fpill.active .fcount{background:rgba(255,255,255,.25)}
 .fpill:not(.active) .fcount{background:var(--border);color:var(--muted)}
@@ -409,6 +416,14 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
           </div>
         </div>
 
+        <div style="display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px 0">
+          <button class="pfill active" id="pfAll" onclick="setPlatFilter('all',this)">All platforms <span class="fcount" id="pfcAll">0</span></button>
+          <button class="pfill pfig" id="pfIg" onclick="setPlatFilter('ig',this)">Instagram <span class="fcount" id="pfcIg">0</span></button>
+          <button class="pfill pftt" id="pfTt" onclick="setPlatFilter('tt',this)">TikTok <span class="fcount" id="pfcTt">0</span></button>
+          <button class="pfill pfyt" id="pfYt" onclick="setPlatFilter('yt',this)">YouTube <span class="fcount" id="pfcYt">0</span></button>
+          <button class="pfill pfx" id="pfX" onclick="setPlatFilter('x',this)">X <span class="fcount" id="pfcX">0</span></button>
+        </div>
+
         <div class="toolbar" id="toolbar">
           <div class="filter-grp">
             <button class="fpill active" onclick="setFilter('all',this)">All <span class="fcount" id="fcAll">0</span></button>
@@ -472,14 +487,7 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
           </div>
           <div class="field">
             <div class="field-label">Search keywords</div>
-            <div class="keywords" id="kwList">
-              <span class="kw">#londonfood <button onclick="removeKw(this)">×</button></span>
-              <span class="kw">#londoneats <button onclick="removeKw(this)">×</button></span>
-              <span class="kw">#londonrestaurants <button onclick="removeKw(this)">×</button></span>
-              <span class="kw">#londonfoodie <button onclick="removeKw(this)">×</button></span>
-              <span class="kw">#ukfoodie <button onclick="removeKw(this)">×</button></span>
-              <span class="kw">london food <button onclick="removeKw(this)">×</button></span>
-            </div>
+            <div class="keywords" id="kwList"></div>
             <div class="kw-add">
               <input type="text" id="kwIn" placeholder="Add keyword…" onkeydown="if(event.key==='Enter')addKw()"/>
               <button class="btn-sm" onclick="addKw()">+ Add</button>
@@ -561,6 +569,7 @@ let allRows = [...EXISTING_DATA];
 let filtered = [];
 let currentPage = 1;
 let activeFilter = 'all';
+let activePlatTab = 'all';
 let searchQ = '';
 let activeBucket = '';
 let ran = false;
@@ -586,13 +595,34 @@ function platLabel(p) {
   return p;
 }
 
-function removeKw(b) { b.closest('.kw').remove(); }
+const DEFAULT_KEYWORDS = ['#londonfood','#londoneats','#londonrestaurants','#londonfoodie','#ukfoodie','london food'];
+
+function persistKeywords() {
+  const kws = [...document.querySelectorAll('#kwList .kw')].map(el=>el.childNodes[0].textContent.trim()).filter(Boolean);
+  try { localStorage.setItem('influencer_keywords', JSON.stringify(kws)); } catch(e){}
+}
+
+function loadKeywords() {
+  let kws;
+  try { kws = JSON.parse(localStorage.getItem('influencer_keywords')); } catch(e){}
+  if (!Array.isArray(kws) || !kws.length) kws = DEFAULT_KEYWORDS;
+  const list = document.getElementById('kwList');
+  list.innerHTML = '';
+  kws.forEach(v => {
+    const el = document.createElement('span'); el.className = 'kw';
+    el.innerHTML = v + ' <button onclick="removeKw(this)">×</button>';
+    list.appendChild(el);
+  });
+}
+
+function removeKw(b) { b.closest('.kw').remove(); persistKeywords(); }
 function addKw() {
   const i = document.getElementById('kwIn'), v = i.value.trim();
   if (!v) return;
   const el = document.createElement('span'); el.className = 'kw';
   el.innerHTML = v + ' <button onclick="removeKw(this)">×</button>';
   document.getElementById('kwList').appendChild(el); i.value = '';
+  persistKeywords();
 }
 // ── Sources management ──
 const PLATFORM_ID_MAP = { ig:'instagram', tt:'tiktok', yt:'youtube', x:'x' };
@@ -946,6 +976,8 @@ async function openSessionModal(platform, triggerBtn) {
 
 // Render the sources list as soon as the script runs
 renderSources();
+// Load persisted keywords (or defaults if none saved)
+loadKeywords();
 
 function setStatus(s) {
   document.getElementById('sdot').className = 'dot ' + s;
@@ -1021,6 +1053,10 @@ function applyFilter() {
     if (activeFilter === 'new' && !r.isNew) return false;
     if (activeFilter === 'exists' && (r.isNew || r.isBanned)) return false;
     if (activeFilter === 'banned' && !r.isBanned) return false;
+    if (activePlatTab === 'ig' && !r.igHandle) return false;
+    if (activePlatTab === 'tt' && !r.ttHandle) return false;
+    if (activePlatTab === 'yt' && !r.ytHandle) return false;
+    if (activePlatTab === 'x'  && !r.xHandle)  return false;
     if (activeBucket && (r.bucket||'') !== activeBucket) return false;
     if (q) {
       const hay = (r.handle+r.name+r.platform+r.contentLabels+r.whoTheyAre+r.whatTheyPost+r.toneStyle+r.targetAudience+r.whyFollow+r.igHandle+r.ttHandle+r.ytHandle+r.xHandle+r.foundVia+(r.bucket||'')).toLowerCase();
@@ -1037,6 +1073,12 @@ function applyFilter() {
 function setFilter(f, btn) {
   activeFilter = f;
   document.querySelectorAll('.fpill').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  applyFilter();
+}
+function setPlatFilter(p, btn) {
+  activePlatTab = p;
+  document.querySelectorAll('.pfill').forEach(el => el.classList.remove('active'));
   btn.classList.add('active');
   applyFilter();
 }
@@ -1108,6 +1150,11 @@ function updateCounts() {
   document.getElementById('fcBanned').textContent = bc;
   const bannedPill = document.getElementById('bannedPill');
   if (bannedPill) bannedPill.style.display = bc > 0 ? '' : 'none';
+  document.getElementById('pfcAll').textContent = allRows.length;
+  document.getElementById('pfcIg').textContent = allRows.filter(r => r.igHandle).length;
+  document.getElementById('pfcTt').textContent = allRows.filter(r => r.ttHandle).length;
+  document.getElementById('pfcYt').textContent = allRows.filter(r => r.ytHandle).length;
+  document.getElementById('pfcX').textContent  = allRows.filter(r => r.xHandle).length;
   document.getElementById('sTot').textContent = allRows.length;
   document.getElementById('sNew').textContent = ran ? nc : '—';
   updateApproved();
@@ -1447,10 +1494,12 @@ function handleFile(file) {
           isNew: false, ok: false,
         }));
         window.BASE_DATA = loaded; allRows = [...loaded];
-        ran = false; activeFilter = 'all'; searchQ = '';
+        ran = false; activeFilter = 'all'; activePlatTab = 'all'; searchQ = '';
         document.getElementById('searchBox').value = '';
         document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active'));
         document.querySelectorAll('.fpill')[0].classList.add('active');
+        document.querySelectorAll('.pfill').forEach(p=>p.classList.remove('active'));
+        document.getElementById('pfAll').classList.add('active');
         document.getElementById('reviewBanner').classList.remove('show');
         document.getElementById('selAllBtn').style.display='none';
         filtered = [...allRows]; currentPage = 1;
@@ -1478,11 +1527,13 @@ function handleFile(file) {
       window.BASE_DATA = loaded;
       allRows = [...loaded];
       ran = false;
-      activeFilter = 'all';
+      activeFilter = 'all'; activePlatTab = 'all';
       searchQ = '';
       document.getElementById('searchBox').value = '';
       document.querySelectorAll('.fpill').forEach(p=>p.classList.remove('active'));
       document.querySelectorAll('.fpill')[0].classList.add('active');
+      document.querySelectorAll('.pfill').forEach(p=>p.classList.remove('active'));
+      document.getElementById('pfAll').classList.add('active');
       document.getElementById('reviewBanner').classList.remove('show');
       document.getElementById('toolbar').classList.remove('show');
       document.getElementById('selAllBtn').style.display='none';
@@ -1743,21 +1794,43 @@ function importResults(jsonText, { keepModalOpen = false, skipRelevanceFilter = 
 
     const base = window.BASE_DATA || EXISTING_DATA;
     const existingHandles = new Set();
-base.forEach(r => {
-  if(r.igHandle) existingHandles.add(r.igHandle.toLowerCase().replace(/[@\s]/g,''));
-  if(r.ttHandle) existingHandles.add(r.ttHandle.toLowerCase().replace(/[@\s]/g,''));
-  if(r.ytHandle) existingHandles.add(r.ytHandle.toLowerCase().replace(/[@\s]/g,''));
-  if(r.xHandle)  existingHandles.add(r.xHandle.toLowerCase().replace(/[@\s]/g,''));
-  if(r.handle)   existingHandles.add(r.handle.toLowerCase().replace(/[@\s]/g,''));
-  if(r.name)     existingHandles.add(r.name.toLowerCase().trim());
-});
+    // handleToRow maps normalised handle → existing row (for cross-platform merge)
+    const handleToRow = new Map();
+    const normH = h => (h||'').toLowerCase().replace(/[@\s]/g,'');
+    base.forEach(r => {
+      if(r.igHandle) { const n=normH(r.igHandle); existingHandles.add(n); handleToRow.set(n, {row:r, plat:'instagram'}); }
+      if(r.ttHandle) { const n=normH(r.ttHandle); existingHandles.add(n); handleToRow.set(n, {row:r, plat:'tiktok'}); }
+      if(r.ytHandle) { const n=normH(r.ytHandle); existingHandles.add(n); handleToRow.set(n, {row:r, plat:'youtube'}); }
+      if(r.xHandle)  { const n=normH(r.xHandle);  existingHandles.add(n); handleToRow.set(n, {row:r, plat:'x'}); }
+      if(r.handle)   { const n=normH(r.handle); existingHandles.add(n); if(!handleToRow.has(n)) handleToRow.set(n, {row:r, plat:(r.platform||'').toLowerCase()}); }
+      if(r.name)     existingHandles.add(r.name.toLowerCase().trim());
+    });
+
+    // Helper: merge a new platform into an existing row
+    const fmtF = n => n >= 1e6 ? (n/1e6).toFixed(1).replace(/\.0$/,'')+'M' : n >= 1e3 ? Math.round(n/1e3)+'K' : String(n);
+    function mergePlatformIntoRow(row, newPlat, r) {
+      const nh = r.handle.startsWith('@') ? r.handle : '@'+r.handle;
+      if(newPlat.includes('instagram') && !row.igHandle){ row.igHandle=nh; row.igFollowers=r.followers||''; }
+      else if(newPlat.includes('tiktok') && !row.ttHandle){ row.ttHandle=nh; row.ttFollowers=r.followers||''; }
+      else if(newPlat.includes('youtube') && !row.ytHandle){ row.ytHandle=nh; row.ytFollowers=r.followers||''; }
+      else if((newPlat==='x'||newPlat.includes('twitter')) && !row.xHandle){ row.xHandle=nh; row.xFollowers=r.followers||''; }
+      else return false;
+      // Update combined platform label
+      const platLabel = newPlat.includes('instagram')?'Instagram':newPlat.includes('tiktok')?'TikTok':newPlat.includes('youtube')?'YouTube':'X';
+      if(!row.platform.includes(platLabel)) row.platform = row.platform ? row.platform+' / '+platLabel : platLabel;
+      // Recalculate total followers
+      const tot = (parseFollowers(row.igFollowers)||0)+(parseFollowers(row.ttFollowers)||0)+(parseFollowers(row.ytFollowers)||0)+(parseFollowers(row.xFollowers)||0);
+      if(tot>0) row.followers = fmtF(tot);
+      return true;
+    }
+
     const cfg = getConfig();
 
     // Score, filter and sort
     const MIN_RELEVANCE = 40; // must score at least this to be included
     const scored = arr.map(r => ({ r, score: londonRelevanceScore(r) }));
 
-    let skippedDup=0, skippedFollowers=0, skippedRelevance=0;
+    let skippedDup=0, skippedFollowers=0, skippedRelevance=0, mergedCount=0;
     const newEntries = [];
 
     // Sort best first
@@ -1766,7 +1839,14 @@ base.forEach(r => {
     for(const {r, score} of scored){
       const h = (r.handle||'').toLowerCase().replace(/[@\s]/g,'');
       if(!h) continue;
-      if(existingHandles.has(h)) { skippedDup++; continue; }
+      if(existingHandles.has(h)) {
+        // Check for cross-platform merge opportunity
+        const match = handleToRow.get(h);
+        const newPlat = (r.platform||'').toLowerCase();
+        if(match && mergePlatformIntoRow(match.row, newPlat, r)) { mergedCount++; }
+        else { skippedDup++; }
+        continue;
+      }
 
       const hasFollowers = r.followers && String(r.followers).trim() !== '';
       const fNum = hasFollowers ? parseFollowers(r.followers) : null;
@@ -1813,6 +1893,7 @@ base.forEach(r => {
     // Log breakdown
     logLine(`── Import complete: ${arr.length} candidates received ──`, 'head');
     logLine(`✓ ${added} passed relevance + follower + dedup filters`, 'ok');
+    if(mergedCount)      logLine(`  ↳ ${mergedCount} merged into existing rows (new platform found for same person)`, 'info');
     if(skippedRelevance) logLine(`  ↳ ${skippedRelevance} removed — not London/food relevant (score < ${MIN_RELEVANCE})`, 'info');
     if(skippedFollowers) logLine(`  ↳ ${skippedFollowers} removed — below ${cfg.minFollowers.toLocaleString()} follower minimum`, 'info');
     if(skippedDup)       logLine(`  ↳ ${skippedDup} removed — already in your list`, 'info');
@@ -3227,7 +3308,7 @@ async function loadSearchHistory() {
   }
 }
 
-function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
+function renderSearchHistory({ runs = [], byModel = [], byPlatform = [], byKeyword = [] }) {
   const container = document.getElementById('historyContent');
   if (!runs.length) {
     container.innerHTML = '<div class="cl-empty"><div class="cl-empty-icon">📊</div><div class="cl-empty-title">No search history yet</div><div>Run a search and results will be logged here automatically.</div></div>';
@@ -3275,6 +3356,16 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
       <td style="${tdNum}">${fmtBanned(r.banned)}</td>
     </tr>`).join('');
 
+  // ── By Keyword ──
+  let kwRows = byKeyword.map(r => `
+    <tr>
+      <td style="${tdStyle};font-family:var(--mono)">${r.keyword}</td>
+      <td style="${tdNum}">${r.runs}</td>
+      <td style="${tdNum};font-weight:700">${r.candidates}</td>
+      <td style="${tdNum}">${r.runs ? Math.round(r.candidates / r.runs) : 0}</td>
+      <td style="${tdNum};color:var(--green);font-weight:800">${r.newInSession}</td>
+    </tr>`).join('');
+
   // ── Recent raw log ──
   const fmtDate = s => s ? new Date(s).toLocaleString('en-GB', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }) : '—';
   let logRows = runs.slice(0, 100).map(r => `
@@ -3319,6 +3410,18 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [] }) {
         <th style="${thStyle};text-align:right">Banned</th>
       </tr></thead>
       <tbody>${platRows}</tbody>
+    </table>
+
+    <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;color:var(--text)">By Keyword / Hashtag</h3>
+    <table style="${tblStyle}">
+      <thead><tr>
+        <th style="${thStyle}">Keyword</th>
+        <th style="${thStyle};text-align:right">Runs</th>
+        <th style="${thStyle};text-align:right">Total candidates found</th>
+        <th style="${thStyle};text-align:right">Avg / run</th>
+        <th style="${thStyle};text-align:right">Total new</th>
+      </tr></thead>
+      <tbody>${kwRows}</tbody>
     </table>
 
     <h3 style="font-size:13px;font-weight:700;margin:0 0 10px;color:var(--text)">Recent runs (last 100)</h3>
