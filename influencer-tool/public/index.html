@@ -3858,16 +3858,23 @@ async function runBrightDataEnrich() {
   btn.disabled = false;
   btn.textContent = '▶ Enrich selected';
 
-  // Offer to save enriched profiles back to DB
+  // Save enriched profiles to the dedicated brightdata_profiles table
   if (totalDone > 0) {
-    const enriched = enrichData.filter(i => enrichJobMap[i.handle]?.status === 'done');
+    const enrichedProfiles = [];
+    for (const inf of enrichData) {
+      const job = enrichJobMap[inf.handle];
+      if (job?.status === 'done' && job.result) {
+        enrichedProfiles.push({ ...job.result, handle: job.result.handle || inf.handle });
+      }
+    }
     try {
-      const saveResp = await fetch('/api/db-save', {
+      const saveResp = await fetch('/api/brightdata-save', {
         method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ influencers: enriched }),
+        body: JSON.stringify({ profiles: enrichedProfiles }),
       });
       const saveData = await saveResp.json();
-      if (saveResp.ok) setEnrichStatus(`Done — ${totalDone} enriched & saved to DB (${saveData.saved} records). ${totalFailed ? totalFailed + ' failed.' : ''}`, 'green');
+      if (saveResp.ok) setEnrichStatus(`Done — ${totalDone} enriched & saved to BrightData table (${saveData.saved} records). ${totalFailed ? totalFailed + ' failed.' : ''}`, 'green');
+      else setEnrichStatus(`Enriched ${totalDone} profiles but save failed: ${saveData.error}`, '');
     } catch (_) { /* save failure is non-critical */ }
   }
 }

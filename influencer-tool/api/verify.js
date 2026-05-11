@@ -275,14 +275,17 @@ export default async function handler(req, res) {
 
 // ── BrightData Web Scraper API ─────────────────────────────────────────────
 // Called when body contains { action: 'brightdata', platform, profiles: [...] }
+// Uses the synchronous /datasets/v3/scrape endpoint — one API key, no dataset IDs.
+// Docs: https://docs.brightdata.com/api-reference/web-scraper-api/synchronous-requests
 
-const BD_API = 'https://api.brightdata.com/datasets/v3';
+const BD_SCRAPE = 'https://api.brightdata.com/datasets/v3/scrape';
 
-const BD_DATASET_ENV = {
-  instagram: 'BRIGHTDATA_IG_DATASET_ID',
-  tiktok:    'BRIGHTDATA_TT_DATASET_ID',
-  youtube:   'BRIGHTDATA_YT_DATASET_ID',
-  x:         'BRIGHTDATA_X_DATASET_ID',
+// BrightData scraper type per platform
+const BD_SCRAPER = {
+  instagram: 'instagram-profile-collect-by-url',
+  tiktok:    'tiktok-profile-collect-by-url',
+  youtube:   'youtube-channel-collect-by-url',
+  x:         'x-profile-collect-by-url',
 };
 
 function bdProfileUrl(platform, handle) {
@@ -294,64 +297,54 @@ function bdProfileUrl(platform, handle) {
   return null;
 }
 
+// Normalise BrightData response fields into our standard shape.
+// Field names are from BrightData's actual API responses.
 function bdNormalise(platform, row) {
   if (!row) return null;
   if (platform === 'instagram') return {
-    handle:     row.username   || '',
-    fullName:   row.name       || row.full_name || '',
-    followers:  String(row.followers   ?? row.follower_count  ?? ''),
-    bio:        row.biography  || row.description || '',
-    postCount:  String(row.posts ?? row.post_count ?? row.media_count ?? ''),
-    isPrivate:  !!row.is_private,
-    isVerified: !!(row.verified || row.is_verified),
+    handle:     row.profile_name || row.username || '',
+    fullName:   row.name         || row.profile_name || '',
+    followers:  String(row.followers   ?? ''),
+    bio:        row.biography    || row.description || '',
+    postCount:  String(row.posts_count ?? row.posts ?? ''),
+    isVerified: !!(row.is_verified || row.verified),
+    engagementRate: row.avg_engagement || null,
+    profileUrl: row.profile_url  || '',
+    rawPlatform: 'instagram',
   };
   if (platform === 'tiktok') return {
-    handle:     row.unique_id  || row.username || '',
-    fullName:   row.nickname   || row.name || '',
-    followers:  String(row.fans ?? row.follower_count ?? row.followers ?? ''),
-    bio:        row.signature  || row.bio || '',
-    postCount:  String(row.video_count ?? row.post_count ?? ''),
-    isPrivate:  !!row.is_private_account,
-    isVerified: !!row.verified,
+    handle:     row.account_id   || row.nickname || '',
+    fullName:   row.nickname     || '',
+    followers:  String(row.followers ?? ''),
+    bio:        row.biography    || row.bio || '',
+    postCount:  String(row.videos_count ?? ''),
+    isVerified: !!(row.is_verified || row.verified),
+    engagementRate: row.awg_engagement_rate || null,
+    likes:      String(row.likes ?? ''),
+    rawPlatform: 'tiktok',
   };
   if (platform === 'youtube') return {
-    handle:     row.channel_name || row.username || '',
-    fullName:   row.channel_name || row.name || '',
-    followers:  String(row.subscribers ?? row.subscriber_count ?? row.followers ?? ''),
-    bio:        row.description || '',
+    handle:     row.channel_name || '',
+    fullName:   row.channel_name || '',
+    followers:  String(row.subscribers ?? row.subscriber_count ?? ''),
+    bio:        row.description  || '',
     postCount:  String(row.video_count ?? ''),
-    isPrivate:  false,
-    isVerified: !!row.verified,
-    country:    row.country || '',
+    isVerified: !!(row.verified),
+    country:    row.country      || '',
+    profileUrl: row.url          || '',
+    rawPlatform: 'youtube',
   };
   if (platform === 'x') return {
-    handle:     row.username    || row.screen_name || '',
-    fullName:   row.name        || '',
+    handle:     row.username     || row.screen_name || '',
+    fullName:   row.name         || '',
     followers:  String(row.followers ?? row.followers_count ?? ''),
-    bio:        row.description || row.bio || '',
+    bio:        row.description  || row.bio || '',
     postCount:  String(row.posts ?? row.statuses_count ?? ''),
-    isPrivate:  !!row.protected,
-    isVerified: !!(row.verified || row.is_blue_verified),
-    location:   row.location || '',
+    isVerified: !!(row.verified  || row.is_blue_verified),
+    location:   row.location     || '',
+    rawPlatform: 'x',
   };
   return null;
-}
-
-async function bdPollSnapshot(snapshotId, token, maxWaitMs = 120000) {
-  const deadline = Date.now() + maxWaitMs;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 4000));
-    const resp = await fetch(`${BD_API}/snapshot/${snapshotId}?format=json`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (resp.status === 202) continue;
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => '');
-      throw new Error(`Snapshot poll failed: HTTP ${resp.status} — ${txt.slice(0, 200)}`);
-    }
-    return resp;
-  }
-  throw new Error('BrightData snapshot timed out after 2 minutes');
 }
 
 async function handleBrightData(req, res) {
@@ -363,60 +356,77 @@ async function handleBrightData(req, res) {
   if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: `Unsupported platform: ${platform}` });
   if (!Array.isArray(profiles) || !profiles.length) return res.status(400).json({ error: 'profiles[] is required' });
 
-  const datasetId = process.env[BD_DATASET_ENV[platform]];
-  if (!datasetId) return res.status(500).json({ error: `${BD_DATASET_ENV[platform]} env var not set` });
+  const scraperType = BD_SCRAPER[platform];
+  const input = profiles
+    .map(p => ({ url: bdProfileUrl(platform, p) }))
+    .filter(r => r.url);
 
-  const inputs = profiles.map(p => ({ url: bdProfileUrl(platform, p) })).filter(r => r.url);
-
-  // Trigger snapshot
-  let snapshotId;
-  try {
-    const triggerResp = await fetch(
-      `${BD_API}/trigger?dataset_id=${datasetId}&include_errors=true&format=json&uncompressed_webhook=true`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(inputs),
-      }
-    );
-    const triggerData = await triggerResp.json();
-    if (!triggerResp.ok) return res.status(502).json({ error: triggerData.message || triggerData.error || `BD trigger failed: HTTP ${triggerResp.status}` });
-    snapshotId = triggerData.snapshot_id;
-    if (!snapshotId) return res.status(502).json({ error: 'BrightData did not return a snapshot_id', raw: triggerData });
-  } catch (e) {
-    return res.status(502).json({ error: `BrightData trigger error: ${e.message}` });
-  }
-
-  console.log(`[brightdata:${platform}] snapshot triggered: ${snapshotId}`);
-
-  // Poll until ready
   let rawRows;
   try {
-    const snapResp = await bdPollSnapshot(snapshotId, token);
-    const text = await snapResp.text();
-    try {
-      rawRows = JSON.parse(text);
-    } catch {
-      rawRows = text.trim().split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    const resp = await fetch(`${BD_SCRAPE}?scraper=${scraperType}&format=json`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(input),
+    });
+
+    // 202 = async job started, returns snapshot_id
+    if (resp.status === 202) {
+      const asyncData = await resp.json();
+      const snapshotId = asyncData.snapshot_id;
+      if (!snapshotId) return res.status(502).json({ error: 'BrightData returned 202 but no snapshot_id', raw: asyncData });
+      console.log(`[brightdata:${platform}] async snapshot: ${snapshotId}, polling…`);
+
+      // Poll for result
+      const deadline = Date.now() + 120000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 4000));
+        const pollResp = await fetch(`https://api.brightdata.com/datasets/v3/snapshot/${snapshotId}?format=json`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (pollResp.status === 202) continue;
+        if (!pollResp.ok) {
+          const txt = await pollResp.text().catch(() => '');
+          return res.status(502).json({ error: `Snapshot poll failed: HTTP ${pollResp.status} — ${txt.slice(0, 200)}` });
+        }
+        const text = await pollResp.text();
+        try { rawRows = JSON.parse(text); } catch {
+          rawRows = text.trim().split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        }
+        break;
+      }
+      if (!rawRows) return res.status(504).json({ error: 'BrightData snapshot timed out', snapshot_id: snapshotId });
+    } else if (resp.ok) {
+      // Synchronous response
+      const text = await resp.text();
+      try { rawRows = JSON.parse(text); } catch {
+        rawRows = text.trim().split('\n').map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+      }
+    } else {
+      const errText = await resp.text().catch(() => '');
+      return res.status(502).json({ error: `BrightData error: HTTP ${resp.status}`, detail: errText.slice(0, 300) });
     }
   } catch (e) {
-    return res.status(502).json({ error: e.message, snapshot_id: snapshotId });
+    return res.status(502).json({ error: `BrightData request failed: ${e.message}` });
   }
 
   if (!Array.isArray(rawRows)) rawRows = [rawRows].filter(Boolean);
-  console.log(`[brightdata:${platform}] snapshot ${snapshotId} ready — ${rawRows.length} rows`);
+  console.log(`[brightdata:${platform}] ${rawRows.length} rows returned`);
 
   // Normalise and key by original handle
   const results = {};
   for (let i = 0; i < profiles.length; i++) {
-    const handle = profiles[i].replace(/^@/, '');
+    const handle = profiles[i].replace(/^@/, '').toLowerCase();
     const row = rawRows[i] || rawRows.find(r =>
-      (r.username || r.unique_id || r.screen_name || r.channel_name || '').toLowerCase() === handle.toLowerCase()
+      (r.profile_name || r.username || r.account_id || r.unique_id || r.screen_name || r.channel_name || '')
+        .toLowerCase() === handle
     );
     if (!row) { results[profiles[i]] = { error: 'not_found' }; continue; }
     if (row.error || row.status === 'failed') { results[profiles[i]] = { error: row.error || row.message || 'scrape_failed' }; continue; }
     results[profiles[i]] = bdNormalise(platform, row) || { error: 'normalise_failed' };
   }
 
-  return res.status(200).json({ results, snapshot_id: snapshotId });
+  return res.status(200).json({ results });
 }
