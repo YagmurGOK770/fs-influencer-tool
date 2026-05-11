@@ -14,6 +14,7 @@ const TRACKED_FIELDS = [
   'content_labels', 'who_they_are', 'what_they_post',
   'tone_style', 'target_audience', 'why_follow', 'found_via',
   'niche', 'location', 'bucket', 'is_verified', 'post_count',
+  'follower_verified',
 ];
 
 function toRow(inf) {
@@ -40,8 +41,9 @@ function toRow(inf) {
     niche:           inf.niche          || null,
     location:        inf.location       || null,
     bucket:          inf.bucket         || null,
-    is_verified:     inf.isVerified     ?? null,
-    post_count:      inf.postCount      || null,
+    is_verified:      inf.isVerified      ?? null,
+    post_count:       inf.postCount       || null,
+    follower_verified: inf.followerVerified ? true : null,
   };
 }
 
