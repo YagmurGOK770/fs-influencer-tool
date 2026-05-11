@@ -3046,7 +3046,8 @@ function normaliseFollowers(raw) {
 }
 
 function csvRowToInfluencer(r) {
-  // Map our specific CSV headers: #, handle, name_if_found, platforms, follower_count, primary_niche, location, source
+  // Supports both the manual CSV format (#, Handle, Name if found, Platform(s), ...)
+  // and the enriched_profiles.xlsx export format (Name, Platform, Handle, Followers, Who They Are, ...)
   const rawHandle   = r['handle'] || r['handle_'] || '';
   const rawName     = r['name_if_found'] || r['name'] || r['name__if_found_'] || '';
   const rawPlatform = r['platform_s_'] || r['platforms'] || r['platform'] || '';
@@ -3054,6 +3055,13 @@ function csvRowToInfluencer(r) {
   const rawNiche    = r['primary_niche'] || r['niche'] || '';
   const rawLocation = r['location'] || '';
   const rawSource   = r['source'] || '';
+  // Enrichment fields present in enriched_profiles.xlsx export
+  const rawWho      = r['who_they_are'] || '';
+  const rawWhat     = r['what_they_post'] || '';
+  const rawTone     = r['tone_style'] || '';
+  const rawAudience = r['target_audience'] || '';
+  const rawWhy      = r['why_follow'] || '';
+  const rawLabels   = r['content_labels'] || '';
 
   const handle   = normaliseHandle(rawHandle);
   const platform = normalisePlatform(rawPlatform);
@@ -3067,31 +3075,28 @@ function csvRowToInfluencer(r) {
   if (!finalHandle) return null;
 
   return {
-    name:      rawName.trim(),
+    name:           rawName.trim(),
     platform,
-    handle:    finalHandle,
-    igHandle:  platform === 'Instagram' ? handle : '',
-    ttHandle:  platform === 'TikTok'    ? handle : '',
-    ytHandle:  platform === 'YouTube'   ? handle : '',
-    xHandle:   platform === 'X'         ? handle : '',
+    handle:         finalHandle,
+    igHandle:       platform === 'Instagram' ? handle : '',
+    ttHandle:       platform === 'TikTok'    ? handle : '',
+    ytHandle:       platform === 'YouTube'   ? handle : '',
+    xHandle:        platform === 'X'         ? handle : '',
     followers,
-    niche:     rawNiche,
-    location:  rawLocation,
-    notes:     rawSource,  // store "Source" column in notes
+    niche:          rawNiche,
+    location:       rawLocation,
+    notes:          rawSource,
+    whoTheyAre:     rawWho,
+    whatTheyPost:   rawWhat,
+    toneStyle:      rawTone,
+    targetAudience: rawAudience,
+    whyFollow:      rawWhy,
+    contentLabels:  rawLabels,
   };
 }
 
-async function importManualCsv() {
-  const raw = document.getElementById('covCsvInput').value.trim();
+async function _submitCovInfluencers(influencers) {
   const status = document.getElementById('covImportStatus');
-  if (!raw) { status.textContent = '⚠ Nothing to import.'; return; }
-
-  const parsed = parseCsv(raw);
-  if (!parsed.length) { status.textContent = '⚠ Could not parse CSV — check headers.'; return; }
-
-  const influencers = parsed.map(csvRowToInfluencer).filter(r => r && (r.name || r.handle));
-  if (!influencers.length) { status.textContent = '⚠ No valid rows found.'; return; }
-
   status.textContent = `⏳ Importing ${influencers.length} rows…`;
   try {
     const resp = await fetch('/api/manual-import', {
@@ -3109,6 +3114,67 @@ async function importManualCsv() {
   } catch (e) {
     status.textContent = `⚠ ${e.message}`;
   }
+}
+
+async function importManualCsv() {
+  const raw = document.getElementById('covCsvInput').value.trim();
+  const status = document.getElementById('covImportStatus');
+  if (!raw) { status.textContent = '⚠ Nothing to import.'; return; }
+  const parsed = parseCsv(raw);
+  if (!parsed.length) { status.textContent = '⚠ Could not parse CSV — check headers.'; return; }
+  const influencers = parsed.map(csvRowToInfluencer).filter(r => r && (r.name || r.handle));
+  if (!influencers.length) { status.textContent = '⚠ No valid rows found.'; return; }
+  await _submitCovInfluencers(influencers);
+}
+
+function handleCovFile(file) {
+  if (!file) return;
+  const status = document.getElementById('covImportStatus');
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['csv', 'xlsx', 'xls'].includes(ext)) {
+    status.textContent = '⚠ Unsupported format — use .xlsx or .csv'; return;
+  }
+  if ((ext === 'xlsx' || ext === 'xls') && typeof XLSX === 'undefined') {
+    status.textContent = '⏳ Loading Excel library…';
+    const s = document.createElement('script');
+    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+    s.onload = () => handleCovFile(file);
+    s.onerror = () => { status.textContent = '⚠ Failed to load Excel library'; };
+    document.head.appendChild(s);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      let parsed;
+      if (ext === 'csv') {
+        parsed = parseCsv(e.target.result);
+      } else {
+        // xlsx: parse with SheetJS, normalize headers the same way parseCsv does
+        const wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (rawRows.length < 2) { status.textContent = '⚠ File appears empty'; return; }
+        const headers = rawRows[0].map(h =>
+          String(h).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+        );
+        parsed = rawRows.slice(1).map(row => {
+          const obj = {};
+          headers.forEach((h, i) => { obj[h] = String(row[i] ?? '').trim(); });
+          return obj;
+        }).filter(r => Object.values(r).some(v => v));
+      }
+      if (!parsed.length) { status.textContent = '⚠ No data rows found'; return; }
+      const influencers = parsed.map(csvRowToInfluencer).filter(r => r && (r.name || r.handle));
+      if (!influencers.length) { status.textContent = '⚠ No valid rows — check Handle/Name columns'; return; }
+      document.getElementById('covImportArea').style.display = '';
+      _submitCovInfluencers(influencers);
+    } catch (err) {
+      status.textContent = '⚠ ' + (err.message || 'Could not read file');
+    }
+  };
+  if (ext === 'xlsx' || ext === 'xls') reader.readAsArrayBuffer(file);
+  else reader.readAsText(file, 'UTF-8');
 }
 
 async function loadCoverage() {
@@ -3380,7 +3446,11 @@ function closeProfileCard() {
       <div class="cov-import-sub">Paste your CSV as-is — supports the sheet format: <code>#, Handle, Name (if found), Platform(s), Follower Count, Primary Niche, Location, Source</code></div>
       <textarea class="cov-csv-input" id="covCsvInput" placeholder="#,Handle,Name (if found),Platform(s),Follower Count,Primary Niche,Location,Source&#10;1,@ottolenghi,Yotam Ottolenghi,Instagram,2.6M,Food,London,starngage&#10;2,@jacksdiningroom,Jack,Tik Tok,2.1M,&quot;Food, Travel&quot;,London,#londoneats"></textarea>
       <div class="cov-import-actions">
-        <button class="btn-sm" onclick="importManualCsv()">Import to DB</button>
+        <button class="btn-sm" onclick="importManualCsv()">Import CSV</button>
+        <label class="btn-sm" style="cursor:pointer" title="Upload .xlsx or .csv file directly">
+          📂 Upload .xlsx / .csv
+          <input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleCovFile(this.files[0]);this.value=''"/>
+        </label>
         <button class="btn-sm" onclick="document.getElementById('covImportArea').style.display='none'">Hide</button>
         <span class="cov-import-status" id="covImportStatus"></span>
       </div>
