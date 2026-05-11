@@ -3795,10 +3795,10 @@ async function runBrightDataEnrich() {
     if (!entries.length) continue;
     setEnrichStatus(`[${platform}] Submitting ${entries.length} profiles…`, '');
     try {
-      const resp = await fetch('/api/brightdata-enrich', {
+      const resp = await fetch('/api/verify', {
         method: 'POST',
         headers: getApiHeaders(),
-        body: JSON.stringify({ platform, profiles: entries.map(e => e.profile) }),
+        body: JSON.stringify({ action: 'brightdata', platform, profiles: entries.map(e => e.profile) }),
       });
       const data = await resp.json();
       if (!resp.ok || data.error) {
