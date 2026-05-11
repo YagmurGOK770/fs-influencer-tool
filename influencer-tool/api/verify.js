@@ -145,6 +145,7 @@ async function verifyYouTube(username) {
       isPrivate:  false,
       isVerified: !!(header?.badges?.some?.(b => b?.metadataBadgeRenderer?.style === 'BADGE_STYLE_TYPE_VERIFIED')),
       postCount:  '',
+      country:    meta?.country || '',
     };
   } catch (e) {
     return { ok: false, reason: e.name === 'AbortError' ? 'timeout' : e.message };
@@ -196,6 +197,7 @@ async function verifyX(username, cookieStr) {
       isPrivate:  !!user.protected,
       isVerified: !!(json?.data?.user?.result?.is_blue_verified || user.verified),
       postCount:  String(user.statuses_count ?? ''),
+      location:   user.location || '',
     };
   } catch (e) {
     return { ok: false, reason: e.name === 'AbortError' ? 'timeout' : e.message };

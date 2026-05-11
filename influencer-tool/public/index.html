@@ -797,6 +797,7 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.isVerified !== undefined) inf.isVerified = r.isVerified;
       if (r.postCount) inf.postCount = r.postCount;
       if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
+      inf.verifiedBio = r.bio || '';
     },
   },
   tiktok: {
@@ -808,6 +809,7 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.fullName && !inf.name) inf.name = r.fullName;
       if (r.isVerified !== undefined && !inf.igHandle) inf.isVerified = r.isVerified;
       if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
+      if (!inf.verifiedBio) inf.verifiedBio = r.bio || '';
     },
   },
   youtube: {
@@ -818,6 +820,8 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
       if (r.fullName && !inf.name) inf.name = r.fullName;
       if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
+      if (r.country) inf.verifiedCountry = r.country;
+      if (!inf.verifiedBio) inf.verifiedBio = r.bio || '';
     },
   },
   x: {
@@ -829,6 +833,8 @@ const PLATFORM_VERIFY_CONFIG = {
       if (r.fullName && !inf.name) inf.name = r.fullName;
       if (r.isVerified !== undefined && !inf.igHandle) inf.isVerified = r.isVerified;
       if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
+      inf.verifiedLocation = r.location || '';
+      if (!inf.verifiedBio) inf.verifiedBio = r.bio || '';
     },
   },
 };
@@ -886,9 +892,16 @@ async function verifyPlatform(platform, influencers, statusEl) {
       const results = data.results || {};
       for (const { inf, handle } of batch) {
         const r = results[handle];
-        if (!r || !r.ok) { failedCount++; continue; }
+        if (!r || !r.ok) {
+          inf.verifyFailed = true;
+          inf.verifyReason = r?.reason || 'unknown';
+          failedCount++;
+          continue;
+        }
         cfg.applyResult(inf, r);
         inf.followerVerified = true;
+        inf.locationOk = checkLocationFromVerification(inf);
+        if (r.postCount === '0') inf.hasNoPosts = true;
         verifiedCount++;
       }
     } catch (err) {
@@ -1024,9 +1037,10 @@ function nameLink(r) {
   var h = r.igHandle||r.ttHandle||r.ytHandle||r.xHandle||'';
   var p = r.igHandle?'Instagram':r.ttHandle?'TikTok':r.ytHandle?'YouTube':'X';
   var url = platformUrl(h, p);
-  var label = r.name||'—';
-  if(!url) return label;
-  return '<a href="' + url + '" target="_blank" rel="noopener" class="name-link">' + label + '</a>';
+  var label = (r.name||'—').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  var safeHandle = (r.handle||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return '<span class="name-link" style="cursor:pointer" onclick="openProfileCard(\'' + safeHandle + '\')">' + label + '</span>' +
+         (url ? ' <a href="' + url + '" target="_blank" rel="noopener" title="Open profile" style="color:var(--muted);font-size:10px;text-decoration:none;opacity:0.55">↗</a>' : '');
 }
 function platformUrl(handle, platform) {
   if(!handle) return '';
@@ -1320,7 +1334,7 @@ function renderTable() {
     tr.innerHTML = `
       <td style="text-align:center">${r.isNew ? `<input type="checkbox" class="approve-cb" ${r.ok?'checked':''} onchange="toggleOk('${r.handle}','${r.platform}',this.checked)"/>` : ''}</td>
       <td class="td-num">${numCell}</td>
-      <td style="font-weight:600;font-size:12.5px">${nameLink(r)}</td>
+      <td style="font-weight:600;font-size:12.5px">${nameLink(r)}${verifyBadges(r)}</td>
       <td style="font-size:11px;color:var(--muted);white-space:nowrap">${r.platform||'—'}</td>
       <td class="td-handle">${handleLink(r.igHandle,'Instagram')}${r.isVerified ? ' <span title="Verified account" style="color:var(--blue);font-size:11px">✓</span>' : ''}${r.isPrivate ? ' <span class="private-badge" title="Private account">🔒</span>' : ''}</td>
       <td class="td-follow" title="${r.postCount ? r.postCount + ' posts' : ''}">${r.igFollowers||'—'}</td>
@@ -1775,6 +1789,36 @@ function londonRelevanceScore(r) {
   }
 
   return score;
+}
+
+function checkLocationFromVerification(inf) {
+  const londonTerms = ['london','uk','united kingdom','england','britain','british','ldn'];
+  const nonLondonTerms = ['manchester','birmingham','bristol','cardiff','edinburgh','glasgow','leeds','liverpool','sheffield','nottingham','newcastle','dubai','new york','paris','sydney','australia','canada',' usa','ireland','scotland','amsterdam','berlin','toronto','barcelona'];
+  if (inf.verifiedCountry === 'GB') return true;
+  const fields = [
+    (inf.verifiedLocation || '').toLowerCase(),
+    (inf.verifiedBio || '').toLowerCase(),
+  ];
+  for (const f of fields) {
+    if (!f) continue;
+    for (const t of nonLondonTerms) { if (f.includes(t)) return false; }
+  }
+  for (const f of fields) {
+    if (!f) continue;
+    for (const t of londonTerms) { if (f.includes(t)) return true; }
+  }
+  return null;
+}
+
+function verifyBadges(r) {
+  const b = [];
+  if (r.followerVerified && r.locationOk === false)
+    b.push('<span title="Profile location doesn\'t match London/UK — double-check" style="font-size:10px;color:#f59e0b;margin-left:5px;cursor:default">📍?</span>');
+  if (r.followerVerified && r.hasNoPosts)
+    b.push('<span title="0 posts — profile may be suspended or brand new" style="font-size:10px;color:#ef4444;font-weight:600;margin-left:5px;cursor:default">⚠ 0 posts</span>');
+  if (r.verifyFailed && r.verifyReason === 'not_found')
+    b.push('<span title="Profile not found — may be deleted or renamed" style="font-size:10px;color:#ef4444;font-weight:600;margin-left:5px;cursor:default">⚠ not found</span>');
+  return b.join('');
 }
 
 function parseFollowers(str) {
@@ -3130,7 +3174,113 @@ function renderCovTable() {
   }).join('');
 }
 
+// ── Profile card (click name to open) ────────────────────────────────────────
+function openProfileCard(handle) {
+  const r = allRows.find(x => x.handle === handle || x.handle === '@' + handle) || {};
+  const h = r.igHandle || r.ttHandle || r.ytHandle || r.xHandle || '';
+  const p = r.igHandle ? 'Instagram' : r.ttHandle ? 'TikTok' : r.ytHandle ? 'YouTube' : 'X';
+  const url = platformUrl(h, p);
+
+  document.getElementById('pcName').textContent = r.name || h || handle;
+  document.getElementById('pcPlatform').textContent = r.platform || p || '';
+  const lnk = document.getElementById('pcOpenLink');
+  lnk.href = url || '#';
+  lnk.style.display = url ? '' : 'none';
+
+  const ss = document.getElementById('pcScreenshot');
+  const noSS = document.getElementById('pcNoSS');
+  const loader = document.getElementById('pcSSLoader');
+  if (url) {
+    ss.style.display = 'none';
+    noSS.style.display = 'none';
+    loader.style.display = 'flex';
+    ss.src = 'https://image.thum.io/get/width/520/crop/700/' + url;
+  } else {
+    ss.style.display = 'none'; noSS.style.display = 'flex'; loader.style.display = 'none';
+  }
+
+  const verFollowers = r.igFollowers || r.ttFollowers || r.ytFollowers || r.xFollowers;
+  const locOk = r.locationOk === true  ? '<span style="color:#16a34a">✓ Confirmed London/UK</span>'
+              : r.locationOk === false ? '<span style="color:#dc2626">⚠ Not London/UK — double-check</span>'
+              : r.followerVerified     ? '<span style="color:#9ca3af">? Couldn\'t determine from profile</span>'
+              :                          '<span style="color:#9ca3af">Not yet live-verified</span>';
+
+  const whyParts = [];
+  if (r.foundVia) whyParts.push('Keyword: <strong>' + r.foundVia + '</strong>');
+  if (r.source && r.source !== r.foundVia) whyParts.push('Source: <strong>' + r.source + '</strong>');
+  if (r.location) whyParts.push('AI-reported location: <strong>' + r.location + '</strong>');
+  if (verFollowers) whyParts.push('Live followers: <strong>' + verFollowers + '</strong> ✓');
+  else if (r.followers) whyParts.push('AI-estimated followers: <strong>' + r.followers + '</strong>');
+  if (r.niche) whyParts.push('Niche: <strong>' + r.niche + '</strong>');
+
+  const locParts = [locOk];
+  if (r.verifiedLocation) locParts.push('<span style="color:#6b7280;font-size:11px">Profile location: ' + r.verifiedLocation + '</span>');
+  if (r.verifiedCountry)  locParts.push('<span style="color:#6b7280;font-size:11px">Country code: ' + r.verifiedCountry + '</span>');
+  if (r.verifiedBio && r.verifiedBio.length > 5) locParts.push('<span style="color:#6b7280;font-size:11px">Bio: ' + r.verifiedBio.slice(0, 120) + (r.verifiedBio.length > 120 ? '…' : '') + '</span>');
+
+  const verStatus = r.followerVerified
+    ? '✓ Live-verified' + (r.postCount ? ' · ' + r.postCount + ' posts' : '') + (r.hasNoPosts ? ' <span style="color:#ef4444">⚠ 0 posts — may be suspended</span>' : '')
+    : r.verifyFailed
+      ? '<span style="color:#ef4444">⚠ Failed: ' + (r.verifyReason || 'unknown') + '</span>'
+      : 'Not yet verified';
+
+  const sections = [
+    { head: 'WHY RETURNED',    body: whyParts.length ? whyParts.join('<br>') : '—' },
+    { head: 'LOCATION CHECK',  body: locParts.join('<br>') },
+    { head: 'VERIFICATION',    body: verStatus },
+    r.whoTheyAre     && { head: 'WHO THEY ARE',     body: r.whoTheyAre },
+    r.whatTheyPost   && { head: 'WHAT THEY POST',   body: r.whatTheyPost },
+    r.toneStyle      && { head: 'TONE & STYLE',     body: r.toneStyle },
+    r.targetAudience && { head: 'TARGET AUDIENCE',  body: r.targetAudience },
+    r.whyFollow      && { head: 'WHY FOLLOW',       body: r.whyFollow },
+    (r.contentLabels || r.niche) && { head: 'LABELS', body: r.contentLabels || r.niche },
+    r.bucket         && { head: 'BUCKET',           body: r.bucket },
+  ].filter(Boolean);
+
+  document.getElementById('pcDetails').innerHTML = sections.map(s =>
+    '<div style="margin-bottom:13px">' +
+    '<div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:3px">' + s.head + '</div>' +
+    '<div style="font-size:13px;color:#1f2937;line-height:1.5">' + s.body + '</div></div>'
+  ).join('');
+
+  document.getElementById('profileCardModal').style.display = 'flex';
+}
+
+function closeProfileCard() {
+  document.getElementById('profileCardModal').style.display = 'none';
+  const ss = document.getElementById('pcScreenshot');
+  if (ss) ss.src = '';
+}
+
 </script>
+<!-- Profile card modal -->
+<div id="profileCardModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9998;align-items:center;justify-content:center;padding:1rem" onclick="if(event.target===this)closeProfileCard()">
+  <div style="background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.25);width:720px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 18px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div>
+        <div id="pcName" style="font-weight:700;font-size:15px;color:#111"></div>
+        <div id="pcPlatform" style="font-size:11px;color:#9ca3af;margin-top:2px"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <a id="pcOpenLink" href="#" target="_blank" rel="noopener" style="font-size:12px;padding:5px 12px;border:1.5px solid #e5e7eb;border-radius:6px;text-decoration:none;color:#374151;font-weight:600">Open Profile ↗</a>
+        <button onclick="closeProfileCard()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#9ca3af;line-height:1;padding:0 4px">×</button>
+      </div>
+    </div>
+    <div style="display:flex;flex:1;overflow:hidden;min-height:0">
+      <div style="width:250px;min-width:250px;border-right:1px solid #e5e7eb;display:flex;flex-direction:column;background:#f9fafb;overflow:hidden">
+        <div id="pcSSLoader" style="display:none;height:220px;width:100%;align-items:center;justify-content:center;color:#9ca3af;font-size:12px">Loading preview…</div>
+        <img id="pcScreenshot" src="" alt="Profile preview" style="width:100%;display:none" onload="this.style.display='block';document.getElementById('pcSSLoader').style.display='none'" onerror="this.style.display='none';document.getElementById('pcSSLoader').style.display='none';document.getElementById('pcNoSS').style.display='flex'"/>
+        <div id="pcNoSS" style="display:none;height:220px;width:100%;align-items:center;justify-content:center;flex-direction:column;gap:4px">
+          <div style="color:#d1d5db;font-size:12px">No preview</div>
+          <div style="color:#e5e7eb;font-size:10px">Platform blocked screenshot</div>
+        </div>
+        <div style="padding:8px 12px;font-size:10px;color:#d1d5db;text-align:center;border-top:1px solid #f3f4f6;margin-top:auto">via image.thum.io</div>
+      </div>
+      <div id="pcDetails" style="flex:1;overflow-y:auto;padding:16px;min-width:0"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Import modal -->
 <div id="importModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:999;align-items:center;justify-content:center;padding:1rem">
   <div style="background:var(--white);border-radius:var(--r);box-shadow:0 20px 60px rgba(0,0,0,0.2);width:100%;max-width:760px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column">
