@@ -948,43 +948,127 @@ async function verifyInfluencerFollowers(influencers, statusEl) {
 }
 
 async function openSessionModal(platform, triggerBtn) {
-  const LABELS = { instagram:'Instagram', tiktok:'TikTok', x:'X / Twitter' };
+  const LABELS      = { instagram:'Instagram', tiktok:'TikTok', x:'X / Twitter' };
   const COOKIE_NAMES = { instagram:'sessionid', tiktok:'sessionid', x:'auth_token' };
-  const DOMAINS = { instagram:'instagram.com', tiktok:'tiktok.com', x:'x.com' };
-  const name = LABELS[platform] || platform;
+  const DOMAINS     = { instagram:'instagram.com', tiktok:'tiktok.com', x:'x.com' };
+  const TEST_HANDLES = { instagram:'instagram', tiktok:'tiktok', x:'x' };
+  const name       = LABELS[platform] || platform;
   const cookieName = COOKIE_NAMES[platform];
-  const domain = DOMAINS[platform];
+  const domain     = DOMAINS[platform];
 
-  const instructions =
-    `Paste your ${name} ${cookieName} cookie value:\n\n` +
-    `1. Open ${domain} in another tab and log in\n` +
-    `2. Open DevTools (F12) → Application → Cookies → ${domain}\n` +
-    `3. Copy the value of "${cookieName}"\n` +
-    `4. Paste it below`;
+  // Remove any existing modal
+  document.getElementById('_sessionModal')?.remove();
 
-  const value = prompt(instructions);
-  if (!value || !value.trim()) return;
+  const overlay = document.createElement('div');
+  overlay.id = '_sessionModal';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
 
-  const origLabel = triggerBtn ? triggerBtn.textContent : null;
-  if (triggerBtn) triggerBtn.textContent = '⏳';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:10px;padding:1.5rem;width:480px;max-width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.18);font-family:sans-serif">
+      <div style="font-weight:700;font-size:15px;margin-bottom:0.75rem">🔑 ${name} Session Cookie</div>
+      <ol style="font-size:12.5px;color:#444;margin:0 0 0.75rem 1.1rem;padding:0;line-height:1.7">
+        <li>Open <strong>${domain}</strong> in another tab and log in</li>
+        <li>Open DevTools (F12) → Application → Cookies → <code>${domain}</code></li>
+        <li>Copy the value of <strong>${cookieName}</strong></li>
+        <li>Paste it below and click Save</li>
+      </ol>
+      <textarea id="_sessionVal" rows="3" placeholder="Paste ${cookieName} value here…"
+        style="width:100%;box-sizing:border-box;font-family:monospace;font-size:11px;border:1px solid #d1d5db;border-radius:6px;padding:8px;resize:vertical"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button id="_sessionSave" style="flex:1;padding:8px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600">Save</button>
+        <button id="_sessionTest" style="flex:1;padding:8px;background:#f3f4f6;color:#111;border:1px solid #d1d5db;border-radius:6px;font-size:13px;cursor:pointer;font-weight:600" disabled>Test Connection</button>
+        <button id="_sessionClose" style="padding:8px 14px;background:#f3f4f6;color:#555;border:1px solid #d1d5db;border-radius:6px;font-size:13px;cursor:pointer">Cancel</button>
+      </div>
+      <div id="_sessionStatus" style="margin-top:10px;font-size:12px;min-height:18px"></div>
+      <pre id="_sessionRaw" style="display:none;margin-top:8px;font-size:10.5px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;padding:8px;max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-all"></pre>
+    </div>`;
 
-  try {
-    const resp = await fetch('/api/save-session', {
-      method: 'POST',
-      headers: getApiHeaders(),
-      body: JSON.stringify({ platform, sessionId: value.trim() })
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      alert(`Could not save session: ${data.error || 'unknown error'}`);
-      return;
-    }
-    logLine(`✓ ${name}: session saved (${data.cookieCount} cookie). Future scrapes will skip login.`, 'info');
-  } catch (e) {
-    alert(`Failed to save ${name} session: ${e.message}`);
-  } finally {
-    if (triggerBtn && origLabel) triggerBtn.textContent = origLabel;
+  document.body.appendChild(overlay);
+
+  const textarea   = overlay.querySelector('#_sessionVal');
+  const saveBtn    = overlay.querySelector('#_sessionSave');
+  const testBtn    = overlay.querySelector('#_sessionTest');
+  const closeBtn   = overlay.querySelector('#_sessionClose');
+  const statusDiv  = overlay.querySelector('#_sessionStatus');
+  const rawPre     = overlay.querySelector('#_sessionRaw');
+
+  function setMsg(msg, color) {
+    statusDiv.style.color = color || '#374151';
+    statusDiv.textContent = msg;
   }
+
+  closeBtn.onclick = () => overlay.remove();
+  overlay.onclick  = e => { if (e.target === overlay) overlay.remove(); };
+
+  saveBtn.onclick = async () => {
+    const value = textarea.value.trim();
+    if (!value) { setMsg('Paste the cookie value first.', '#dc2626'); return; }
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving…';
+    setMsg('');
+    rawPre.style.display = 'none';
+    try {
+      const resp = await fetch('/api/save-session', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ platform, sessionId: value })
+      });
+      const data = await resp.json();
+      if (!resp.ok) { setMsg(`Save failed: ${data.error || 'unknown'}`, '#dc2626'); return; }
+      setMsg(`✓ Saved. Now click "Test Connection" to verify it works.`, '#16a34a');
+      testBtn.disabled = false;
+      logLine(`✓ ${name}: session saved (${data.cookieCount} cookie).`, 'info');
+      if (triggerBtn) triggerBtn.textContent = '🔑';
+    } catch (e) {
+      setMsg(`Save error: ${e.message}`, '#dc2626');
+    } finally {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save';
+    }
+  };
+
+  testBtn.onclick = async () => {
+    testBtn.disabled = true;
+    testBtn.textContent = '⏳ Testing…';
+    setMsg('Pinging a test account…', '#6b7280');
+    rawPre.style.display = 'none';
+    try {
+      const testHandle = TEST_HANDLES[platform];
+      const resp = await fetch('/api/verify', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ platform, handles: [testHandle] })
+      });
+      const data = await resp.json();
+      rawPre.style.display = 'block';
+      if (!resp.ok || data.error) {
+        const msg = data.message || data.error || resp.statusText;
+        setMsg(`Connection failed: ${msg}`, '#dc2626');
+        rawPre.textContent = JSON.stringify(data, null, 2);
+        return;
+      }
+      const r = data.results?.[testHandle];
+      if (!r) {
+        setMsg('No result returned — unexpected response.', '#dc2626');
+        rawPre.textContent = JSON.stringify(data, null, 2);
+        return;
+      }
+      if (r.ok) {
+        setMsg(`✓ Connection works! @${testHandle} has ${r.followers} followers.`, '#16a34a');
+      } else {
+        const hints = {
+          cookie_expired: 'Cookie is expired or invalid — paste a fresh one.',
+          not_found:      'Test account not found (unexpected). Cookie may still work.',
+          timeout:        'Request timed out — platform may be rate-limiting.',
+        };
+        setMsg(`Connection issue: ${r.reason}. ${hints[r.reason] || ''}`, '#dc2626');
+      }
+      rawPre.textContent = JSON.stringify(r, null, 2);
+    } catch (e) {
+      setMsg(`Test error: ${e.message}`, '#dc2626');
+    } finally {
+      testBtn.disabled = false;
+      testBtn.textContent = 'Test Connection';
+    }
+  };
 }
 
 // Render the sources list as soon as the script runs
