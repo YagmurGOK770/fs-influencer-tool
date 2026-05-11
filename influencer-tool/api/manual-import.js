@@ -44,10 +44,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'influencers array is required' });
   }
 
-  const rows = influencers.map(toRow).filter(r => r.handle);
-  if (!rows.length) {
+  const rawRows = influencers.map(toRow).filter(r => r.handle);
+  if (!rawRows.length) {
     return res.status(400).json({ error: 'No valid rows (every row needs at least a handle or platform handle)' });
   }
+
+  // Deduplicate by handle — last occurrence wins (keeps the most enriched version)
+  const seen = new Map();
+  for (const r of rawRows) seen.set(r.handle, r);
+  const rows = [...seen.values()];
 
   const { error } = await supabase
     .from('manual_influencers')
