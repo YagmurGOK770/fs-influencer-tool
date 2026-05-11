@@ -3868,9 +3868,9 @@ async function runBrightDataEnrich() {
       }
     }
     try {
-      const saveResp = await fetch('/api/brightdata-save', {
+      const saveResp = await fetch('/api/db-save', {
         method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ profiles: enrichedProfiles }),
+        body: JSON.stringify({ action: 'brightdata', profiles: enrichedProfiles }),
       });
       const saveData = await saveResp.json();
       if (saveResp.ok) setEnrichStatus(`Done — ${totalDone} enriched & saved to BrightData table (${saveData.saved} records). ${totalFailed ? totalFailed + ' failed.' : ''}`, 'green');

@@ -68,6 +68,40 @@ function filterRow(row, cols) {
   return out;
 }
 
+// ── BrightData save (merged here to stay under Vercel 12-function limit) ──
+function bdToRow(p) {
+  return {
+    handle:          (p.handle || '').toLowerCase().trim(),
+    platform:        p.rawPlatform || p.platform || '',
+    full_name:       p.fullName    || null,
+    followers:       p.followers   || null,
+    bio:             p.bio         || null,
+    post_count:      p.postCount   || null,
+    is_verified:     p.isVerified  ?? null,
+    engagement_rate: p.engagementRate != null ? String(p.engagementRate) : null,
+    location:        p.location    || null,
+    country:         p.country     || null,
+    likes:           p.likes       || null,
+    profile_url:     p.profileUrl  || null,
+    raw_platform:    p.rawPlatform || null,
+    fetched_at:      new Date().toISOString(),
+  };
+}
+
+async function handleBrightDataSave(req, res, supabase) {
+  const { profiles } = req.body || {};
+  if (!Array.isArray(profiles) || !profiles.length)
+    return res.status(400).json({ error: 'profiles[] is required' });
+  const rows = profiles.map(bdToRow).filter(r => r.handle && r.platform);
+  if (!rows.length) return res.status(400).json({ error: 'No valid profiles to save' });
+  const { error, data } = await supabase
+    .from('brightdata_profiles')
+    .upsert(rows, { onConflict: 'handle,platform' })
+    .select('handle, platform');
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(200).json({ saved: data?.length ?? rows.length });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -76,10 +110,10 @@ export default async function handler(req, res) {
 
   if (!checkAuth(req, res)) return;
 
-  const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_KEY
-  );
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+  if ((req.body || {}).action === 'brightdata') {
+    return handleBrightDataSave(req, res, supabase);
+  }
 
   const { influencers } = req.body || {};
   if (!Array.isArray(influencers) || influencers.length === 0) {
