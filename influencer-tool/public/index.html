@@ -3799,7 +3799,7 @@ function renderBdTable(rows) {
       <td style="font-size:12px;text-align:center">${r.isVerified ? '<span style="color:var(--blue)">✓</span>' : '—'}</td>
       <td style="font-size:11px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.bio||'').replace(/"/g,"'")}">${(r.bio||'—').slice(0,90)}</td>
       <td style="font-size:11px;color:var(--muted)">${r.location || r.country || '—'}</td>
-      <td><span class="cov-badge found">✓ live</span></td>
+      <td>${r.followers ? '<span class="cov-badge found">✓ live</span>' : '<span class="cov-badge" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">unverified</span>'}</td>
     </tr>`).join('');
 }
 

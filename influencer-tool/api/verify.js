@@ -278,37 +278,44 @@ export default async function handler(req, res) {
 // Returns structured JSON with organic results (url, title, snippet).
 // Much faster than Web Unlocker page rendering (~2-4s vs 10-20s).
 
-// Fetch Google search results directly (no proxy) and parse organic links.
-// Google doesn't block server IPs for search. Returns [{url}] objects.
+// Fetch Google search results via BrightData Web Unlocker (bypasses CAPTCHA/IP blocks)
+// and parse the organic result URLs. Returns [{url}] objects.
+// BrightData on Google is typically 3-5s — fast enough within the 10s Vercel budget.
 async function bdSerpSearch(query) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 7000);
-  let resp;
-  try {
-    resp = await fetch(
-      `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20&hl=en&gl=gb`,
-      {
-        headers: {
-          'accept': 'text/html,application/xhtml+xml',
-          'accept-language': 'en-GB,en;q=0.9',
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-        signal: ctrl.signal,
-      }
-    );
-  } finally { clearTimeout(t); }
-
+  const resp = await bdFetch(
+    `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20&hl=en&gl=gb`,
+    {
+      'accept': 'text/html,application/xhtml+xml',
+      'accept-language': 'en-GB,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    8000
+  );
   if (!resp.ok) throw new Error(`Google search HTTP ${resp.status}`);
   const html = await resp.text();
 
-  // Extract all external hrefs — Google puts real URLs in href= before tracking params
+  // Google puts real destination URLs in href="/url?q=<encoded>" or direct href="https://..."
   const results = [];
-  const linkRe = /href="(https?:\/\/(?!google\.)[^"&]+)/gi;
+  const seen = new Set();
+
+  // Pattern 1: /url?q=https://... (standard Google result links)
+  const googleUrlRe = /\/url\?q=(https?:\/\/(?!google\.)[^&"]+)/gi;
   let m;
-  while ((m = linkRe.exec(html)) !== null) {
-    const u = m[1];
-    if (!results.find(r => r.url === u)) results.push({ url: u });
+  while ((m = googleUrlRe.exec(html)) !== null) {
+    const u = decodeURIComponent(m[1]);
+    if (!seen.has(u)) { seen.add(u); results.push({ url: u }); }
   }
+
+  // Pattern 2: direct href="https://..." for any missed links
+  if (results.length === 0) {
+    const directRe = /href="(https?:\/\/(?!(?:www\.)?google\.)[^"&]+)/gi;
+    while ((m = directRe.exec(html)) !== null) {
+      const u = m[1];
+      if (!seen.has(u)) { seen.add(u); results.push({ url: u }); }
+    }
+  }
+
+  console.log(`[serp] query="${query}" → ${results.length} links, sample: ${results[0]?.url || 'none'}`);
   return results;
 }
 
@@ -382,107 +389,62 @@ function extractXHandles(serpResults) {
 async function igHashtagSearch(keyword) {
   const serpQuery = `site:instagram.com "${keyword}" food london -/p/ -/reel/`;
   const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractIgHandles(links).slice(0, 10);
-
-  console.log(`[ig-search] query="${serpQuery}" links=${links.length} handles=${handles.join(',')}`);
+  const handles = extractIgHandles(links).slice(0, 15);
+  console.log(`[ig-search] links=${links.length} handles=${handles.join(',')}`);
 
   if (!handles.length) {
     return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
   }
 
-  const profiles = [];
-  const verifyResults = [];
-  for (const handle of handles.slice(0, 3)) {
-    const r = await verifyInstagram(handle);
-    verifyResults.push({ handle, ok: r.ok, reason: r.reason });
-    if (r.ok) {
-      profiles.push({
-        handle,
-        fullName:   r.fullName || '',
-        followers:  r.followers || '',
-        bio:        r.bio || '',
-        isVerified: !!(r.isVerified),
-        postCount:  r.postCount || '',
-        profileUrl: `https://www.instagram.com/${handle}/`,
-        rawPlatform: 'instagram',
-      });
-    }
-  }
-  return { profiles, debug: profiles.length === 0 ? { serpQuery, handles, verifyResults } : null };
+  // Return all handles as stub profiles — follower data shown as "—" until verified.
+  // This avoids chaining multiple BrightData calls which would exceed Vercel's 10s limit.
+  const profiles = handles.map(handle => ({
+    handle,
+    fullName:   '',
+    followers:  '',
+    bio:        '',
+    isVerified: false,
+    postCount:  '',
+    profileUrl: `https://www.instagram.com/${handle}/`,
+    rawPlatform: 'instagram',
+  }));
+  return { profiles };
 }
 
 async function ttHashtagSearch(keyword) {
-  const serpQuery = `site:tiktok.com "${keyword}" food london`;
+  const serpQuery = `site:tiktok.com "@" "${keyword}" food london`;
   const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractTtHandles(links).slice(0, 3);
-  if (!handles.length) return { profiles: [], debug: { serpQuery } };
-  const profiles = [];
-  for (const handle of handles) {
-    const r = await verifyTikTok(handle);
-    if (r.ok) {
-      profiles.push({
-        handle,
-        fullName:   r.fullName || '',
-        followers:  r.followers || '',
-        bio:        r.bio || '',
-        isVerified: !!(r.isVerified),
-        postCount:  r.postCount || '',
-        profileUrl: `https://www.tiktok.com/@${handle}`,
-        rawPlatform: 'tiktok',
-      });
-    }
-  }
-  return { profiles };
+  const handles = extractTtHandles(links).slice(0, 15);
+  console.log(`[tt-search] links=${links.length} handles=${handles.join(',')}`);
+  if (!handles.length) return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
+  return { profiles: handles.map(handle => ({
+    handle, fullName: '', followers: '', bio: '', isVerified: false, postCount: '',
+    profileUrl: `https://www.tiktok.com/@${handle}`, rawPlatform: 'tiktok',
+  })) };
 }
 
 async function ytKeywordSearch(keyword) {
   const serpQuery = `site:youtube.com "@" "${keyword}" food london channel`;
   const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractYtHandles(links).slice(0, 3);
-  if (!handles.length) return { profiles: [], debug: { serpQuery } };
-  const profiles = [];
-  for (const handle of handles) {
-    const r = await verifyYouTube(handle);
-    if (r.ok) {
-      profiles.push({
-        handle,
-        fullName:   r.fullName || '',
-        followers:  r.followers || '',
-        bio:        r.bio || '',
-        isVerified: !!(r.isVerified),
-        postCount:  r.postCount || '',
-        country:    r.country || '',
-        profileUrl: `https://www.youtube.com/@${handle}`,
-        rawPlatform: 'youtube',
-      });
-    }
-  }
-  return { profiles };
+  const handles = extractYtHandles(links).slice(0, 15);
+  console.log(`[yt-search] links=${links.length} handles=${handles.join(',')}`);
+  if (!handles.length) return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
+  return { profiles: handles.map(handle => ({
+    handle, fullName: '', followers: '', bio: '', isVerified: false, postCount: '',
+    profileUrl: `https://www.youtube.com/@${handle}`, rawPlatform: 'youtube',
+  })) };
 }
 
 async function xUserSearch(keyword) {
   const serpQuery = `site:x.com "${keyword}" food london -/status/`;
   const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractXHandles(links).slice(0, 3);
-  if (!handles.length) return { profiles: [], debug: { serpQuery } };
-  const profiles = [];
-  for (const handle of handles) {
-    const r = await verifyX(handle);
-    if (r.ok) {
-      profiles.push({
-        handle,
-        fullName:   r.fullName || '',
-        followers:  r.followers || '',
-        bio:        r.bio || '',
-        isVerified: !!(r.isVerified),
-        postCount:  r.postCount || '',
-        location:   r.location || '',
-        profileUrl: `https://x.com/${handle}`,
-        rawPlatform: 'x',
-      });
-    }
-  }
-  return { profiles };
+  const handles = extractXHandles(links).slice(0, 15);
+  console.log(`[x-search] links=${links.length} handles=${handles.join(',')}`);
+  if (!handles.length) return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
+  return { profiles: handles.map(handle => ({
+    handle, fullName: '', followers: '', bio: '', isVerified: false, postCount: '',
+    profileUrl: `https://x.com/${handle}`, rawPlatform: 'x',
+  })) };
 }
 
 async function handleBdSearch(req, res) {
