@@ -214,6 +214,9 @@ export default async function handler(req, res) {
   if ((req.body || {}).action === 'bd-search') {
     return handleBdSearch(req, res);
   }
+  if ((req.body || {}).action === 'bd-search-status') {
+    return handleBdSearchStatus(req, res);
+  }
 
   const { platform, handles } = req.body || {};
   const PLATFORMS = ['instagram', 'tiktok', 'youtube', 'x'];
@@ -264,7 +267,24 @@ export default async function handler(req, res) {
 // No timeout issues when running locally via `node devserver.mjs`.
 // On Vercel (10s limit) this will timeout — use locally for discovery.
 
-async function igHashtagSearch(keyword, sessionCookie) {
+// In-flight search progress, keyed by searchId.
+// Stored on globalThis so it survives devserver module re-imports.
+const searchProgress = globalThis.__searchProgress ||= new Map();
+if (!globalThis.__searchProgressCleanup) {
+  globalThis.__searchProgressCleanup = setInterval(() => {
+    const cutoff = Date.now() - 10 * 60 * 1000; // 10-minute TTL
+    for (const [id, p] of searchProgress) {
+      if (p.lastUpdate < cutoff) searchProgress.delete(id);
+    }
+  }, 60_000).unref?.();
+}
+
+function updateProgress(searchId, patch) {
+  const prev = searchProgress.get(searchId) || {};
+  searchProgress.set(searchId, { ...prev, ...patch, lastUpdate: Date.now() });
+}
+
+async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}) {
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
   if (!sessionCookie) {
@@ -309,6 +329,7 @@ async function igHashtagSearch(keyword, sessionCookie) {
   // Step 1: fetch hashtag top posts via web_info
   // Verified working: returns data.top.sections[].layout_content.medias[].media.user
   // user fields: pk, username, full_name, is_verified (no follower_count here)
+  onProgress({ phase: 'fetching-page', page: 1, current: 0, total: 0 });
   const infoResp = await igDirect(`https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`);
   const infoText = await infoResp.text();
   console.log(`[ig-search] web_info status=${infoResp.status} len=${infoText.length}`);
@@ -356,6 +377,7 @@ async function igHashtagSearch(keyword, sessionCookie) {
   const topRoot = infoJson?.data?.top || {};
   harvestSections(topRoot.sections);
   console.log(`[ig-search] page 1: ${userStubs.length} unique authors`);
+  onProgress({ phase: 'paginating', page: 1, current: userStubs.length, total: userStubs.length });
 
   // Pages 2+: paginate via /api/v1/tags/{tag}/sections/ POST
   // Cap at 5 pages (~150 authors) with 2-4s human-like delays between pages
@@ -365,6 +387,7 @@ async function igHashtagSearch(keyword, sessionCookie) {
   let moreAvailable = !!topRoot.more_available;
 
   for (let p = 2; p <= MAX_PAGES && moreAvailable && nextMaxId; p++) {
+    onProgress({ phase: 'fetching-page', page: p, current: userStubs.length, total: userStubs.length });
     await sleep(2000, 4000); // mimic scroll pause
     try {
       const body = new URLSearchParams({
@@ -389,6 +412,7 @@ async function igHashtagSearch(keyword, sessionCookie) {
       nextMaxId = j.next_max_id;
       nextPage = j.next_page;
       console.log(`[ig-search] page ${p}: +${added} new authors (total ${userStubs.length})`);
+      onProgress({ phase: 'paginating', page: p, current: userStubs.length, total: userStubs.length });
       if (added === 0) break; // no new uniques — stop early
     } catch (e) {
       console.log(`[ig-search] page ${p} error: ${e.message}, stopping`);
@@ -422,9 +446,11 @@ async function igHashtagSearch(keyword, sessionCookie) {
   }
 
   const profiles = [];
+  onProgress({ phase: 'enriching', current: 0, total: userStubs.length });
   for (let i = 0; i < userStubs.length; i++) {
     const result = await fetchProfile(userStubs[i]);
     if (result) profiles.push(result);
+    onProgress({ phase: 'enriching', current: i + 1, total: userStubs.length });
     if (i < userStubs.length - 1) await sleep(600, 1400);
     if ((i + 1) % 20 === 0) console.log(`[ig-search] enriched ${i + 1}/${userStubs.length}`);
   }
@@ -570,47 +596,59 @@ async function handleBdSearch(req, res) {
   if (!keyword || !keyword.trim()) return res.status(400).json({ error: 'keyword is required' });
 
   const kw = keyword.trim();
-  console.log(`[bd-search:${platform}] keyword="${kw}" hasCookie=${!!(sessionCookie)}`);
+  const searchId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  console.log(`[bd-search:${platform}] keyword="${kw}" hasCookie=${!!(sessionCookie)} searchId=${searchId}`);
 
-  let profiles = [];
-  let debug = null;
-  try {
-    let result;
-    if (platform === 'instagram') {
-      result = await igHashtagSearch(kw, sessionCookie || '');
-    } else if (platform === 'tiktok') {
-      result = await ttHashtagSearch(kw);
-    } else if (platform === 'youtube') {
-      result = await ytKeywordSearch(kw);
-    } else if (platform === 'x') {
-      result = await xUserSearch(kw);
-    }
-    if (Array.isArray(result)) {
-      profiles = result;
-    } else {
-      profiles = result?.profiles || [];
-      if (result?.debug) debug = result.debug;
-    }
-  } catch (e) {
-    console.error(`[bd-search:${platform}] error:`, e.message);
-    return res.status(502).json({ error: e.message });
-  }
-
-  // Deduplicate by handle
-  const seen = new Set();
-  profiles = profiles.filter(p => {
-    if (!p.handle || seen.has(p.handle.toLowerCase())) return false;
-    seen.add(p.handle.toLowerCase());
-    return true;
+  updateProgress(searchId, {
+    searchId, platform, keyword: kw,
+    phase: 'starting', current: 0, total: 0,
+    startedAt: Date.now(),
+    profiles: null, error: null,
   });
 
-  console.log(`[bd-search:${platform}] → ${profiles.length} profiles`);
+  // Return immediately with searchId — the actual work runs in background
+  res.status(200).json({ searchId });
 
-  if (profiles.length === 0) {
-    return res.status(200).json({ profiles: [], debug });
-  }
+  // Run search in background; client polls /api/verify with action=bd-search-status
+  (async () => {
+    try {
+      const onProgress = (patch) => updateProgress(searchId, patch);
+      let result;
+      if (platform === 'instagram') {
+        result = await igHashtagSearch(kw, sessionCookie || '', onProgress);
+      } else if (platform === 'tiktok') {
+        onProgress({ phase: 'searching', current: 0, total: 1 });
+        result = await ttHashtagSearch(kw);
+      } else if (platform === 'youtube') {
+        onProgress({ phase: 'searching', current: 0, total: 1 });
+        result = await ytKeywordSearch(kw);
+      } else if (platform === 'x') {
+        onProgress({ phase: 'searching', current: 0, total: 1 });
+        result = await xUserSearch(kw);
+      }
 
-  return res.status(200).json({ profiles });
+      let profiles = Array.isArray(result) ? result : (result?.profiles || []);
+      const seen = new Set();
+      profiles = profiles.filter(p => {
+        if (!p.handle || seen.has(p.handle.toLowerCase())) return false;
+        seen.add(p.handle.toLowerCase());
+        return true;
+      });
+      console.log(`[bd-search:${platform}] → ${profiles.length} profiles (searchId=${searchId})`);
+      updateProgress(searchId, { phase: 'complete', profiles, current: profiles.length, total: profiles.length });
+    } catch (e) {
+      console.error(`[bd-search:${platform}] error:`, e.message);
+      updateProgress(searchId, { phase: 'error', error: e.message });
+    }
+  })();
+}
+
+async function handleBdSearchStatus(req, res) {
+  const { searchId } = req.body || {};
+  if (!searchId) return res.status(400).json({ error: 'searchId is required' });
+  const p = searchProgress.get(searchId);
+  if (!p) return res.status(404).json({ error: 'searchId not found (may have expired)' });
+  return res.status(200).json(p);
 }
 
 // ── BrightData Web Scraper API ─────────────────────────────────────────────

@@ -3675,7 +3675,16 @@ function closeProfileCard() {
 
     <!-- Status bar -->
     <div id="bdStatusBar" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:12.5px;background:var(--surface);border:1px solid var(--border)">
-      <span id="bdStatusText"></span>
+      <div id="bdStatusText"></div>
+      <div id="bdProgressWrap" style="display:none;margin-top:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:11.5px;color:var(--muted)">
+          <span id="bdProgressLabel">—</span>
+          <span id="bdProgressEta">—</span>
+        </div>
+        <div style="width:100%;height:8px;background:var(--border);border-radius:4px;overflow:hidden">
+          <div id="bdProgressBar" style="height:100%;width:0%;background:var(--green);transition:width .3s ease"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Results table -->
@@ -3730,6 +3739,7 @@ function bdClear() {
   document.getElementById('bdTableWrap').style.display = 'none';
   document.getElementById('bdEmpty').style.display = '';
   document.getElementById('bdStatusBar').style.display = 'none';
+  document.getElementById('bdProgressWrap').style.display = 'none';
   document.getElementById('bdKeyword').value = '';
   document.getElementById('bdFltCount').textContent = '';
 }
@@ -3814,6 +3824,62 @@ function renderBdTable(rows) {
     </tr>`).join('');
 }
 
+function bdShowProgress(show) {
+  document.getElementById('bdProgressWrap').style.display = show ? '' : 'none';
+}
+
+function bdFormatTime(seconds) {
+  if (!isFinite(seconds) || seconds < 0) return '—';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}m ${s}s`;
+}
+
+function bdRenderProgress(status, startedAt) {
+  const { phase, current = 0, total = 0, page } = status || {};
+  const bar  = document.getElementById('bdProgressBar');
+  const lbl  = document.getElementById('bdProgressLabel');
+  const eta  = document.getElementById('bdProgressEta');
+  const elapsedSec = (Date.now() - startedAt) / 1000;
+
+  // Overall progress: pagination is ~25% of the work, enrichment ~75%
+  let frac = 0;
+  let label = '';
+  let etaText = '';
+
+  if (phase === 'starting' || phase === 'fetching-page' || phase === 'paginating') {
+    const pageNum = page || 1;
+    const maxPages = 5;
+    frac = 0.25 * Math.min(pageNum / maxPages, 1);
+    label = `Finding posts · page ${pageNum}/${maxPages} · ${current} authors so far`;
+    etaText = `elapsed ${bdFormatTime(elapsedSec)}`;
+  } else if (phase === 'enriching') {
+    const enrichFrac = total > 0 ? current / total : 0;
+    frac = 0.25 + 0.75 * enrichFrac;
+    label = `Enriching profiles · ${current}/${total}`;
+    if (current > 0) {
+      const totalEst = elapsedSec / frac;
+      const remaining = totalEst - elapsedSec;
+      etaText = `~${bdFormatTime(remaining)} remaining · elapsed ${bdFormatTime(elapsedSec)}`;
+    } else {
+      etaText = `elapsed ${bdFormatTime(elapsedSec)}`;
+    }
+  } else if (phase === 'searching') {
+    frac = 0.5;
+    label = `Searching ${bdPlatform}…`;
+    etaText = `elapsed ${bdFormatTime(elapsedSec)}`;
+  } else if (phase === 'complete') {
+    frac = 1;
+    label = `Done · ${current} profiles`;
+    etaText = `took ${bdFormatTime(elapsedSec)}`;
+  }
+
+  bar.style.width = `${Math.round(frac * 100)}%`;
+  lbl.textContent = label;
+  eta.textContent = etaText;
+}
+
 async function runBdSearch() {
   const keyword  = document.getElementById('bdKeyword').value.trim();
   bdPlatform     = document.getElementById('bdPlatformSel').value;
@@ -3825,32 +3891,68 @@ async function runBdSearch() {
   bdAllResults = [];
   document.getElementById('bdTableWrap').style.display = 'none';
   document.getElementById('bdEmpty').style.display = 'none';
-  setBdStatus(`Searching ${bdPlatform} for "${keyword}"… paginating + enriching profiles (~60-120s, human-paced to avoid rate limits)`, '');
+  setBdStatus(`Searching ${bdPlatform} for "${keyword}"… paginating + enriching profiles (human-paced to avoid rate limits)`, '');
+  bdShowProgress(true);
+  bdRenderProgress({ phase: 'starting', current: 0, total: 0 }, Date.now());
 
   try {
-    const resp = await fetch('/api/verify', {
+    // Step 1: start the search — backend returns a searchId immediately
+    const startResp = await fetch('/api/verify', {
       method: 'POST', headers: getApiHeaders(),
       body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookie: document.getElementById('bdSessionCookie')?.value?.trim() || '' }),
     });
-    const data = await resp.json();
-    if (!resp.ok || data.error) {
-      setBdStatus(`Error: ${data.error || resp.statusText}`, 'red');
+    const startData = await startResp.json();
+    if (!startResp.ok || startData.error || !startData.searchId) {
+      setBdStatus(`Error: ${startData.error || startResp.statusText}`, 'red');
+      bdShowProgress(false);
       document.getElementById('bdEmpty').style.display = '';
       return;
     }
-    bdAllResults = data.profiles || [];
-    if (!bdAllResults.length) {
-      setBdStatus('No profiles found. Try a different keyword or hashtag.', 'red');
-      document.getElementById('bdEmpty').style.display = '';
-      return;
+    const searchId = startData.searchId;
+    const startedAt = Date.now();
+
+    // Step 2: poll status every 1s until phase is 'complete' or 'error'
+    while (true) {
+      await new Promise(r => setTimeout(r, 1000));
+      const sResp = await fetch('/api/verify', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'bd-search-status', searchId }),
+      });
+      if (!sResp.ok) {
+        setBdStatus(`Status poll failed: ${sResp.statusText}`, 'red');
+        bdShowProgress(false);
+        return;
+      }
+      const status = await sResp.json();
+      bdRenderProgress(status, startedAt);
+
+      if (status.phase === 'error') {
+        setBdStatus(`Error: ${status.error}`, 'red');
+        bdShowProgress(false);
+        document.getElementById('bdEmpty').style.display = '';
+        return;
+      }
+      if (status.phase === 'complete') {
+        bdAllResults = status.profiles || [];
+        if (!bdAllResults.length) {
+          setBdStatus('No profiles found. Try a different keyword or hashtag.', 'red');
+          bdShowProgress(false);
+          document.getElementById('bdEmpty').style.display = '';
+          return;
+        }
+        const f = bdGetFilters();
+        const visible = bdAllResults.filter(r => bdPassesFilter(r, f));
+        document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
+        renderBdTable(visible);
+        setBdStatus(`Found ${bdAllResults.length} profiles — ${visible.length} match your filters.`, 'green');
+        // Keep progress bar visible at 100% for a moment, then hide
+        setTimeout(() => bdShowProgress(false), 2000);
+        return;
+      }
     }
-    const f = bdGetFilters();
-    const visible = bdAllResults.filter(r => bdPassesFilter(r, f));
-    document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
-    renderBdTable(visible);
-    setBdStatus(`Found ${bdAllResults.length} profiles — ${visible.length} match your filters.`, 'green');
   } catch (e) {
     setBdStatus(`Error: ${e.message}`, 'red');
+    bdShowProgress(false);
     document.getElementById('bdEmpty').style.display = '';
   } finally {
     btn.disabled = false;
