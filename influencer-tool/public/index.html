@@ -3616,8 +3616,8 @@ function closeProfileCard() {
           </select>
         </div>
         <div style="flex:1;min-width:200px">
-          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Hashtag or keyword</label>
-          <input type="text" id="bdKeyword" placeholder="e.g. eatlondon, london food, foodie"
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Hashtags or keywords <span style="font-weight:400;text-transform:none;color:var(--muted2)">— comma-separated runs them sequentially</span></label>
+          <input type="text" id="bdKeyword" placeholder="e.g. londonfood, londonfoodie, #wheretoeat"
             style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px"
             onkeydown="if(event.key==='Enter') runBdSearch()">
         </div>
@@ -3869,6 +3869,7 @@ const BD_FIELD_OPS = {
   bio:            [['contains', 'contains'], ['does not contain', 'does not contain']],
   location:       [['contains', 'contains'], ['does not contain', 'does not contain']],
   name:           [['contains', 'contains'], ['does not contain', 'does not contain']],
+  matchedKeyword: [['contains', 'contains'], ['does not contain', 'does not contain']],
   verified:       [['is', 'is'], ['is not', 'is not']],
 };
 
@@ -3881,6 +3882,7 @@ const BD_FIELD_LABELS = {
   bio:            'Bio',
   location:       'Location (bio)',
   name:           'Full name',
+  matchedKeyword: 'Matched keyword',
   verified:       'Verified',
 };
 
@@ -4062,9 +4064,10 @@ function bdEvaluateRule(p, rule) {
   }
   // Text fields
   let haystack = '';
-  if (field === 'bio')      haystack = p.bio || '';
-  if (field === 'name')     haystack = p.fullName || '';
-  if (field === 'location') haystack = `${p.location || ''} ${p.bio || ''}`;
+  if (field === 'bio')            haystack = p.bio || '';
+  if (field === 'name')           haystack = p.fullName || '';
+  if (field === 'location')       haystack = `${p.location || ''} ${p.bio || ''}`;
+  if (field === 'matchedKeyword') haystack = (p.matchedKeywords || []).join(' ');
   haystack = haystack.toLowerCase();
   const needle = String(value).toLowerCase().trim();
   if (op === 'contains')         return haystack.includes(needle);
@@ -4287,9 +4290,13 @@ function renderBdTable(rows) {
     const er = r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
     const tagPosts = r.hashtagPosts != null ? r.hashtagPosts : '—';
     const avgLikes = r.avgLikes != null ? bdFormatCompact(r.avgLikes) : '—';
+    const matchedChips = (r.matchedKeywords || []).length
+      ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${r.matchedKeywords.map(k =>
+          `<span style="display:inline-block;background:var(--green-bg);color:var(--green);padding:1px 6px;border-radius:8px;margin-right:3px">${k}</span>`).join('')}</div>`
+      : '';
     return `
     <tr>
-      <td>${handleHtml}</td>
+      <td>${handleHtml}${matchedChips}</td>
       <td style="font-size:12px">${r.fullName || '—'}</td>
       <td style="font-size:12px;font-weight:600">${r.followers || '—'}</td>
       <td style="font-size:12px">${r.postCount || '—'}</td>
@@ -4336,121 +4343,189 @@ function bdFormatTime(seconds) {
   return `${m}m ${s}s`;
 }
 
-function bdRenderProgress(status, startedAt) {
+// Render progress within a single keyword run. ctx provides the multi-keyword
+// context: { kwIdx, kwTotal, kwLabel, batchStartedAt } so we can show overall
+// progress across all keywords.
+function bdRenderProgress(status, startedAt, ctx = {}) {
   const { phase, current = 0, total = 0, page } = status || {};
   const bar  = document.getElementById('bdProgressBar');
   const lbl  = document.getElementById('bdProgressLabel');
   const eta  = document.getElementById('bdProgressEta');
   const elapsedSec = (Date.now() - startedAt) / 1000;
 
-  // Overall progress: pagination is ~25% of the work, enrichment ~75%
-  let frac = 0;
-  let label = '';
-  let etaText = '';
+  const kwIdx        = ctx.kwIdx ?? 0;
+  const kwTotal      = ctx.kwTotal ?? 1;
+  const kwLabel      = ctx.kwLabel || '';
+  const batchStartAt = ctx.batchStartedAt || startedAt;
+  const batchElapsed = (Date.now() - batchStartAt) / 1000;
 
+  // Within-keyword progress: pagination = 25%, enrichment = 75%
+  let innerFrac = 0;
+  let inner = '';
   if (phase === 'starting' || phase === 'fetching-page' || phase === 'paginating') {
     const pageNum = page || 1;
     const maxPages = 5;
-    frac = 0.25 * Math.min(pageNum / maxPages, 1);
-    label = `Finding posts · page ${pageNum}/${maxPages} · ${current} authors so far`;
-    etaText = `elapsed ${bdFormatTime(elapsedSec)}`;
+    innerFrac = 0.25 * Math.min(pageNum / maxPages, 1);
+    inner = `finding posts · page ${pageNum}/${maxPages} · ${current} authors`;
   } else if (phase === 'enriching') {
     const enrichFrac = total > 0 ? current / total : 0;
-    frac = 0.25 + 0.75 * enrichFrac;
-    label = `Enriching profiles · ${current}/${total}`;
-    if (current > 0) {
-      const totalEst = elapsedSec / frac;
-      const remaining = totalEst - elapsedSec;
-      etaText = `~${bdFormatTime(remaining)} remaining · elapsed ${bdFormatTime(elapsedSec)}`;
-    } else {
-      etaText = `elapsed ${bdFormatTime(elapsedSec)}`;
-    }
+    innerFrac = 0.25 + 0.75 * enrichFrac;
+    inner = `enriching profiles · ${current}/${total}`;
   } else if (phase === 'searching') {
-    frac = 0.5;
-    label = `Searching ${bdPlatform}…`;
-    etaText = `elapsed ${bdFormatTime(elapsedSec)}`;
+    innerFrac = 0.5;
+    inner = `searching ${bdPlatform}…`;
   } else if (phase === 'complete') {
-    frac = 1;
-    label = `Done · ${current} profiles`;
-    etaText = `took ${bdFormatTime(elapsedSec)}`;
+    innerFrac = 1;
+    inner = `done · ${current} profiles`;
   }
 
-  bar.style.width = `${Math.round(frac * 100)}%`;
+  // Overall bar fraction across the whole batch
+  const overallFrac = (kwIdx + innerFrac) / kwTotal;
+
+  const label = kwTotal > 1
+    ? `Keyword ${kwIdx + 1}/${kwTotal}: "${kwLabel}" — ${inner}`
+    : inner;
+
+  // ETA based on overall batch progress, not per-keyword
+  let etaText;
+  if (overallFrac > 0.02) {
+    const totalEst  = batchElapsed / overallFrac;
+    const remaining = totalEst - batchElapsed;
+    etaText = `~${bdFormatTime(remaining)} remaining · elapsed ${bdFormatTime(batchElapsed)}`;
+  } else {
+    etaText = `elapsed ${bdFormatTime(batchElapsed)}`;
+  }
+
+  bar.style.width = `${Math.round(overallFrac * 100)}%`;
   lbl.textContent = label;
   eta.textContent = etaText;
 }
 
+// Run a single keyword search to completion. Returns array of profiles or
+// throws on backend error. Updates progress bar via the supplied context.
+async function bdRunOneSearch(keyword, sessionCookie, ctx) {
+  const startResp = await fetch('/api/verify', {
+    method: 'POST', headers: getApiHeaders(),
+    body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookie }),
+  });
+  const startData = await startResp.json();
+  if (!startResp.ok || startData.error || !startData.searchId) {
+    throw new Error(startData.error || startResp.statusText);
+  }
+  const searchId  = startData.searchId;
+  const startedAt = Date.now();
+  while (true) {
+    await new Promise(r => setTimeout(r, 1000));
+    const sResp = await fetch('/api/verify', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'bd-search-status', searchId }),
+    });
+    if (!sResp.ok) throw new Error(`Status poll failed: ${sResp.statusText}`);
+    const status = await sResp.json();
+    bdRenderProgress(status, startedAt, ctx);
+    if (status.phase === 'error')    throw new Error(status.error);
+    if (status.phase === 'complete') return status.profiles || [];
+  }
+}
+
 async function runBdSearch() {
-  const keyword  = document.getElementById('bdKeyword').value.trim();
+  const rawInput = document.getElementById('bdKeyword').value.trim();
   bdPlatform     = document.getElementById('bdPlatformSel').value;
-  if (!keyword) { setBdStatus('Enter a hashtag or keyword first.', 'red'); return; }
+  if (!rawInput) { setBdStatus('Enter a hashtag or keyword first.', 'red'); return; }
+
+  // Parse comma-separated keywords, dedupe (case-insensitive), preserve order
+  const seen = new Set();
+  const keywords = [];
+  for (const raw of rawInput.split(',')) {
+    const kw = raw.trim();
+    if (!kw) continue;
+    const key = kw.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keywords.push(kw);
+  }
+  if (!keywords.length) { setBdStatus('Enter at least one valid keyword.', 'red'); return; }
 
   const btn = document.getElementById('bdRunBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Searching…';
   bdAllResults = [];
-  bdClearCachedResults(); // starting a new search invalidates the previous cache
+  bdClearCachedResults();
   document.getElementById('bdTableWrap').style.display = 'none';
   document.getElementById('bdEmpty').style.display = 'none';
-  setBdStatus(`Searching ${bdPlatform} for "${keyword}"… paginating + enriching profiles (human-paced to avoid rate limits)`, '');
   bdShowProgress(true);
-  bdRenderProgress({ phase: 'starting', current: 0, total: 0 }, Date.now());
+
+  const cookie = document.getElementById('bdSessionCookie')?.value?.trim() || '';
+  const batchStartedAt = Date.now();
+  const profileMap = new Map(); // handle (lowercased) → merged profile with matchedKeywords
+  const failedKeywords = [];
 
   try {
-    // Step 1: start the search — backend returns a searchId immediately
-    const startResp = await fetch('/api/verify', {
-      method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookie: document.getElementById('bdSessionCookie')?.value?.trim() || '' }),
-    });
-    const startData = await startResp.json();
-    if (!startResp.ok || startData.error || !startData.searchId) {
-      setBdStatus(`Error: ${startData.error || startResp.statusText}`, 'red');
+    for (let i = 0; i < keywords.length; i++) {
+      const kw = keywords[i];
+      const ctx = { kwIdx: i, kwTotal: keywords.length, kwLabel: kw, batchStartedAt };
+      setBdStatus(
+        keywords.length > 1
+          ? `Searching ${i + 1}/${keywords.length}: "${kw}"… (running keywords sequentially to avoid rate limits)`
+          : `Searching ${bdPlatform} for "${kw}"… paginating + enriching profiles`,
+        '',
+      );
+      bdRenderProgress({ phase: 'starting', current: 0, total: 0 }, Date.now(), ctx);
+
+      let profiles;
+      try {
+        profiles = await bdRunOneSearch(kw, cookie, ctx);
+      } catch (e) {
+        console.error(`Keyword "${kw}" failed:`, e.message);
+        failedKeywords.push({ keyword: kw, error: e.message });
+        continue; // skip this one, try the next
+      }
+
+      // Merge into the running map — dedupe by lowercase handle, accumulate matchedKeywords
+      for (const p of profiles) {
+        const key = (p.handle || '').toLowerCase();
+        if (!key) continue;
+        const existing = profileMap.get(key);
+        if (existing) {
+          const kws = new Set(existing.matchedKeywords || []);
+          kws.add(kw);
+          existing.matchedKeywords = [...kws];
+          // Aggregate hashtag-post engagement across keywords
+          existing.hashtagPosts = (existing.hashtagPosts || 0) + (p.hashtagPosts || 0);
+        } else {
+          profileMap.set(key, { ...p, matchedKeywords: [kw] });
+        }
+      }
+
+      // Live-update the table after each keyword so user can watch results grow
+      bdAllResults = Array.from(profileMap.values());
+      bdSetView('matching');
+      bdApplyFilters();
+    }
+
+    bdAllResults = Array.from(profileMap.values());
+    if (!bdAllResults.length) {
+      setBdStatus(
+        failedKeywords.length
+          ? `No profiles found. Failed keywords: ${failedKeywords.map(f => `"${f.keyword}"`).join(', ')}.`
+          : 'No profiles found. Try a different keyword or hashtag.',
+        'red',
+      );
       bdShowProgress(false);
       document.getElementById('bdEmpty').style.display = '';
       return;
     }
-    const searchId = startData.searchId;
-    const startedAt = Date.now();
 
-    // Step 2: poll status every 1s until phase is 'complete' or 'error'
-    while (true) {
-      await new Promise(r => setTimeout(r, 1000));
-      const sResp = await fetch('/api/verify', {
-        method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ action: 'bd-search-status', searchId }),
-      });
-      if (!sResp.ok) {
-        setBdStatus(`Status poll failed: ${sResp.statusText}`, 'red');
-        bdShowProgress(false);
-        return;
-      }
-      const status = await sResp.json();
-      bdRenderProgress(status, startedAt);
-
-      if (status.phase === 'error') {
-        setBdStatus(`Error: ${status.error}`, 'red');
-        bdShowProgress(false);
-        document.getElementById('bdEmpty').style.display = '';
-        return;
-      }
-      if (status.phase === 'complete') {
-        bdAllResults = status.profiles || [];
-        if (!bdAllResults.length) {
-          setBdStatus('No profiles found. Try a different keyword or hashtag.', 'red');
-          bdShowProgress(false);
-          document.getElementById('bdEmpty').style.display = '';
-          return;
-        }
-        bdSetView('matching');           // reset to matching on new completion
-        bdApplyFilters();                 // also updates the matching/excluded counts
-        const matchedCount = bdAllResults.filter(bdPassesFilters).length;
-        setBdStatus(`Found ${bdAllResults.length} profiles — ${matchedCount} match your filters.`, 'green');
-        bdSaveCachedResults(keyword, bdPlatform);
-        // Keep progress bar visible at 100% for a moment, then hide
-        setTimeout(() => bdShowProgress(false), 2000);
-        return;
-      }
-    }
+    bdSetView('matching');
+    bdApplyFilters();
+    const matchedCount = bdAllResults.filter(bdPassesFilters).length;
+    const tail = failedKeywords.length ? ` · ${failedKeywords.length} keyword(s) failed` : '';
+    setBdStatus(
+      `Found ${bdAllResults.length} unique profiles across ${keywords.length - failedKeywords.length}/${keywords.length} keywords — ${matchedCount} match your filters.${tail}`,
+      'green',
+    );
+    bdSaveCachedResults(keywords.join(', '), bdPlatform);
+    setTimeout(() => bdShowProgress(false), 2000);
   } catch (e) {
     setBdStatus(`Error: ${e.message}`, 'red');
     bdShowProgress(false);
