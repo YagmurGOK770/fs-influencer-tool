@@ -383,14 +383,18 @@ async function igHashtagSearch(keyword) {
   const serpQuery = `site:instagram.com "${keyword}" food london -/p/ -/reel/`;
   const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
   const handles = extractIgHandles(links).slice(0, 10);
+
+  console.log(`[ig-search] query="${serpQuery}" links=${links.length} handles=${handles.join(',')}`);
+
   if (!handles.length) {
-    return { profiles: [], debug: { serpQuery } };
+    return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
   }
 
-  // Verify each handle — cap at 3 to stay within Vercel's 10s budget
   const profiles = [];
+  const verifyResults = [];
   for (const handle of handles.slice(0, 3)) {
     const r = await verifyInstagram(handle);
+    verifyResults.push({ handle, ok: r.ok, reason: r.reason });
     if (r.ok) {
       profiles.push({
         handle,
@@ -404,7 +408,7 @@ async function igHashtagSearch(keyword) {
       });
     }
   }
-  return { profiles };
+  return { profiles, debug: profiles.length === 0 ? { serpQuery, handles, verifyResults } : null };
 }
 
 async function ttHashtagSearch(keyword) {

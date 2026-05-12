@@ -3828,8 +3828,12 @@ async function runBdSearch() {
       return;
     }
     bdAllResults = data.profiles || [];
-    if (!bdAllResults.length && data.debug) {
-      setBdStatus(`No profiles found. ${data.debug.htmlLength ? `Page length: ${data.debug.htmlLength} chars. ` : ''}${data.debug.htmlSnippet ? `Snippet: ${data.debug.htmlSnippet.slice(0,200)}` : ''}`, 'red');
+    if (!bdAllResults.length) {
+      const d = data.debug || {};
+      let msg = 'No profiles found.';
+      if (d.linkSample) msg += ` Google found ${d.linkSample.length} links, 0 handles extracted. Sample: ${d.linkSample[0] || 'none'}`;
+      if (d.handles?.length) msg += ` Handles found: ${d.handles.join(', ')}. Verify: ${(d.verifyResults||[]).map(v=>`${v.handle}=${v.reason||'ok'}`).join(', ')}`;
+      setBdStatus(msg, 'red');
       document.getElementById('bdEmpty').style.display = '';
       return;
     }
