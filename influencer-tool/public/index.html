@@ -3601,52 +3601,64 @@ function closeProfileCard() {
         <div class="cl-toolbar-title">BrightData Enrich</div>
         <div class="cl-toolbar-sub">Pull live profile data from Instagram, TikTok, YouTube and X via BrightData Web Scraper API</div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn-sm" onclick="loadEnrichTab()">↻ Refresh list</button>
-        <button class="btn-green" id="enrichRunBtn" onclick="runBrightDataEnrich()" disabled>▶ Enrich selected</button>
-      </div>
     </div>
 
-    <!-- Platform filter pills -->
-    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
-      <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Platform:</span>
-      <button class="cov-pill active" id="enrichPillAll" onclick="setEnrichPlatFilter('all')">All</button>
-      <button class="cov-pill" id="enrichPillIg"  onclick="setEnrichPlatFilter('ig')">Instagram</button>
-      <button class="cov-pill" id="enrichPillTt"  onclick="setEnrichPlatFilter('tt')">TikTok</button>
-      <button class="cov-pill" id="enrichPillYt"  onclick="setEnrichPlatFilter('yt')">YouTube</button>
-      <button class="cov-pill" id="enrichPillX"   onclick="setEnrichPlatFilter('x')">X / Twitter</button>
-      <span style="margin-left:auto;font-size:12px;color:var(--muted)" id="enrichSelCount">0 selected</span>
-      <button class="btn-sm" onclick="enrichSelectAll()">Select all visible</button>
-      <button class="btn-sm" onclick="enrichSelectNone()">Clear</button>
+    <!-- Input panel -->
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1.25rem;margin-bottom:18px;box-shadow:var(--shadow-sm)">
+      <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Platform</label>
+          <select id="enrichPlatformSel" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--white)">
+            <option value="instagram">Instagram</option>
+            <option value="tiktok">TikTok</option>
+            <option value="youtube">YouTube</option>
+            <option value="x">X / Twitter</option>
+          </select>
+        </div>
+        <div style="flex:3;min-width:280px">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Handles <span style="font-weight:400;text-transform:none">(one per line, @ optional)</span></label>
+          <textarea id="enrichHandlesInput" rows="4" placeholder="foodie_london&#10;londonbites&#10;@eatwithem"
+            style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical"></textarea>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:22px">
+          <button class="btn-green" id="enrichRunBtn" onclick="runBrightDataEnrich()">▶ Run BrightData query</button>
+          <button class="btn-sm" onclick="enrichClear()">✕ Clear results</button>
+        </div>
+      </div>
     </div>
 
     <!-- Status bar -->
     <div id="enrichStatusBar" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:12.5px;background:var(--surface);border:1px solid var(--border)">
-      <span id="enrichStatusText">Idle</span>
+      <span id="enrichStatusText"></span>
     </div>
 
-    <!-- Results table -->
-    <div class="table-wrap" style="max-height:65vh">
-      <table class="cov-table" id="enrichTable">
-        <thead>
-          <tr>
-            <th style="width:32px"><input type="checkbox" id="enrichCheckAll" onchange="enrichToggleAll(this.checked)"></th>
-            <th>Handle</th>
-            <th>Name</th>
-            <th>Platform</th>
-            <th>IG Followers</th>
-            <th>TT Followers</th>
-            <th>YT Subscribers</th>
-            <th>X Followers</th>
-            <th>Post Count</th>
-            <th>Bio</th>
-            <th>BD Status</th>
-          </tr>
-        </thead>
-        <tbody id="enrichTbody">
-          <tr><td colspan="11" style="padding:2rem;text-align:center;color:var(--muted)">Loading…</td></tr>
-        </tbody>
-      </table>
+    <!-- Results table — hidden until first run -->
+    <div id="enrichTableWrap" style="display:none">
+      <div class="table-wrap" style="max-height:65vh">
+        <table class="cov-table">
+          <thead>
+            <tr>
+              <th>Handle</th>
+              <th>Full Name</th>
+              <th>Followers</th>
+              <th>Posts</th>
+              <th>Verified</th>
+              <th>Bio</th>
+              <th>Location / Country</th>
+              <th>Engagement</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="enrichTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Empty state -->
+    <div id="enrichEmpty" style="padding:3rem;text-align:center;color:var(--muted)">
+      <div style="font-size:2rem;margin-bottom:10px">📡</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px">No data yet</div>
+      <div style="font-size:12.5px">Enter handles above and click <strong>Run BrightData query</strong> to fetch live profile data.</div>
     </div>
 
   </div>
@@ -3655,106 +3667,19 @@ function closeProfileCard() {
 <script>
 // ── BrightData Enrich tab ─────────────────────────────────────────────────
 
-let enrichData = [];        // all influencers loaded
-let enrichPlatFilter = 'all';
-let enrichJobMap = {};      // handle → { status, result }
+let enrichResults = []; // { handle, platform, status, data, error }
 
-function setEnrichPlatFilter(f) {
-  enrichPlatFilter = f;
-  ['all','ig','tt','yt','x'].forEach(p => {
-    document.getElementById('enrichPill' + p.charAt(0).toUpperCase() + p.slice(1))
-      ?.classList.toggle('active', p === f);
-  });
-  renderEnrichTable();
+function loadEnrichTab() {
+  // Tab is input-driven — nothing to load on open
 }
 
-function enrichSelectAll() {
-  visibleEnrichRows().forEach(inf => inf._enrichSel = true);
-  renderEnrichTable();
-  updateEnrichSelCount();
-}
-function enrichSelectNone() {
-  enrichData.forEach(inf => inf._enrichSel = false);
-  renderEnrichTable();
-  updateEnrichSelCount();
-}
-function enrichToggleAll(checked) {
-  visibleEnrichRows().forEach(inf => inf._enrichSel = checked);
-  renderEnrichTable();
-  updateEnrichSelCount();
-}
-
-function visibleEnrichRows() {
-  return enrichData.filter(inf => {
-    if (enrichPlatFilter === 'ig') return !!inf.igHandle;
-    if (enrichPlatFilter === 'tt') return !!inf.ttHandle;
-    if (enrichPlatFilter === 'yt') return !!inf.ytHandle;
-    if (enrichPlatFilter === 'x')  return !!inf.xHandle;
-    return true;
-  });
-}
-
-function updateEnrichSelCount() {
-  const n = enrichData.filter(i => i._enrichSel).length;
-  document.getElementById('enrichSelCount').textContent = `${n} selected`;
-  document.getElementById('enrichRunBtn').disabled = n === 0;
-}
-
-async function loadEnrichTab() {
-  const tbody = document.getElementById('enrichTbody');
-  tbody.innerHTML = '<tr><td colspan="11" style="padding:2rem;text-align:center;color:var(--muted)">Loading…</td></tr>';
-  try {
-    const resp = await fetch('/api/db-load', { headers: getApiHeaders() });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const data = await resp.json();
-    enrichData = (data.influencers || []).map(inf => ({ ...inf, _enrichSel: false }));
-    renderEnrichTable();
-  } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="11" style="padding:2rem;color:var(--red)">${e.message}</td></tr>`;
-  }
-}
-
-function bdStatusBadge(inf) {
-  const job = enrichJobMap[inf.handle];
-  if (!job) return inf.followerVerified
-    ? '<span class="cov-badge found">verified</span>'
-    : '<span style="font-size:11px;color:var(--muted)">—</span>';
-  if (job.status === 'running')   return '<span class="cov-badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a">⏳ running</span>';
-  if (job.status === 'done')      return '<span class="cov-badge found">✓ enriched</span>';
-  if (job.status === 'error')     return `<span class="cov-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca" title="${job.error || ''}">✗ failed</span>`;
-  return '<span style="font-size:11px;color:var(--muted)">—</span>';
-}
-
-function renderEnrichTable() {
-  const rows = visibleEnrichRows();
-  const tbody = document.getElementById('enrichTbody');
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="padding:2rem;text-align:center;color:var(--muted)">No influencers found.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map((inf, i) => `
-    <tr style="${inf._enrichSel ? 'background:var(--green-bg)' : ''}">
-      <td style="text-align:center"><input type="checkbox" ${inf._enrichSel ? 'checked' : ''} onchange="enrichToggleRow(${enrichData.indexOf(inf)}, this.checked)"></td>
-      <td style="font-weight:600;font-size:12px">${inf.handle || '—'}</td>
-      <td style="font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${inf.name || '—'}</td>
-      <td style="font-size:11px;color:var(--muted)">${inf.platform || '—'}</td>
-      <td style="font-size:12px">${inf.igFollowers || '—'}</td>
-      <td style="font-size:12px">${inf.ttFollowers || '—'}</td>
-      <td style="font-size:12px">${inf.ytFollowers || '—'}</td>
-      <td style="font-size:12px">${inf.xFollowers  || '—'}</td>
-      <td style="font-size:12px">${inf.postCount   || '—'}</td>
-      <td style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(inf.whoTheyAre||'').replace(/"/g,"'")}">
-        ${(enrichJobMap[inf.handle]?.result?.bio || inf.whoTheyAre || '—').slice(0,60)}
-      </td>
-      <td>${bdStatusBadge(inf)}</td>
-    </tr>`).join('');
-  updateEnrichSelCount();
-}
-
-function enrichToggleRow(idx, checked) {
-  if (enrichData[idx]) enrichData[idx]._enrichSel = checked;
-  updateEnrichSelCount();
-  renderEnrichTable();
+function enrichClear() {
+  enrichResults = [];
+  document.getElementById('enrichTbody').innerHTML = '';
+  document.getElementById('enrichTableWrap').style.display = 'none';
+  document.getElementById('enrichEmpty').style.display = '';
+  document.getElementById('enrichStatusBar').style.display = 'none';
+  document.getElementById('enrichHandlesInput').value = '';
 }
 
 function setEnrichStatus(msg, color) {
@@ -3767,27 +3692,55 @@ function setEnrichStatus(msg, color) {
   txt.textContent = msg;
 }
 
+function renderEnrichResults() {
+  const tbody = document.getElementById('enrichTbody');
+  const wrap  = document.getElementById('enrichTableWrap');
+  const empty = document.getElementById('enrichEmpty');
+  if (!enrichResults.length) { wrap.style.display = 'none'; empty.style.display = ''; return; }
+  wrap.style.display = '';
+  empty.style.display = 'none';
+  tbody.innerHTML = enrichResults.map(r => {
+    if (r.status === 'running') return `
+      <tr>
+        <td style="font-weight:600;font-size:12px">${r.handle}</td>
+        <td colspan="7" style="color:var(--muted);font-size:12px">Fetching…</td>
+        <td><span class="cov-badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a">⏳ running</span></td>
+      </tr>`;
+    if (r.status === 'error') return `
+      <tr>
+        <td style="font-weight:600;font-size:12px">${r.handle}</td>
+        <td colspan="7" style="color:var(--red);font-size:12px">${r.error || 'Failed'}</td>
+        <td><span class="cov-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca">✗ failed</span></td>
+      </tr>`;
+    const d = r.data;
+    return `
+      <tr>
+        <td style="font-weight:600;font-size:12px">${d.handle || r.handle}</td>
+        <td style="font-size:12px">${d.fullName || '—'}</td>
+        <td style="font-size:12px">${d.followers || '—'}</td>
+        <td style="font-size:12px">${d.postCount || '—'}</td>
+        <td style="font-size:12px;text-align:center">${d.isVerified ? '✓' : '—'}</td>
+        <td style="font-size:11px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(d.bio||'').replace(/"/g,"'")}">${(d.bio||'—').slice(0,80)}</td>
+        <td style="font-size:11px;color:var(--muted)">${d.location || d.country || '—'}</td>
+        <td style="font-size:12px">${d.engagementRate != null ? d.engagementRate + '%' : '—'}</td>
+        <td><span class="cov-badge found">✓ enriched</span></td>
+      </tr>`;
+  }).join('');
+}
+
 async function runBrightDataEnrich() {
-  const selected = enrichData.filter(i => i._enrichSel);
-  if (!selected.length) return;
+  const platform = document.getElementById('enrichPlatformSel').value;
+  const raw = document.getElementById('enrichHandlesInput').value;
+  const handles = raw.split('\n').map(h => h.trim().replace(/^@/, '')).filter(Boolean);
+  if (!handles.length) { setEnrichStatus('Enter at least one handle.', 'red'); return; }
 
   const btn = document.getElementById('enrichRunBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Running…';
 
-  // Group handles by platform
-  const byPlatform = { instagram: [], tiktok: [], youtube: [], x: [] };
-  for (const inf of selected) {
-    if (inf.igHandle) byPlatform.instagram.push({ handle: inf.handle, profile: inf.igHandle });
-    if (inf.ttHandle) byPlatform.tiktok.push(   { handle: inf.handle, profile: inf.ttHandle });
-    if (inf.ytHandle) byPlatform.youtube.push(   { handle: inf.handle, profile: inf.ytHandle });
-    if (inf.xHandle)  byPlatform.x.push(         { handle: inf.handle, profile: inf.xHandle  });
-  }
-
-  // Mark all as running
-  selected.forEach(inf => { enrichJobMap[inf.handle] = { status: 'running' }; });
-  renderEnrichTable();
-  setEnrichStatus(`Submitting ${selected.length} profiles to BrightData…`, '');
+  enrichResults = handles.map(h => ({ handle: h, platform, status: 'running' }));
+  renderEnrichResults();
+  setEnrichStatus(`Querying BrightData for ${handles.length} ${platform} profile${handles.length > 1 ? 's' : ''}…`, '');
 
   let totalDone = 0, totalFailed = 0;
 
@@ -3824,58 +3777,54 @@ async function runBrightDataEnrich() {
             if (platform === 'instagram') {
               if (r.followers)  { inf.igFollowers = r.followers; inf.followers = r.followers; }
               if (r.fullName && !inf.name) inf.name = r.fullName;
-              if (r.bio)        inf.whoTheyAre = r.bio.slice(0, 120);
-              if (r.postCount)  inf.postCount = r.postCount;
-              if (r.isPrivate !== undefined) inf.isPrivate = r.isPrivate;
-              if (r.isVerified !== undefined) inf.isVerified = r.isVerified;
-            } else if (platform === 'tiktok') {
-              if (r.followers)  { inf.ttFollowers = r.followers; if (!inf.igHandle) inf.followers = r.followers; }
-              if (r.fullName && !inf.name) inf.name = r.fullName;
-              if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
-            } else if (platform === 'youtube') {
-              if (r.followers)  { inf.ytFollowers = r.followers; if (!inf.igHandle && !inf.ttHandle) inf.followers = r.followers; }
-              if (r.fullName && !inf.name) inf.name = r.fullName;
-              if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
-            } else if (platform === 'x') {
-              if (r.followers)  { inf.xFollowers = r.followers; if (!inf.igHandle && !inf.ttHandle && !inf.ytHandle) inf.followers = r.followers; }
-              if (r.fullName && !inf.name) inf.name = r.fullName;
-              if (r.bio && !inf.whoTheyAre) inf.whoTheyAre = r.bio.slice(0, 120);
-            }
-            inf.followerVerified = true;
-          }
-          totalDone++;
-        }
-      }
-      renderEnrichTable();
-    } catch (e) {
-      entries.forEach(en => { enrichJobMap[en.handle] = { status: 'error', error: e.message }; });
-      totalFailed += entries.length;
-      renderEnrichTable();
+  try {
+    const resp = await fetch('/api/verify', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'brightdata', platform, profiles: handles }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) {
+      enrichResults.forEach(r => { r.status = 'error'; r.error = data.error || 'Request failed'; });
+      setEnrichStatus(`BrightData error: ${data.error || resp.statusText}`, 'red');
+      renderEnrichResults();
+      return;
     }
-  }
-
-  setEnrichStatus(`Done — ${totalDone} enriched, ${totalFailed} failed. Save to DB to persist.`, totalFailed ? '' : 'green');
-  btn.disabled = false;
-  btn.textContent = '▶ Enrich selected';
-
-  // Save enriched profiles to the dedicated brightdata_profiles table
-  if (totalDone > 0) {
-    const enrichedProfiles = [];
-    for (const inf of enrichData) {
-      const job = enrichJobMap[inf.handle];
-      if (job?.status === 'done' && job.result) {
-        enrichedProfiles.push({ ...job.result, handle: job.result.handle || inf.handle });
+    const results = data.results || {};
+    let done = 0, failed = 0;
+    for (const r of enrichResults) {
+      const res = results[r.handle] || results['@' + r.handle];
+      if (!res || res.error) {
+        r.status = 'error';
+        r.error = res?.error || 'No data returned';
+        failed++;
+      } else {
+        r.status = 'done';
+        r.data = res;
+        done++;
       }
     }
-    try {
-      const saveResp = await fetch('/api/db-save', {
-        method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ action: 'brightdata', profiles: enrichedProfiles }),
-      });
-      const saveData = await saveResp.json();
-      if (saveResp.ok) setEnrichStatus(`Done — ${totalDone} enriched & saved to BrightData table (${saveData.saved} records). ${totalFailed ? totalFailed + ' failed.' : ''}`, 'green');
-      else setEnrichStatus(`Enriched ${totalDone} profiles but save failed: ${saveData.error}`, '');
-    } catch (_) { /* save failure is non-critical */ }
+    renderEnrichResults();
+    setEnrichStatus(`Done — ${done} enriched${failed ? ', ' + failed + ' failed' : ''}. Results saved to BrightData table.`, failed ? '' : 'green');
+
+    // Save to brightdata_profiles table
+    const toSave = enrichResults.filter(r => r.status === 'done').map(r => ({ ...r.data, rawPlatform: platform }));
+    if (toSave.length) {
+      try {
+        const saveResp = await fetch('/api/db-save', {
+          method: 'POST', headers: getApiHeaders(),
+          body: JSON.stringify({ action: 'brightdata', profiles: toSave }),
+        });
+        const saveData = await saveResp.json();
+        if (!saveResp.ok) console.warn('BD save failed:', saveData.error);
+      } catch (_) {}
+    }
+  } catch (e) {
+    enrichResults.forEach(r => { r.status = 'error'; r.error = e.message; });
+    renderEnrichResults();
+    setEnrichStatus(`Error: ${e.message}`, 'red');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '▶ Run BrightData query';
   }
 }
 </script>
