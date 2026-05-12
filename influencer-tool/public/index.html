@@ -3632,6 +3632,47 @@ function closeProfileCard() {
       <span id="enrichStatusText"></span>
     </div>
 
+    <!-- Filters — shown after first run -->
+    <div id="enrichFilters" style="display:none;background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Filter results</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Min followers</label>
+          <input type="number" id="enrichFltMinF" placeholder="e.g. 10000" min="0"
+            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="applyEnrichFilters()">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Max followers</label>
+          <input type="number" id="enrichFltMaxF" placeholder="e.g. 500000" min="0"
+            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="applyEnrichFilters()">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Bio keyword</label>
+          <input type="text" id="enrichFltBio" placeholder="e.g. food, london"
+            style="width:160px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="applyEnrichFilters()">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Location</label>
+          <input type="text" id="enrichFltLoc" placeholder="e.g. London, UK"
+            style="width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="applyEnrichFilters()">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
+          <input type="checkbox" id="enrichFltVerified" onchange="applyEnrichFilters()">
+          <label for="enrichFltVerified" style="font-size:12px;cursor:pointer">Verified only</label>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
+          <input type="checkbox" id="enrichFltSuccessOnly" onchange="applyEnrichFilters()" checked>
+          <label for="enrichFltSuccessOnly" style="font-size:12px;cursor:pointer">Hide failed</label>
+        </div>
+        <button class="btn-sm" onclick="resetEnrichFilters()">Reset filters</button>
+        <span id="enrichFltCount" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
+      </div>
+    </div>
+
     <!-- Results table — hidden until first run -->
     <div id="enrichTableWrap" style="display:none">
       <div class="table-wrap" style="max-height:65vh">
@@ -3692,14 +3733,77 @@ function setEnrichStatus(msg, color) {
   txt.textContent = msg;
 }
 
+function parseFollowers(val) {
+  if (!val) return 0;
+  const s = String(val).replace(/,/g, '').trim().toUpperCase();
+  if (s.endsWith('M')) return parseFloat(s) * 1_000_000;
+  if (s.endsWith('K')) return parseFloat(s) * 1_000;
+  return parseFloat(s) || 0;
+}
+
+function getEnrichFilters() {
+  return {
+    minF:        parseFollowers(document.getElementById('enrichFltMinF')?.value),
+    maxF:        parseFollowers(document.getElementById('enrichFltMaxF')?.value) || Infinity,
+    bio:         (document.getElementById('enrichFltBio')?.value || '').toLowerCase().trim(),
+    loc:         (document.getElementById('enrichFltLoc')?.value || '').toLowerCase().trim(),
+    verifiedOnly: document.getElementById('enrichFltVerified')?.checked,
+    successOnly:  document.getElementById('enrichFltSuccessOnly')?.checked,
+  };
+}
+
+function rowPassesFilter(r, f) {
+  if (r.status === 'running') return true;
+  if (r.status === 'error') return !f.successOnly;
+  const d = r.data;
+  const followers = parseFollowers(d.followers);
+  if (followers < f.minF) return false;
+  if (followers > f.maxF) return false;
+  if (f.verifiedOnly && !d.isVerified) return false;
+  if (f.bio && !(d.bio || '').toLowerCase().includes(f.bio)) return false;
+  if (f.loc) {
+    const loc = ((d.location || '') + ' ' + (d.country || '')).toLowerCase();
+    if (!loc.includes(f.loc)) return false;
+  }
+  return true;
+}
+
+function applyEnrichFilters() { renderEnrichResults(); }
+
+function resetEnrichFilters() {
+  document.getElementById('enrichFltMinF').value = '';
+  document.getElementById('enrichFltMaxF').value = '';
+  document.getElementById('enrichFltBio').value = '';
+  document.getElementById('enrichFltLoc').value = '';
+  document.getElementById('enrichFltVerified').checked = false;
+  document.getElementById('enrichFltSuccessOnly').checked = true;
+  renderEnrichResults();
+}
+
 function renderEnrichResults() {
-  const tbody = document.getElementById('enrichTbody');
-  const wrap  = document.getElementById('enrichTableWrap');
-  const empty = document.getElementById('enrichEmpty');
-  if (!enrichResults.length) { wrap.style.display = 'none'; empty.style.display = ''; return; }
+  const tbody   = document.getElementById('enrichTbody');
+  const wrap    = document.getElementById('enrichTableWrap');
+  const empty   = document.getElementById('enrichEmpty');
+  const filters = document.getElementById('enrichFilters');
+  if (!enrichResults.length) {
+    wrap.style.display = 'none';
+    empty.style.display = '';
+    if (filters) filters.style.display = 'none';
+    return;
+  }
   wrap.style.display = '';
   empty.style.display = 'none';
-  tbody.innerHTML = enrichResults.map(r => {
+
+  const f = getEnrichFilters();
+  const visible = enrichResults.filter(r => rowPassesFilter(r, f));
+  const done = enrichResults.filter(r => r.status === 'done').length;
+
+  // Show filters once we have results
+  if (filters && done > 0) filters.style.display = '';
+  const countEl = document.getElementById('enrichFltCount');
+  if (countEl) countEl.textContent = `Showing ${visible.length} of ${enrichResults.length}`;
+
+  tbody.innerHTML = visible.map(r => {
     if (r.status === 'running') return `
       <tr>
         <td style="font-weight:600;font-size:12px">${r.handle}</td>
@@ -3725,7 +3829,7 @@ function renderEnrichResults() {
         <td style="font-size:12px">${d.engagementRate != null ? d.engagementRate + '%' : '—'}</td>
         <td><span class="cov-badge found">✓ enriched</span></td>
       </tr>`;
-  }).join('');
+  }).join('') || '<tr><td colspan="9" style="padding:1.5rem;text-align:center;color:var(--muted)">No results match the current filters.</td></tr>';
 }
 
 async function runBrightDataEnrich() {
