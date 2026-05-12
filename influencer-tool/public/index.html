@@ -4064,8 +4064,7 @@ async function runBdSearch() {
           document.getElementById('bdEmpty').style.display = '';
           return;
         }
-        const f = bdGetFilters();
-        const visible = bdAllResults.filter(r => bdPassesFilter(r, f));
+        const visible = bdAllResults.filter(bdPassesFilters);
         document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
         renderBdTable(visible);
         setBdStatus(`Found ${bdAllResults.length} profiles — ${visible.length} match your filters.`, 'green');
@@ -4085,8 +4084,7 @@ async function runBdSearch() {
 }
 
 async function bdSaveFiltered() {
-  const f = bdGetFilters();
-  const toSave = bdAllResults.filter(r => bdPassesFilter(r, f)).map(r => ({ ...r, rawPlatform: bdPlatform }));
+  const toSave = bdAllResults.filter(bdPassesFilters).map(r => ({ ...r, rawPlatform: bdPlatform }));
   if (!toSave.length) { setBdStatus('No filtered profiles to save.', 'red'); return; }
   const btn = document.getElementById('bdSaveBtn');
   btn.disabled = true;
