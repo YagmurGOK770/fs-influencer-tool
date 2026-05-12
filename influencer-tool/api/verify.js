@@ -267,104 +267,90 @@ export default async function handler(req, res) {
 async function igHashtagSearch(keyword) {
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
-  // Step 1: resolve hashtag → ID via public search endpoint
-  const searchResp = await bdFetch(
-    `https://www.instagram.com/api/v1/tags/search/?q=${encodeURIComponent(tag)}`,
+  // Use Instagram's public account search — works without a session through BrightData.
+  // Same endpoint pattern as web_profile_info which already works for verify.
+  // Searches accounts by name/username — great for "londonfood", "london food blogger" etc.
+  const resp = await bdFetch(
+    `https://www.instagram.com/api/v1/users/search/?q=${encodeURIComponent(tag)}&count=30`,
     {
       'x-ig-app-id': '936619743392459',
       'accept': 'application/json, text/plain, */*',
       'accept-language': 'en-US,en;q=0.9',
       'referer': 'https://www.instagram.com/',
     },
-    30000
+    45000
   );
-  if (!searchResp.ok) throw new Error(`Instagram tag search HTTP ${searchResp.status}`);
-  const searchJson = await searchResp.json();
-  const tagObj = (searchJson.results || []).find(r => r.name?.toLowerCase() === tag) || searchJson.results?.[0];
-  if (!tagObj?.id) throw new Error(`Hashtag #${tag} not found on Instagram`);
 
-  // Step 2: fetch recent + top posts for this tag → collect unique authors
-  const [recentResp, topResp] = await Promise.all([
-    bdFetch(
-      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=recent`,
-      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/` },
-      30000
-    ),
-    bdFetch(
-      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=top`,
-      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/` },
-      30000
-    ),
-  ]);
+  const text = await resp.text();
+  console.log(`[ig-search] status=${resp.status} len=${text.length} snippet=${text.slice(0,200)}`);
 
-  const recentJson = recentResp.ok ? await recentResp.json().catch(() => ({})) : {};
-  const topJson    = topResp.ok   ? await topResp.json().catch(() => ({}))    : {};
-  const allItems   = [...(recentJson.items || []), ...(topJson.items || [])];
+  if (!resp.ok) throw new Error(`Instagram user search HTTP ${resp.status}: ${text.slice(0,200)}`);
 
-  const seen = new Set();
+  let json;
+  try { json = JSON.parse(text); }
+  catch (_) { throw new Error(`Instagram returned non-JSON (status ${resp.status}): ${text.slice(0,150)}`); }
+
+  const users = json?.users || json?.accounts || [];
   const profiles = [];
-  for (const item of allItems) {
-    const u = item.user || item.owner;
-    if (!u?.username || seen.has(u.username)) continue;
-    seen.add(u.username);
+  for (const u of users) {
+    const user = u.user || u;
+    if (!user.username) continue;
     profiles.push({
-      handle:     u.username,
-      fullName:   u.full_name || '',
-      followers:  String(u.follower_count ?? u.edge_followed_by?.count ?? ''),
-      bio:        u.biography || '',
-      isVerified: !!(u.is_verified),
-      postCount:  String(u.media_count ?? u.edge_owner_to_timeline_media?.count ?? ''),
-      profileUrl: `https://www.instagram.com/${u.username}/`,
+      handle:     user.username,
+      fullName:   user.full_name || '',
+      followers:  String(user.follower_count ?? ''),
+      bio:        user.biography || '',
+      isVerified: !!(user.is_verified),
+      postCount:  String(user.media_count ?? ''),
+      profileUrl: `https://www.instagram.com/${user.username}/`,
       rawPlatform: 'instagram',
     });
   }
-  console.log(`[ig-search] #${tag} → ${profiles.length} authors from ${allItems.length} posts`);
+  console.log(`[ig-search] "${tag}" → ${profiles.length} accounts`);
   return profiles;
 }
 
 async function ttHashtagSearch(keyword) {
   const tag = keyword.replace(/^#/, '').trim();
 
-  // Step 1: resolve hashtag → challenge ID
-  const challengeResp = await bdFetch(
-    `https://www.tiktok.com/api/challenge/detail/?challengeName=${encodeURIComponent(tag)}&aid=1988&app_language=en`,
-    { 'accept': 'application/json, text/plain, */*', 'referer': 'https://www.tiktok.com/' },
-    30000
+  // TikTok public user search — works without session through BrightData
+  const resp = await bdFetch(
+    `https://www.tiktok.com/api/search/user/full/?keyword=${encodeURIComponent(tag)}&count=30&cursor=0&aid=1988&app_language=en`,
+    {
+      'accept': 'application/json, text/plain, */*',
+      'referer': 'https://www.tiktok.com/',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    45000
   );
-  if (!challengeResp.ok) throw new Error(`TikTok challenge lookup HTTP ${challengeResp.status}`);
-  const challengeJson = await challengeResp.json();
-  const challengeId = challengeJson?.challengeInfo?.challenge?.id;
-  if (!challengeId) throw new Error(`Hashtag #${tag} not found on TikTok`);
 
-  // Step 2: fetch videos for this challenge → collect unique authors
-  const feedResp = await bdFetch(
-    `https://www.tiktok.com/api/challenge/item_list/?challengeID=${challengeId}&count=30&cursor=0&aid=1988&app_language=en`,
-    { 'accept': 'application/json, text/plain, */*', 'referer': 'https://www.tiktok.com/' },
-    30000
-  );
-  if (!feedResp.ok) throw new Error(`TikTok challenge feed HTTP ${feedResp.status}`);
-  const feedJson = await feedResp.json();
-  const items = feedJson.itemList || [];
+  const text = await resp.text();
+  console.log(`[tt-search] status=${resp.status} len=${text.length} snippet=${text.slice(0,200)}`);
 
-  const seen = new Set();
+  if (!resp.ok) throw new Error(`TikTok user search HTTP ${resp.status}: ${text.slice(0,200)}`);
+
+  let json;
+  try { json = JSON.parse(text); }
+  catch (_) { throw new Error(`TikTok returned non-JSON: ${text.slice(0,150)}`); }
+
+  const userList = json?.user_list || json?.userList || [];
   const profiles = [];
-  for (const item of items) {
-    const a = item.author;
-    const stats = item.authorStats || {};
-    if (!a?.uniqueId || seen.has(a.uniqueId)) continue;
-    seen.add(a.uniqueId);
+  for (const item of userList) {
+    const u = item.user_info || item.userInfo?.user || item;
+    if (!u?.unique_id && !u?.uniqueId) continue;
+    const handle = u.unique_id || u.uniqueId;
     profiles.push({
-      handle:     a.uniqueId,
-      fullName:   a.nickname || '',
-      followers:  String(stats.followerCount ?? a.fans ?? ''),
-      bio:        a.signature || '',
-      isVerified: !!(a.verified),
-      postCount:  String(stats.videoCount ?? ''),
-      profileUrl: `https://www.tiktok.com/@${a.uniqueId}`,
+      handle,
+      fullName:   u.nickname || '',
+      followers:  String(u.follower_count ?? u.fans ?? ''),
+      bio:        u.signature || '',
+      isVerified: !!(u.custom_verify || u.verified),
+      postCount:  String(u.aweme_count ?? u.videoCount ?? ''),
+      profileUrl: `https://www.tiktok.com/@${handle}`,
       rawPlatform: 'tiktok',
     });
   }
-  console.log(`[tt-search] #${tag} → ${profiles.length} authors from ${items.length} videos`);
+  console.log(`[tt-search] "${tag}" → ${profiles.length} accounts`);
   return profiles;
 }
 
