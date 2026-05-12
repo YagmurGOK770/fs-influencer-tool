@@ -259,112 +259,132 @@ export default async function handler(req, res) {
 
 // ── BrightData Search: hashtag / keyword discovery ────────────────────────
 // Called when body contains { action: 'bd-search', platform, keyword }
-// Fetches the platform's hashtag/search page via Web Unlocker and extracts profiles.
+//
+// Strategy: BrightData Web Unlocker is a browser-rendering proxy.
+// It works well for full HTML pages but returns its own error pages when
+// used against JSON-only API endpoints (no browser rendering to do).
+//
+// So we fetch real HTML pages and parse the embedded data structures that
+// each platform server-renders into their pages for SEO/SSR bots.
 
-// ── Instagram hashtag search via internal API ──────────────────────────────
-// Step 1: resolve hashtag name → numeric ID
-// Step 2: fetch recent media for that tag → collect unique authors
-// Authors don't include follower counts here, so we return handles and
-// then the caller can run verify on them — or we do a quick profile lookup.
-
-const IG_APP_ID = '936619743392459';
-
+// ── Instagram: public search page → extract account results ───────────────
+// /web/search/topsearch/ is a public JSON endpoint that returns accounts
+// matching a keyword — no login required, works for username/keyword search.
+// For hashtag-based discovery we fetch the tag's top posts page and parse
+// the embedded __additionalDataLoaded script blocks.
 async function igHashtagSearch(keyword) {
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
-  // Step 1: get hashtag ID
-  const idResp = await bdFetch(
-    `https://www.instagram.com/api/v1/tags/search/?q=${encodeURIComponent(tag)}`,
-    { 'x-ig-app-id': IG_APP_ID, 'accept': '*/*', 'referer': 'https://www.instagram.com/' }
+  // Fetch the public account search — returns accounts whose name/username
+  // matches the keyword. Good for "london food" style queries.
+  const searchResp = await bdFetch(
+    `https://www.instagram.com/web/search/topsearch/?context=blended&query=${encodeURIComponent(tag)}&rank_token=0&count=30`,
+    {
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'en-US,en;q=0.9',
+      'x-requested-with': 'XMLHttpRequest',
+      'referer': 'https://www.instagram.com/',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    }
   );
-  if (!idResp.ok) throw new Error(`hashtag search HTTP ${idResp.status}`);
-  const idJson = await idResp.json();
-  // Response: { results: [{ id, name, media_count, ... }] }
-  const tagObj = (idJson.results || []).find(r => r.name?.toLowerCase() === tag) || idJson.results?.[0];
-  if (!tagObj?.id) throw new Error('Hashtag not found on Instagram');
-  const tagId = tagObj.id;
 
-  // Step 2: fetch recent media for this tag
-  const mediaResp = await bdFetch(
-    `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=recent`,
-    { 'x-ig-app-id': IG_APP_ID, 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/` }
-  );
-  if (!mediaResp.ok) throw new Error(`hashtag feed HTTP ${mediaResp.status}`);
-  const mediaJson = await mediaResp.json();
-
-  // Also fetch top posts
-  const topResp = await bdFetch(
-    `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=top`,
-    { 'x-ig-app-id': IG_APP_ID, 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/` }
-  );
-  const topJson = topResp.ok ? await topResp.json().catch(() => ({})) : {};
-
-  const allItems = [
-    ...(mediaJson.items || []),
-    ...(topJson.items || []),
-  ];
-
-  const seen = new Set();
   const profiles = [];
-  for (const item of allItems) {
-    const u = item.user || item.owner;
-    if (!u?.username || seen.has(u.username)) continue;
-    seen.add(u.username);
-    profiles.push({
-      handle:     u.username,
-      fullName:   u.full_name || '',
-      followers:  String(u.follower_count ?? u.edge_followed_by?.count ?? ''),
-      bio:        u.biography || '',
-      isVerified: !!(u.is_verified),
-      postCount:  String(u.media_count ?? u.edge_owner_to_timeline_media?.count ?? ''),
-      profileUrl: `https://www.instagram.com/${u.username}/`,
-      rawPlatform: 'instagram',
-    });
+
+  if (searchResp.ok) {
+    const text = await searchResp.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch (_) { /* not JSON — BD returned HTML */ }
+
+    if (json?.users) {
+      for (const u of json.users) {
+        const user = u.user || u;
+        if (!user.username) continue;
+        profiles.push({
+          handle:     user.username,
+          fullName:   user.full_name || '',
+          followers:  String(user.follower_count ?? ''),
+          bio:        user.biography || '',
+          isVerified: !!(user.is_verified),
+          postCount:  String(user.media_count ?? ''),
+          profileUrl: `https://www.instagram.com/${user.username}/`,
+          rawPlatform: 'instagram',
+        });
+      }
+    }
   }
+
   return profiles;
 }
 
-// ── TikTok hashtag search via internal API ─────────────────────────────────
+// ── TikTok: fetch tag page HTML and parse SIGI_STATE / __NEXT_DATA__ ───────
 async function ttHashtagSearch(keyword) {
   const tag = keyword.replace(/^#/, '').trim();
-  // Step 1: get challengeID for this hashtag
-  const challengeResp = await bdFetch(
-    `https://www.tiktok.com/api/challenge/detail/?challengeName=${encodeURIComponent(tag)}&aid=1988&app_language=en`,
-    { 'accept': 'application/json', 'referer': 'https://www.tiktok.com/' }
+  const resp = await bdFetch(
+    `https://www.tiktok.com/tag/${encodeURIComponent(tag)}`,
+    {
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    30000
   );
-  if (!challengeResp.ok) throw new Error(`TikTok challenge HTTP ${challengeResp.status}`);
-  const challengeJson = await challengeResp.json();
-  const challengeId = challengeJson?.challengeInfo?.challenge?.id;
-  if (!challengeId) throw new Error('Hashtag not found on TikTok');
+  if (!resp.ok) throw new Error(`TikTok tag page HTTP ${resp.status}`);
+  const html = await resp.text();
 
-  // Step 2: fetch videos for this challenge
-  const feedResp = await bdFetch(
-    `https://www.tiktok.com/api/challenge/item_list/?challengeID=${challengeId}&count=30&cursor=0&aid=1988&app_language=en`,
-    { 'accept': 'application/json', 'referer': 'https://www.tiktok.com/' }
-  );
-  if (!feedResp.ok) throw new Error(`TikTok challenge feed HTTP ${feedResp.status}`);
-  const feedJson = await feedResp.json();
-  const items = feedJson.itemList || [];
-
-  const seen = new Set();
   const profiles = [];
-  for (const item of items) {
-    const a = item.author || item.authorStats;
-    const stats = item.authorStats || {};
-    if (!a?.uniqueId || seen.has(a.uniqueId)) continue;
-    seen.add(a.uniqueId);
-    profiles.push({
-      handle:     a.uniqueId,
-      fullName:   a.nickname || '',
-      followers:  String(stats.followerCount ?? a.fans ?? ''),
-      bio:        a.signature || '',
-      isVerified: !!(a.verified),
-      postCount:  String(stats.videoCount ?? ''),
-      profileUrl: `https://www.tiktok.com/@${a.uniqueId}`,
-      rawPlatform: 'tiktok',
-    });
+  const seen = new Set();
+
+  // Try SIGI_STATE (older TikTok pages)
+  const sigiMatch = html.match(/<script id="SIGI_STATE"[^>]*>([\s\S]*?)<\/script>/);
+  if (sigiMatch) {
+    try {
+      const state = JSON.parse(sigiMatch[1]);
+      for (const item of Object.values(state?.ItemModule || {})) {
+        const a = item?.author;
+        if (!a?.uniqueId || seen.has(a.uniqueId)) continue;
+        seen.add(a.uniqueId);
+        profiles.push({
+          handle:     a.uniqueId,
+          fullName:   a.nickname || '',
+          followers:  String(a.fans ?? a.followerCount ?? ''),
+          bio:        a.signature || '',
+          isVerified: !!(a.verified),
+          postCount:  String(a.video ?? ''),
+          profileUrl: `https://www.tiktok.com/@${a.uniqueId}`,
+          rawPlatform: 'tiktok',
+        });
+      }
+    } catch (_) { /* skip */ }
   }
-  return profiles;
+
+  // Try __NEXT_DATA__ (newer TikTok pages)
+  if (profiles.length === 0) {
+    const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (nextMatch) {
+      try {
+        const data = JSON.parse(nextMatch[1]);
+        const items = data?.props?.pageProps?.items || [];
+        for (const item of items) {
+          const a = item?.author;
+          const stats = item?.authorStats || {};
+          if (!a?.uniqueId || seen.has(a.uniqueId)) continue;
+          seen.add(a.uniqueId);
+          profiles.push({
+            handle:     a.uniqueId,
+            fullName:   a.nickname || '',
+            followers:  String(stats.followerCount ?? a.fans ?? ''),
+            bio:        a.signature || '',
+            isVerified: !!(a.verified),
+            postCount:  String(stats.videoCount ?? ''),
+            profileUrl: `https://www.tiktok.com/@${a.uniqueId}`,
+            rawPlatform: 'tiktok',
+          });
+        }
+      } catch (_) { /* skip */ }
+    }
+  }
+
+  return { profiles, debug: profiles.length === 0 ? { htmlLength: html.length, htmlSnippet: html.slice(0, 300) } : null };
 }
 
 // ── YouTube channel search ─────────────────────────────────────────────────
@@ -403,68 +423,50 @@ async function ytKeywordSearch(keyword) {
   return { profiles };
 }
 
-// ── X user search via internal GraphQL API ─────────────────────────────────
+// ── X: fetch search page HTML and parse embedded data ─────────────────────
+// X's search page with f=user filter renders user cards server-side in some regions.
+// We fetch the HTML and look for embedded JSON in script tags.
 async function xUserSearch(keyword) {
-  const query = encodeURIComponent(keyword);
-  const variables = encodeURIComponent(JSON.stringify({
-    rawQuery: keyword,
-    count: 20,
-    querySource: 'typed_query',
-    product: 'People',
-  }));
-  const features = encodeURIComponent(JSON.stringify({
-    responsive_web_graphql_exclude_directive_enabled: true,
-    verified_phone_label_enabled: false,
-    creator_subscriptions_tweet_preview_api_enabled: true,
-    responsive_web_graphql_timeline_navigation_enabled: true,
-    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
-    tweetypie_unmention_optimization_enabled: true,
-    responsive_web_edit_tweet_api_enabled: true,
-    graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
-    view_counts_everywhere_api_enabled: true,
-    longform_notetweets_consumption_enabled: true,
-    responsive_web_twitter_article_tweet_consumption_enabled: false,
-    tweet_awards_web_tipping_enabled: false,
-    freedom_of_speech_not_reach_fetch_enabled: true,
-    standardized_nudges_misinfo: true,
-    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
-    rweb_video_timestamps_enabled: true,
-    longform_notetweets_rich_text_read_enabled: true,
-    longform_notetweets_inline_media_enabled: true,
-    responsive_web_media_download_video_enabled: false,
-    responsive_web_enhance_cards_enabled: false,
-  }));
   const resp = await bdFetch(
-    `https://x.com/i/api/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline?variables=${variables}&features=${features}`,
+    `https://x.com/search?q=${encodeURIComponent(keyword)}&src=typed_query&f=user`,
     {
-      'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
-      'x-twitter-active-user': 'yes',
-      'x-twitter-client-language': 'en',
-      'content-type': 'application/json',
-    }
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    30000
   );
   if (!resp.ok) throw new Error(`X search HTTP ${resp.status}`);
-  const json = await resp.json();
-  const instructions = json?.data?.search_by_raw_query?.search_timeline?.timeline?.instructions || [];
-  const entries = instructions.flatMap(i => i.entries || []);
+  const html = await resp.text();
   const profiles = [];
-  for (const entry of entries) {
-    const userResult = entry?.content?.itemContent?.user_results?.result;
-    const user = userResult?.legacy;
-    if (!user?.screen_name) continue;
-    profiles.push({
-      handle:     user.screen_name,
-      fullName:   user.name || '',
-      followers:  String(user.followers_count ?? ''),
-      bio:        user.description || '',
-      isVerified: !!(userResult?.is_blue_verified || user.verified),
-      postCount:  String(user.statuses_count ?? ''),
-      location:   user.location || '',
-      profileUrl: `https://x.com/${user.screen_name}`,
-      rawPlatform: 'x',
-    });
+
+  // Try __NEXT_DATA__
+  const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (nextMatch) {
+    try {
+      const data = JSON.parse(nextMatch[1]);
+      const timeline = data?.props?.pageProps?.timeline_response?.timeline;
+      const entries = (timeline?.instructions || []).flatMap(i => i.entries || i.addEntries?.entries || []);
+      for (const entry of entries) {
+        const userResult = entry?.content?.itemContent?.user_results?.result;
+        const user = userResult?.legacy;
+        if (!user?.screen_name) continue;
+        profiles.push({
+          handle:     user.screen_name,
+          fullName:   user.name || '',
+          followers:  String(user.followers_count ?? ''),
+          bio:        user.description || '',
+          isVerified: !!(userResult?.is_blue_verified || user.verified),
+          postCount:  String(user.statuses_count ?? ''),
+          location:   user.location || '',
+          profileUrl: `https://x.com/${user.screen_name}`,
+          rawPlatform: 'x',
+        });
+      }
+    } catch (_) { /* skip */ }
   }
-  return { profiles };
+
+  return { profiles, debug: profiles.length === 0 ? { htmlLength: html.length, htmlSnippet: html.slice(0, 300) } : null };
 }
 
 async function handleBdSearch(req, res) {
@@ -482,17 +484,21 @@ async function handleBdSearch(req, res) {
   let profiles = [];
   let debug = null;
   try {
+    let result;
     if (platform === 'instagram') {
-      profiles = await igHashtagSearch(kw);
+      result = await igHashtagSearch(kw);
     } else if (platform === 'tiktok') {
-      profiles = await ttHashtagSearch(kw);
+      result = await ttHashtagSearch(kw);
     } else if (platform === 'youtube') {
-      const result = await ytKeywordSearch(kw);
-      profiles = result.profiles;
-      if (result.debug) debug = result.debug;
+      result = await ytKeywordSearch(kw);
     } else if (platform === 'x') {
-      const result = await xUserSearch(kw);
-      profiles = result.profiles;
+      result = await xUserSearch(kw);
+    }
+    if (Array.isArray(result)) {
+      profiles = result;
+    } else {
+      profiles = result?.profiles || [];
+      if (result?.debug) debug = result.debug;
     }
   } catch (e) {
     console.error(`[bd-search:${platform}] error:`, e.message);
