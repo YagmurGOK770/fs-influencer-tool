@@ -306,15 +306,19 @@ async function igHashtagSearch(keyword, sessionCookie) {
   // user fields: pk, username, full_name, is_verified (no follower_count here)
   const infoResp = await igDirect(`https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`);
   const infoText = await infoResp.text();
+  const respHeaders = Object.fromEntries(infoResp.headers.entries());
   console.log(`[ig-search] web_info status=${infoResp.status} len=${infoText.length}`);
+  console.log(`[ig-search] resp headers:`, JSON.stringify(respHeaders));
+  console.log(`[ig-search] body first 500:`, infoText.slice(0, 500));
 
-  if (!infoResp.ok) throw new Error(`Instagram returned HTTP ${infoResp.status} — cookie may be expired`);
-  if (!infoText.trim()) throw new Error(`Instagram returned empty body — cookie may be invalid`);
+  const diag = `status=${infoResp.status} bodyLen=${infoText.length} cookieLen=${cookieHeader.length} hasSession=${cookieHeader.includes('sessionid=')} hasCsrf=${!!csrfToken} ct=${respHeaders['content-type']||'?'}`;
+
+  if (!infoResp.ok) throw new Error(`Instagram HTTP ${infoResp.status}. ${diag}. Body: "${infoText.slice(0, 300)}"`);
+  if (!infoText.trim()) throw new Error(`Instagram empty body. ${diag}. Headers: ${JSON.stringify(respHeaders).slice(0,400)}`);
 
   let infoJson;
   try { infoJson = JSON.parse(infoText); } catch (_) {
-    console.error(`[ig-search] non-JSON body: status=${infoResp.status} len=${infoText.length} body=${infoText.slice(0, 500)}`);
-    throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 500)}`);
+    throw new Error(`Non-JSON. ${diag}. Body: "${infoText.slice(0, 400)}"`);
   }
 
   // Extract unique authors from top sections.
