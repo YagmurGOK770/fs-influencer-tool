@@ -3642,7 +3642,7 @@ function closeProfileCard() {
         </div>
         <div style="display:flex;gap:6px;align-items:center">
           <label style="font-size:11px;color:var(--muted)">Match:</label>
-          <select id="bdFltMode" onchange="bdApplyFilters()"
+          <select id="bdFltMode" onchange="bdSaveFilterState(); bdApplyFilters()"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="AND">ALL (and)</option>
             <option value="OR">ANY (or)</option>
@@ -3715,13 +3715,62 @@ function loadEnrichTab() {
   // Restore saved session cookie
   const saved = localStorage.getItem('bd_session_cookie');
   if (saved) document.getElementById('bdSessionCookie').value = saved;
-  // Initialize filter UI with one empty rule
+
+  // Restore saved filter rules + mode (if any), else one empty rule
+  try {
+    const f = JSON.parse(localStorage.getItem('bd_filter_state') || 'null');
+    if (f && Array.isArray(f.rules) && f.rules.length) {
+      bdFilterRules = f.rules.map(r => ({ ...r, id: ++bdRuleSeq }));
+      const modeSel = document.getElementById('bdFltMode');
+      if (modeSel && f.mode) modeSel.value = f.mode;
+    }
+  } catch (_) { /* ignore corrupt state */ }
   if (!bdFilterRules.length) bdFilterRules.push({ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' });
   bdRenderFilterRows();
+
+  // Restore cached search results (if any) so a refresh doesn't lose them
+  try {
+    const cached = JSON.parse(localStorage.getItem('bd_cached_results') || 'null');
+    if (cached && Array.isArray(cached.profiles) && cached.profiles.length) {
+      bdAllResults = cached.profiles;
+      bdPlatform   = cached.platform || bdPlatform;
+      // Restore keyword/platform inputs so the user can re-search easily
+      const kwEl = document.getElementById('bdKeyword');
+      const ptEl = document.getElementById('bdPlatformSel');
+      if (kwEl && cached.keyword) kwEl.value = cached.keyword;
+      if (ptEl && cached.platform) ptEl.value = cached.platform;
+      bdApplyFilters();
+      const ageMin = Math.max(1, Math.round((Date.now() - cached.timestamp) / 60000));
+      setBdStatus(`Restored ${cached.profiles.length} cached results for "${cached.keyword}" (${ageMin} min ago). Run search again to refresh.`, '');
+    }
+  } catch (_) { /* ignore corrupt cache */ }
+}
+
+function bdSaveFilterState() {
+  try {
+    const mode = document.getElementById('bdFltMode')?.value || 'AND';
+    const rules = bdFilterRules.map(({ field, op, value }) => ({ field, op, value }));
+    localStorage.setItem('bd_filter_state', JSON.stringify({ rules, mode }));
+  } catch (_) { /* quota exceeded — ignore */ }
+}
+
+function bdSaveCachedResults(keyword, platform) {
+  try {
+    localStorage.setItem('bd_cached_results', JSON.stringify({
+      keyword, platform, profiles: bdAllResults, timestamp: Date.now(),
+    }));
+  } catch (e) {
+    console.warn('Could not cache results (likely quota):', e.message);
+  }
+}
+
+function bdClearCachedResults() {
+  try { localStorage.removeItem('bd_cached_results'); } catch (_) {}
 }
 
 function bdClear() {
   bdAllResults = [];
+  bdClearCachedResults();
   document.getElementById('bdTbody').innerHTML = '';
   document.getElementById('bdTableWrap').style.display = 'none';
   document.getElementById('bdEmpty').style.display = '';
@@ -3783,6 +3832,7 @@ function bdAddFilterRow(initial) {
   if (!rule.id) rule.id = ++bdRuleSeq;
   bdFilterRules.push(rule);
   bdRenderFilterRows();
+  bdSaveFilterState();
   bdApplyFilters();
 }
 
@@ -3790,6 +3840,7 @@ function bdRemoveFilterRow(id) {
   bdFilterRules = bdFilterRules.filter(r => r.id !== id);
   if (!bdFilterRules.length) bdFilterRules.push({ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' });
   bdRenderFilterRows();
+  bdSaveFilterState();
   bdApplyFilters();
 }
 
@@ -3802,6 +3853,7 @@ function bdUpdateRule(id, key, val) {
     rule.value = bdDefaultValueFor(val);
     bdRenderFilterRows();
   }
+  bdSaveFilterState();
   bdApplyFilters();
 }
 
@@ -4013,6 +4065,7 @@ async function runBdSearch() {
   btn.disabled = true;
   btn.textContent = '⏳ Searching…';
   bdAllResults = [];
+  bdClearCachedResults(); // starting a new search invalidates the previous cache
   document.getElementById('bdTableWrap').style.display = 'none';
   document.getElementById('bdEmpty').style.display = 'none';
   setBdStatus(`Searching ${bdPlatform} for "${keyword}"… paginating + enriching profiles (human-paced to avoid rate limits)`, '');
@@ -4068,6 +4121,7 @@ async function runBdSearch() {
         document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
         renderBdTable(visible);
         setBdStatus(`Found ${bdAllResults.length} profiles — ${visible.length} match your filters.`, 'green');
+        bdSaveCachedResults(keyword, bdPlatform);
         // Keep progress bar visible at 100% for a moment, then hide
         setTimeout(() => bdShowProgress(false), 2000);
         return;
