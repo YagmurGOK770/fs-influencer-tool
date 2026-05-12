@@ -3829,7 +3829,7 @@ async function runBdSearch() {
     }
     bdAllResults = data.profiles || [];
     if (!bdAllResults.length && data.debug) {
-      setBdStatus(`No profiles parsed. Page length: ${data.debug.htmlLength} chars. Snippet: ${data.debug.htmlSnippet}`, 'red');
+      setBdStatus(`No profiles found. ${data.debug.htmlLength ? `Page length: ${data.debug.htmlLength} chars. ` : ''}${data.debug.htmlSnippet ? `Snippet: ${data.debug.htmlSnippet.slice(0,200)}` : ''}`, 'red');
       document.getElementById('bdEmpty').style.display = '';
       return;
     }

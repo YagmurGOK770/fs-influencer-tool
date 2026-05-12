@@ -261,159 +261,210 @@ export default async function handler(req, res) {
 // Called when body contains { action: 'bd-search', platform, keyword }
 // Fetches the platform's hashtag/search page via Web Unlocker and extracts profiles.
 
-function buildSearchUrl(platform, keyword) {
-  const kw = encodeURIComponent(keyword.replace(/^#/, ''));
-  if (platform === 'instagram') return `https://www.instagram.com/explore/tags/${kw}/`;
-  if (platform === 'tiktok')    return `https://www.tiktok.com/tag/${kw}`;
-  if (platform === 'youtube')   return `https://www.youtube.com/results?search_query=${kw}&sp=EgIQAg%253D%253D`; // filter: channels
-  if (platform === 'x')         return `https://x.com/search?q=%23${kw}&src=typed_query&f=user`;
-  return null;
-}
+// ── Instagram hashtag search via internal API ──────────────────────────────
+// Step 1: resolve hashtag name → numeric ID
+// Step 2: fetch recent media for that tag → collect unique authors
+// Authors don't include follower counts here, so we return handles and
+// then the caller can run verify on them — or we do a quick profile lookup.
 
-// Parse embedded JSON data from Instagram hashtag page
-function parseInstagramHashtagPage(html) {
+const IG_APP_ID = '936619743392459';
+
+async function igHashtagSearch(keyword) {
+  const tag = keyword.replace(/^#/, '').toLowerCase().trim();
+
+  // Step 1: get hashtag ID
+  const idResp = await bdFetch(
+    `https://www.instagram.com/api/v1/tags/search/?q=${encodeURIComponent(tag)}`,
+    { 'x-ig-app-id': IG_APP_ID, 'accept': '*/*', 'referer': 'https://www.instagram.com/' }
+  );
+  if (!idResp.ok) throw new Error(`hashtag search HTTP ${idResp.status}`);
+  const idJson = await idResp.json();
+  // Response: { results: [{ id, name, media_count, ... }] }
+  const tagObj = (idJson.results || []).find(r => r.name?.toLowerCase() === tag) || idJson.results?.[0];
+  if (!tagObj?.id) throw new Error('Hashtag not found on Instagram');
+  const tagId = tagObj.id;
+
+  // Step 2: fetch recent media for this tag
+  const mediaResp = await bdFetch(
+    `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=recent`,
+    { 'x-ig-app-id': IG_APP_ID, 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/` }
+  );
+  if (!mediaResp.ok) throw new Error(`hashtag feed HTTP ${mediaResp.status}`);
+  const mediaJson = await mediaResp.json();
+
+  // Also fetch top posts
+  const topResp = await bdFetch(
+    `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=top`,
+    { 'x-ig-app-id': IG_APP_ID, 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/` }
+  );
+  const topJson = topResp.ok ? await topResp.json().catch(() => ({})) : {};
+
+  const allItems = [
+    ...(mediaJson.items || []),
+    ...(topJson.items || []),
+  ];
+
+  const seen = new Set();
   const profiles = [];
-  // Instagram embeds data in <script type="application/json"> tags
-  const scriptRe = /<script type="application\/json" data-content-type="media"[^>]*>([\s\S]*?)<\/script>/g;
-  let m;
-  while ((m = scriptRe.exec(html)) !== null) {
-    try {
-      const data = JSON.parse(m[1]);
-      const edges = data?.data?.recent?.sections || data?.data?.top?.sections || [];
-      for (const section of edges) {
-        for (const item of (section?.layout_content?.medias || [])) {
-          const node = item?.media;
-          const owner = node?.owner;
-          if (owner?.username) {
-            profiles.push({
-              handle:     owner.username,
-              fullName:   owner.full_name || '',
-              followers:  String(owner.edge_followed_by?.count ?? ''),
-              bio:        owner.biography || '',
-              isVerified: !!(owner.is_verified),
-              postCount:  String(owner.edge_owner_to_timeline_media?.count ?? ''),
-              profileUrl: `https://www.instagram.com/${owner.username}/`,
-              rawPlatform: 'instagram',
-            });
-          }
-        }
-      }
-    } catch (_) { /* skip malformed blocks */ }
+  for (const item of allItems) {
+    const u = item.user || item.owner;
+    if (!u?.username || seen.has(u.username)) continue;
+    seen.add(u.username);
+    profiles.push({
+      handle:     u.username,
+      fullName:   u.full_name || '',
+      followers:  String(u.follower_count ?? u.edge_followed_by?.count ?? ''),
+      bio:        u.biography || '',
+      isVerified: !!(u.is_verified),
+      postCount:  String(u.media_count ?? u.edge_owner_to_timeline_media?.count ?? ''),
+      profileUrl: `https://www.instagram.com/${u.username}/`,
+      rawPlatform: 'instagram',
+    });
   }
-
-  // Also try the shared_data approach
-  if (profiles.length === 0) {
-    const sdMatch = html.match(/window\._sharedData\s*=\s*(\{.+?\});\s*<\/script>/s);
-    if (sdMatch) {
-      try {
-        const sd = JSON.parse(sdMatch[1]);
-        const tag = sd?.entry_data?.TagPage?.[0]?.graphql?.hashtag;
-        const edges = tag?.edge_hashtag_to_media?.edges || [];
-        for (const edge of edges) {
-          const owner = edge?.node?.owner;
-          if (owner?.username) {
-            profiles.push({
-              handle:     owner.username,
-              fullName:   owner.full_name || '',
-              followers:  String(owner.edge_followed_by?.count ?? ''),
-              bio:        owner.biography || '',
-              isVerified: !!(owner.is_verified),
-              postCount:  String(owner.edge_owner_to_timeline_media?.count ?? ''),
-              profileUrl: `https://www.instagram.com/${owner.username}/`,
-              rawPlatform: 'instagram',
-            });
-          }
-        }
-      } catch (_) { /* skip */ }
-    }
-  }
-
   return profiles;
 }
 
-function parseTikTokHashtagPage(html) {
+// ── TikTok hashtag search via internal API ─────────────────────────────────
+async function ttHashtagSearch(keyword) {
+  const tag = keyword.replace(/^#/, '').trim();
+  // Step 1: get challengeID for this hashtag
+  const challengeResp = await bdFetch(
+    `https://www.tiktok.com/api/challenge/detail/?challengeName=${encodeURIComponent(tag)}&aid=1988&app_language=en`,
+    { 'accept': 'application/json', 'referer': 'https://www.tiktok.com/' }
+  );
+  if (!challengeResp.ok) throw new Error(`TikTok challenge HTTP ${challengeResp.status}`);
+  const challengeJson = await challengeResp.json();
+  const challengeId = challengeJson?.challengeInfo?.challenge?.id;
+  if (!challengeId) throw new Error('Hashtag not found on TikTok');
+
+  // Step 2: fetch videos for this challenge
+  const feedResp = await bdFetch(
+    `https://www.tiktok.com/api/challenge/item_list/?challengeID=${challengeId}&count=30&cursor=0&aid=1988&app_language=en`,
+    { 'accept': 'application/json', 'referer': 'https://www.tiktok.com/' }
+  );
+  if (!feedResp.ok) throw new Error(`TikTok challenge feed HTTP ${feedResp.status}`);
+  const feedJson = await feedResp.json();
+  const items = feedJson.itemList || [];
+
+  const seen = new Set();
   const profiles = [];
-  const stateMatch = html.match(/<script id="SIGI_STATE"[^>]*>([\s\S]*?)<\/script>/);
-  if (!stateMatch) return profiles;
-  try {
-    const state = JSON.parse(stateMatch[1]);
-    const itemModule = state?.ItemModule || {};
-    const seen = new Set();
-    for (const item of Object.values(itemModule)) {
-      const a = item?.author;
-      if (a && a.uniqueId && !seen.has(a.uniqueId)) {
-        seen.add(a.uniqueId);
-        profiles.push({
-          handle:     a.uniqueId,
-          fullName:   a.nickname || '',
-          followers:  String(a.fans ?? a.followerCount ?? ''),
-          bio:        a.signature || '',
-          isVerified: !!(a.verified),
-          postCount:  String(a.video ?? ''),
-          profileUrl: `https://www.tiktok.com/@${a.uniqueId}`,
-          rawPlatform: 'tiktok',
-        });
-      }
-    }
-  } catch (_) { /* skip */ }
+  for (const item of items) {
+    const a = item.author || item.authorStats;
+    const stats = item.authorStats || {};
+    if (!a?.uniqueId || seen.has(a.uniqueId)) continue;
+    seen.add(a.uniqueId);
+    profiles.push({
+      handle:     a.uniqueId,
+      fullName:   a.nickname || '',
+      followers:  String(stats.followerCount ?? a.fans ?? ''),
+      bio:        a.signature || '',
+      isVerified: !!(a.verified),
+      postCount:  String(stats.videoCount ?? ''),
+      profileUrl: `https://www.tiktok.com/@${a.uniqueId}`,
+      rawPlatform: 'tiktok',
+    });
+  }
   return profiles;
 }
 
-function parseYouTubeSearchPage(html) {
-  const profiles = [];
+// ── YouTube channel search ─────────────────────────────────────────────────
+// YouTube search page still embeds ytInitialData — parse it directly
+async function ytKeywordSearch(keyword) {
+  const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIQAg%3D%3D`;
+  const resp = await bdFetch(url, {
+    'accept': 'text/html,application/xhtml+xml',
+    'accept-language': 'en-US,en;q=0.9',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  }, 30000);
+  if (!resp.ok) throw new Error(`YouTube HTTP ${resp.status}`);
+  const html = await resp.text();
   const m = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s);
-  if (!m) return profiles;
-  try {
-    const data = JSON.parse(m[1]);
-    const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
-      ?.sectionListRenderer?.contents || [];
-    for (const section of contents) {
-      const items = section?.itemSectionRenderer?.contents || [];
-      for (const item of items) {
-        const ch = item?.channelRenderer;
-        if (!ch) continue;
-        const subText = ch?.subscriberCountText?.simpleText || '';
-        profiles.push({
-          handle:     ch.channelId || ch.navigationEndpoint?.browseEndpoint?.browseId || '',
-          fullName:   ch.title?.simpleText || '',
-          followers:  subText.replace(/\s*subscribers?/i, '').trim(),
-          bio:        ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
-          isVerified: !!(ch.ownerBadges?.some(b => b?.metadataBadgeRenderer?.style === 'BADGE_STYLE_TYPE_VERIFIED')),
-          postCount:  ch.videoCountText?.runs?.map(r => r.text).join('') || '',
-          profileUrl: `https://www.youtube.com/channel/${ch.channelId}`,
-          rawPlatform: 'youtube',
-        });
-      }
-    }
-  } catch (_) { /* skip */ }
-  return profiles;
-}
-
-function parseXSearchPage(html) {
+  if (!m) return { profiles: [], debug: { htmlLength: html.length, htmlSnippet: html.slice(0, 300) } };
+  const data = JSON.parse(m[1]);
+  const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
+    ?.sectionListRenderer?.contents || [];
   const profiles = [];
-  const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-  if (!nextMatch) return profiles;
-  try {
-    const data = JSON.parse(nextMatch[1]);
-    const timeline = data?.props?.pageProps?.timeline_response?.timeline;
-    const entries = timeline?.instructions?.flatMap(i => i.entries || i.addEntries?.entries || []) || [];
-    for (const entry of entries) {
-      const user = entry?.content?.itemContent?.user_results?.result?.legacy;
-      if (!user) continue;
+  for (const section of contents) {
+    for (const item of (section?.itemSectionRenderer?.contents || [])) {
+      const ch = item?.channelRenderer;
+      if (!ch) continue;
       profiles.push({
-        handle:     user.screen_name,
-        fullName:   user.name || '',
-        followers:  String(user.followers_count ?? ''),
-        bio:        user.description || '',
-        isVerified: !!(entry?.content?.itemContent?.user_results?.result?.is_blue_verified || user.verified),
-        postCount:  String(user.statuses_count ?? ''),
-        location:   user.location || '',
-        profileUrl: `https://x.com/${user.screen_name}`,
-        rawPlatform: 'x',
+        handle:     ch.channelId || '',
+        fullName:   ch.title?.simpleText || '',
+        followers:  (ch.subscriberCountText?.simpleText || '').replace(/\s*subscribers?/i, '').trim(),
+        bio:        ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
+        isVerified: !!(ch.ownerBadges?.some(b => b?.metadataBadgeRenderer?.style === 'BADGE_STYLE_TYPE_VERIFIED')),
+        postCount:  ch.videoCountText?.runs?.map(r => r.text).join('') || '',
+        profileUrl: `https://www.youtube.com/channel/${ch.channelId}`,
+        rawPlatform: 'youtube',
       });
     }
-  } catch (_) { /* skip */ }
-  return profiles;
+  }
+  return { profiles };
+}
+
+// ── X user search via internal GraphQL API ─────────────────────────────────
+async function xUserSearch(keyword) {
+  const query = encodeURIComponent(keyword);
+  const variables = encodeURIComponent(JSON.stringify({
+    rawQuery: keyword,
+    count: 20,
+    querySource: 'typed_query',
+    product: 'People',
+  }));
+  const features = encodeURIComponent(JSON.stringify({
+    responsive_web_graphql_exclude_directive_enabled: true,
+    verified_phone_label_enabled: false,
+    creator_subscriptions_tweet_preview_api_enabled: true,
+    responsive_web_graphql_timeline_navigation_enabled: true,
+    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+    tweetypie_unmention_optimization_enabled: true,
+    responsive_web_edit_tweet_api_enabled: true,
+    graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
+    view_counts_everywhere_api_enabled: true,
+    longform_notetweets_consumption_enabled: true,
+    responsive_web_twitter_article_tweet_consumption_enabled: false,
+    tweet_awards_web_tipping_enabled: false,
+    freedom_of_speech_not_reach_fetch_enabled: true,
+    standardized_nudges_misinfo: true,
+    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+    rweb_video_timestamps_enabled: true,
+    longform_notetweets_rich_text_read_enabled: true,
+    longform_notetweets_inline_media_enabled: true,
+    responsive_web_media_download_video_enabled: false,
+    responsive_web_enhance_cards_enabled: false,
+  }));
+  const resp = await bdFetch(
+    `https://x.com/i/api/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline?variables=${variables}&features=${features}`,
+    {
+      'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+      'x-twitter-active-user': 'yes',
+      'x-twitter-client-language': 'en',
+      'content-type': 'application/json',
+    }
+  );
+  if (!resp.ok) throw new Error(`X search HTTP ${resp.status}`);
+  const json = await resp.json();
+  const instructions = json?.data?.search_by_raw_query?.search_timeline?.timeline?.instructions || [];
+  const entries = instructions.flatMap(i => i.entries || []);
+  const profiles = [];
+  for (const entry of entries) {
+    const userResult = entry?.content?.itemContent?.user_results?.result;
+    const user = userResult?.legacy;
+    if (!user?.screen_name) continue;
+    profiles.push({
+      handle:     user.screen_name,
+      fullName:   user.name || '',
+      followers:  String(user.followers_count ?? ''),
+      bio:        user.description || '',
+      isVerified: !!(userResult?.is_blue_verified || user.verified),
+      postCount:  String(user.statuses_count ?? ''),
+      location:   user.location || '',
+      profileUrl: `https://x.com/${user.screen_name}`,
+      rawPlatform: 'x',
+    });
+  }
+  return { profiles };
 }
 
 async function handleBdSearch(req, res) {
@@ -425,36 +476,28 @@ async function handleBdSearch(req, res) {
   if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: `Unsupported platform: ${platform}` });
   if (!keyword || !keyword.trim()) return res.status(400).json({ error: 'keyword is required' });
 
-  const searchUrl = buildSearchUrl(platform, keyword.trim());
-  if (!searchUrl) return res.status(400).json({ error: 'Could not build search URL' });
-
-  console.log(`[bd-search:${platform}] fetching: ${searchUrl}`);
-
-  let html;
-  try {
-    const resp = await bdFetch(searchUrl, {
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'accept-language': 'en-US,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    }, 30000);
-
-    if (!resp.ok) {
-      const txt = await resp.text().catch(() => '');
-      return res.status(502).json({
-        error: `Platform returned HTTP ${resp.status}`,
-        detail: txt.slice(0, 300),
-      });
-    }
-    html = await resp.text();
-  } catch (e) {
-    return res.status(502).json({ error: `Fetch failed: ${e.message}` });
-  }
+  const kw = keyword.trim();
+  console.log(`[bd-search:${platform}] keyword="${kw}"`);
 
   let profiles = [];
-  if (platform === 'instagram') profiles = parseInstagramHashtagPage(html);
-  else if (platform === 'tiktok')    profiles = parseTikTokHashtagPage(html);
-  else if (platform === 'youtube')   profiles = parseYouTubeSearchPage(html);
-  else if (platform === 'x')         profiles = parseXSearchPage(html);
+  let debug = null;
+  try {
+    if (platform === 'instagram') {
+      profiles = await igHashtagSearch(kw);
+    } else if (platform === 'tiktok') {
+      profiles = await ttHashtagSearch(kw);
+    } else if (platform === 'youtube') {
+      const result = await ytKeywordSearch(kw);
+      profiles = result.profiles;
+      if (result.debug) debug = result.debug;
+    } else if (platform === 'x') {
+      const result = await xUserSearch(kw);
+      profiles = result.profiles;
+    }
+  } catch (e) {
+    console.error(`[bd-search:${platform}] error:`, e.message);
+    return res.status(502).json({ error: e.message });
+  }
 
   // Deduplicate by handle
   const seen = new Set();
@@ -464,17 +507,10 @@ async function handleBdSearch(req, res) {
     return true;
   });
 
-  console.log(`[bd-search:${platform}] keyword="${keyword}" → ${profiles.length} profiles found`);
+  console.log(`[bd-search:${platform}] → ${profiles.length} profiles`);
 
   if (profiles.length === 0) {
-    return res.status(200).json({
-      profiles: [],
-      debug: {
-        url: searchUrl,
-        htmlLength: html.length,
-        htmlSnippet: html.slice(0, 500),
-      },
-    });
+    return res.status(200).json({ profiles: [], debug });
   }
 
   return res.status(200).json({ profiles });
