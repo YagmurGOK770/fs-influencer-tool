@@ -3637,10 +3637,18 @@ function closeProfileCard() {
     <!-- Pre-fetch filters -->
     <div style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap">
-        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
-          Filters <span style="font-weight:400;text-transform:none">(grouped — set match logic per group and between groups)</span>
+        <div onclick="bdToggleFilters()" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+          <span id="bdFltChevron" style="font-size:10px;color:var(--muted);transition:transform .15s">▼</span>
+          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+            Filters <span id="bdFltSummary" style="font-weight:400;text-transform:none">(grouped — set match logic per group and between groups)</span>
+          </span>
         </div>
-        <div style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select id="bdPresetSel" onchange="bdLoadPreset(this.value)"
+            style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px"></select>
+          <button class="btn-sm" onclick="bdSavePreset()" title="Save current filters as a named preset">💾 Save preset</button>
+          <button class="btn-sm" id="bdDeletePresetBtn" onclick="bdDeletePreset()" title="Delete the selected preset" style="display:none">🗑</button>
+          <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
           <label style="font-size:11px;color:var(--muted)">Between groups:</label>
           <select id="bdFltTopMode" onchange="bdSaveFilterState(); bdRenderFilterGroups(); bdApplyFilters()"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
@@ -3649,11 +3657,13 @@ function closeProfileCard() {
           </select>
         </div>
       </div>
-      <div id="bdFilterGroups"></div>
-      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-        <button class="btn-sm" onclick="bdAddGroup()">+ Add group</button>
-        <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
-        <span id="bdFltCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
+      <div id="bdFilterContent">
+        <div id="bdFilterGroups"></div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <button class="btn-sm" onclick="bdAddGroup()">+ Add group</button>
+          <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
+          <span id="bdFltCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
+        </div>
       </div>
     </div>
 
@@ -3758,6 +3768,11 @@ function loadEnrichTab() {
   } catch (_) { /* ignore corrupt state */ }
   if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
   bdRenderFilterGroups();
+  bdRenderPresets('');
+  // Restore collapse state — if user previously collapsed, collapse now
+  if (localStorage.getItem('bd_filter_panel_collapsed') === '1') {
+    bdToggleFilters(true);
+  }
 
   // Restore cached search results (if any) so a refresh doesn't lose them
   try {
@@ -4116,9 +4131,121 @@ function bdResetFilters() {
   bdFilterGroups = [bdNewGroup()];
   const top = document.getElementById('bdFltTopMode');
   if (top) top.value = 'AND';
+  // Reset clears active preset selection too
+  const sel = document.getElementById('bdPresetSel');
+  if (sel) sel.value = '';
+  const delBtn = document.getElementById('bdDeletePresetBtn');
+  if (delBtn) delBtn.style.display = 'none';
   bdSaveFilterState();
   bdRenderFilterGroups();
   bdApplyFilters();
+  bdUpdateFilterSummary();
+}
+
+// ── Collapse / expand the filter panel ─────────────────────────────────
+function bdToggleFilters(force) {
+  const content  = document.getElementById('bdFilterContent');
+  const chevron  = document.getElementById('bdFltChevron');
+  const collapsed = force != null ? force : content.style.display !== 'none';
+  content.style.display = collapsed ? 'none' : '';
+  chevron.textContent   = collapsed ? '▶' : '▼';
+  try { localStorage.setItem('bd_filter_panel_collapsed', collapsed ? '1' : '0'); } catch (_) {}
+  if (collapsed) bdUpdateFilterSummary();
+  else {
+    // Reset summary label back to default when expanded
+    const sum = document.getElementById('bdFltSummary');
+    if (sum) sum.textContent = '(grouped — set match logic per group and between groups)';
+  }
+}
+
+function bdUpdateFilterSummary() {
+  const sum = document.getElementById('bdFltSummary');
+  if (!sum) return;
+  const groups = bdFilterGroups.length;
+  const rules  = bdFilterGroups.reduce((n, g) => n + g.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== '')).length, 0);
+  const top    = document.getElementById('bdFltTopMode')?.value || 'AND';
+  sum.textContent = `· ${groups} group${groups===1?'':'s'} · ${rules} active rule${rules===1?'':'s'} · ${top==='AND'?'ALL':'ANY'} match`;
+}
+
+// ── Filter presets ─────────────────────────────────────────────────────
+// Stored as: [{ name, state: { topMode, groups: [{ mode, rules: [{ field, op, value }] }] } }]
+
+function bdGetPresets() {
+  try { return JSON.parse(localStorage.getItem('bd_filter_presets') || '[]'); }
+  catch (_) { return []; }
+}
+
+function bdSetPresets(arr) {
+  try { localStorage.setItem('bd_filter_presets', JSON.stringify(arr)); } catch (_) {}
+}
+
+function bdCurrentFilterState() {
+  return {
+    topMode: document.getElementById('bdFltTopMode')?.value || 'AND',
+    groups: bdFilterGroups.map(g => ({
+      mode: g.mode,
+      rules: g.rules.map(({ field, op, value }) => ({ field, op, value })),
+    })),
+  };
+}
+
+function bdRenderPresets(selected) {
+  const sel = document.getElementById('bdPresetSel');
+  if (!sel) return;
+  const presets = bdGetPresets();
+  sel.innerHTML = `<option value="">${presets.length ? 'Load preset…' : '(no saved presets)'}</option>` +
+    presets.map(p => `<option value="${p.name.replace(/"/g,'&quot;')}" ${p.name === selected ? 'selected' : ''}>${p.name}</option>`).join('');
+  const delBtn = document.getElementById('bdDeletePresetBtn');
+  if (delBtn) delBtn.style.display = selected ? '' : 'none';
+}
+
+function bdSavePreset() {
+  const name = (prompt('Preset name (e.g. "UK food creators 10K+"):') || '').trim();
+  if (!name) return;
+  const presets = bdGetPresets();
+  const existing = presets.findIndex(p => p.name === name);
+  const entry = { name, state: bdCurrentFilterState() };
+  if (existing >= 0) {
+    if (!confirm(`A preset called "${name}" already exists. Overwrite it?`)) return;
+    presets[existing] = entry;
+  } else {
+    presets.push(entry);
+  }
+  bdSetPresets(presets);
+  bdRenderPresets(name);
+}
+
+function bdLoadPreset(name) {
+  if (!name) {
+    const delBtn = document.getElementById('bdDeletePresetBtn');
+    if (delBtn) delBtn.style.display = 'none';
+    return;
+  }
+  const preset = bdGetPresets().find(p => p.name === name);
+  if (!preset) return;
+  const s = preset.state;
+  bdFilterGroups = (s.groups || []).map(g => bdNewGroup({
+    mode: g.mode || 'AND',
+    rules: (g.rules || []).map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '' })),
+  }));
+  if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
+  const top = document.getElementById('bdFltTopMode');
+  if (top) top.value = s.topMode || 'AND';
+  bdSaveFilterState();
+  bdRenderFilterGroups();
+  bdApplyFilters();
+  bdUpdateFilterSummary();
+  const delBtn = document.getElementById('bdDeletePresetBtn');
+  if (delBtn) delBtn.style.display = '';
+}
+
+function bdDeletePreset() {
+  const sel = document.getElementById('bdPresetSel');
+  const name = sel?.value;
+  if (!name) return;
+  if (!confirm(`Delete preset "${name}"?`)) return;
+  bdSetPresets(bdGetPresets().filter(p => p.name !== name));
+  bdRenderPresets('');
 }
 
 function renderBdTable(rows) {
