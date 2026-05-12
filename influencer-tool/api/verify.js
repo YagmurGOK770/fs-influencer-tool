@@ -267,67 +267,81 @@ export default async function handler(req, res) {
 // So we fetch real HTML pages and parse the embedded data structures that
 // each platform server-renders into their pages for SEO/SSR bots.
 
-// ── Instagram: public search page → extract account results ───────────────
-// /web/search/topsearch/ is a public JSON endpoint that returns accounts
-// matching a keyword — no login required, works for username/keyword search.
-// For hashtag-based discovery we fetch the tag's top posts page and parse
-// the embedded __additionalDataLoaded script blocks.
+// ── Instagram: public search endpoint (direct fetch — not through BD) ────────
+// /web/search/topsearch/ is public and doesn't block server IPs.
+// BD Web Unlocker adds 10-20s latency which exceeds Vercel's 10s limit.
+// We use direct fetch here; BD is only needed for authenticated profile pages.
 async function igHashtagSearch(keyword) {
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
-  // Fetch the public account search — returns accounts whose name/username
-  // matches the keyword. Good for "london food" style queries.
-  const searchResp = await bdFetch(
-    `https://www.instagram.com/web/search/topsearch/?context=blended&query=${encodeURIComponent(tag)}&rank_token=0&count=30`,
-    {
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'en-US,en;q=0.9',
-      'x-requested-with': 'XMLHttpRequest',
-      'referer': 'https://www.instagram.com/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    }
-  );
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  let searchResp;
+  try {
+    searchResp = await fetch(
+      `https://www.instagram.com/web/search/topsearch/?context=blended&query=${encodeURIComponent(tag)}&rank_token=0&count=30`,
+      {
+        headers: {
+          'accept': 'application/json, text/plain, */*',
+          'accept-language': 'en-US,en;q=0.9',
+          'x-requested-with': 'XMLHttpRequest',
+          'referer': 'https://www.instagram.com/',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        signal: ctrl.signal,
+      }
+    );
+  } finally { clearTimeout(t); }
 
   const profiles = [];
+  if (!searchResp.ok) {
+    throw new Error(`Instagram search HTTP ${searchResp.status} — try a different keyword or platform`);
+  }
 
-  if (searchResp.ok) {
-    const text = await searchResp.text();
-    let json = null;
-    try { json = JSON.parse(text); } catch (_) { /* not JSON — BD returned HTML */ }
+  const text = await searchResp.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch (_) {
+    throw new Error(`Instagram returned non-JSON (status ${searchResp.status}) — endpoint may require login`);
+  }
 
-    if (json?.users) {
-      for (const u of json.users) {
-        const user = u.user || u;
-        if (!user.username) continue;
-        profiles.push({
-          handle:     user.username,
-          fullName:   user.full_name || '',
-          followers:  String(user.follower_count ?? ''),
-          bio:        user.biography || '',
-          isVerified: !!(user.is_verified),
-          postCount:  String(user.media_count ?? ''),
-          profileUrl: `https://www.instagram.com/${user.username}/`,
-          rawPlatform: 'instagram',
-        });
-      }
-    }
+  for (const u of (json?.users || [])) {
+    const user = u.user || u;
+    if (!user.username) continue;
+    profiles.push({
+      handle:     user.username,
+      fullName:   user.full_name || '',
+      followers:  String(user.follower_count ?? ''),
+      bio:        user.biography || '',
+      isVerified: !!(user.is_verified),
+      postCount:  String(user.media_count ?? ''),
+      profileUrl: `https://www.instagram.com/${user.username}/`,
+      rawPlatform: 'instagram',
+    });
   }
 
   return profiles;
 }
 
 // ── TikTok: fetch tag page HTML and parse SIGI_STATE / __NEXT_DATA__ ───────
+// Direct fetch — TikTok's tag pages are public and don't block Vercel IPs heavily.
 async function ttHashtagSearch(keyword) {
   const tag = keyword.replace(/^#/, '').trim();
-  const resp = await bdFetch(
-    `https://www.tiktok.com/tag/${encodeURIComponent(tag)}`,
-    {
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'accept-language': 'en-US,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-    30000
-  );
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  let resp;
+  try {
+    resp = await fetch(
+      `https://www.tiktok.com/tag/${encodeURIComponent(tag)}`,
+      {
+        headers: {
+          'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'accept-language': 'en-US,en;q=0.9',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        signal: ctrl.signal,
+      }
+    );
+  } finally { clearTimeout(t); }
   if (!resp.ok) throw new Error(`TikTok tag page HTTP ${resp.status}`);
   const html = await resp.text();
 
@@ -388,14 +402,22 @@ async function ttHashtagSearch(keyword) {
 }
 
 // ── YouTube channel search ─────────────────────────────────────────────────
-// YouTube search page still embeds ytInitialData — parse it directly
+// YouTube search is public — direct fetch, no BD needed.
 async function ytKeywordSearch(keyword) {
   const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIQAg%3D%3D`;
-  const resp = await bdFetch(url, {
-    'accept': 'text/html,application/xhtml+xml',
-    'accept-language': 'en-US,en;q=0.9',
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  }, 30000);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  let resp;
+  try {
+    resp = await fetch(url, {
+      headers: {
+        'accept': 'text/html,application/xhtml+xml',
+        'accept-language': 'en-US,en;q=0.9',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      signal: ctrl.signal,
+    });
+  } finally { clearTimeout(t); }
   if (!resp.ok) throw new Error(`YouTube HTTP ${resp.status}`);
   const html = await resp.text();
   const m = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s);
@@ -424,18 +446,23 @@ async function ytKeywordSearch(keyword) {
 }
 
 // ── X: fetch search page HTML and parse embedded data ─────────────────────
-// X's search page with f=user filter renders user cards server-side in some regions.
-// We fetch the HTML and look for embedded JSON in script tags.
 async function xUserSearch(keyword) {
-  const resp = await bdFetch(
-    `https://x.com/search?q=${encodeURIComponent(keyword)}&src=typed_query&f=user`,
-    {
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'accept-language': 'en-US,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-    30000
-  );
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  let resp;
+  try {
+    resp = await fetch(
+      `https://x.com/search?q=${encodeURIComponent(keyword)}&src=typed_query&f=user`,
+      {
+        headers: {
+          'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'accept-language': 'en-US,en;q=0.9',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        signal: ctrl.signal,
+      }
+    );
+  } finally { clearTimeout(t); }
   if (!resp.ok) throw new Error(`X search HTTP ${resp.status}`);
   const html = await resp.text();
   const profiles = [];
