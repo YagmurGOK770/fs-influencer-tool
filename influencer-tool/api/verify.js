@@ -274,6 +274,7 @@ async function igHashtagSearch(keyword, sessionCookie) {
   const cookieHeader = sessionCookie.includes('sessionid=') ? sessionCookie : `sessionid=${sessionCookie}`;
   const csrfMatch = cookieHeader.match(/csrftoken=([^;]+)/);
   const csrfToken = csrfMatch ? csrfMatch[1].trim() : '';
+  console.log(`[ig-search] tag=${tag} cookieLen=${cookieHeader.length} hasSessionId=${cookieHeader.includes('sessionid=')} hasCsrf=${!!csrfToken}`);
 
   // Direct fetch (not BrightData) — BrightData strips cookies; home/office IPs not blocked
   async function igDirect(url) {
@@ -312,7 +313,8 @@ async function igHashtagSearch(keyword, sessionCookie) {
 
   let infoJson;
   try { infoJson = JSON.parse(infoText); } catch (_) {
-    throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 200)}`);
+    console.error(`[ig-search] non-JSON body: status=${infoResp.status} len=${infoText.length} body=${infoText.slice(0, 500)}`);
+    throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 500)}`);
   }
 
   // Extract unique authors from top sections.
