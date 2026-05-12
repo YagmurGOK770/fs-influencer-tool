@@ -3673,8 +3673,21 @@ function closeProfileCard() {
 
     <!-- Results table -->
     <div id="bdTableWrap" style="display:none">
-      <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap">
+        <div id="bdViewToggle" style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)">
+          <button id="bdViewMatchBtn" onclick="bdSetView('matching')" type="button"
+            style="padding:6px 12px;border:none;background:var(--green-bg);color:var(--green);font-size:12px;font-weight:700;cursor:pointer">
+            ✓ Matching <span id="bdViewMatchCount" style="font-weight:500;opacity:.8">0</span>
+          </button>
+          <button id="bdViewExclBtn" onclick="bdSetView('excluded')" type="button"
+            style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)">
+            ✕ Filtered out <span id="bdViewExclCount" style="font-weight:500;opacity:.8">0</span>
+          </button>
+        </div>
         <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px">💾 Save filtered results to DB</button>
+      </div>
+      <div id="bdExclHint" style="display:none;padding:8px 12px;margin-bottom:8px;background:#fef8ec;border:1px solid #f5c9a8;border-radius:6px;font-size:11.5px;color:#92400e">
+        Reviewing profiles that did <strong>not</strong> match your filters. The Save button is hidden here — switch to Matching to save.
       </div>
       <div class="table-wrap" style="max-height:60vh">
         <table class="cov-table">
@@ -3710,6 +3723,7 @@ function closeProfileCard() {
 
 let bdAllResults  = []; // all raw results from API
 let bdPlatform    = 'instagram';
+let bdViewMode    = 'matching'; // 'matching' | 'excluded'
 
 function loadEnrichTab() {
   // Restore saved session cookie
@@ -4037,9 +4051,38 @@ function bdApplyFilters() {
     document.getElementById('bdFltCount').textContent = '';
     return;
   }
-  const visible = bdAllResults.filter(bdPassesFilters);
-  document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
-  renderBdTable(visible);
+  const matching = bdAllResults.filter(bdPassesFilters);
+  const excluded = bdAllResults.filter(r => !bdPassesFilters(r));
+  document.getElementById('bdFltCount').textContent = `${matching.length} of ${bdAllResults.length} match filters`;
+  // Update the toggle counts
+  const matchCntEl = document.getElementById('bdViewMatchCount');
+  const exclCntEl  = document.getElementById('bdViewExclCount');
+  if (matchCntEl) matchCntEl.textContent = matching.length;
+  if (exclCntEl)  exclCntEl.textContent  = excluded.length;
+  // Render whichever view is active
+  renderBdTable(bdViewMode === 'excluded' ? excluded : matching);
+}
+
+function bdSetView(mode) {
+  bdViewMode = mode === 'excluded' ? 'excluded' : 'matching';
+  // Update button styles
+  const matchBtn = document.getElementById('bdViewMatchBtn');
+  const exclBtn  = document.getElementById('bdViewExclBtn');
+  const saveBtn  = document.getElementById('bdSaveBtn');
+  const hint     = document.getElementById('bdExclHint');
+  if (matchBtn) {
+    const active = bdViewMode === 'matching';
+    matchBtn.style.background = active ? 'var(--green-bg)' : 'var(--white)';
+    matchBtn.style.color      = active ? 'var(--green)'    : 'var(--muted)';
+  }
+  if (exclBtn) {
+    const active = bdViewMode === 'excluded';
+    exclBtn.style.background = active ? '#fef3ec'         : 'var(--white)';
+    exclBtn.style.color      = active ? 'var(--orange)'   : 'var(--muted)';
+  }
+  if (saveBtn) saveBtn.style.display = bdViewMode === 'excluded' ? 'none' : '';
+  if (hint)    hint.style.display    = bdViewMode === 'excluded' ? '' : 'none';
+  bdApplyFilters();
 }
 
 function bdResetFilters() {
@@ -4211,10 +4254,10 @@ async function runBdSearch() {
           document.getElementById('bdEmpty').style.display = '';
           return;
         }
-        const visible = bdAllResults.filter(bdPassesFilters);
-        document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
-        renderBdTable(visible);
-        setBdStatus(`Found ${bdAllResults.length} profiles — ${visible.length} match your filters.`, 'green');
+        bdSetView('matching');           // reset to matching on new completion
+        bdApplyFilters();                 // also updates the matching/excluded counts
+        const matchedCount = bdAllResults.filter(bdPassesFilters).length;
+        setBdStatus(`Found ${bdAllResults.length} profiles — ${matchedCount} match your filters.`, 'green');
         bdSaveCachedResults(keyword, bdPlatform);
         // Keep progress bar visible at 100% for a moment, then hide
         setTimeout(() => bdShowProgress(false), 2000);
