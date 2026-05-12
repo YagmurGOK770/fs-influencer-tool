@@ -264,68 +264,72 @@ export default async function handler(req, res) {
 // No timeout issues when running locally via `node devserver.mjs`.
 // On Vercel (10s limit) this will timeout — use locally for discovery.
 
-async function igHashtagSearch(keyword) {
-  // Only /api/v1/users/web_profile_info/ works without auth through BrightData.
-  // Discovery strategy: try the keyword as a handle, plus common suffix variants,
-  // and verify each one using the already-working profile lookup.
-  const base = keyword.replace(/^#/, '').toLowerCase().replace(/\s+/g, '').trim();
-  const candidates = [...new Set([
-    // exact
-    base,
-    // prefixes
-    `the${base}`,
-    `london${base}`,
-    `uk${base}`,
-    `real${base}`,
-    `official${base}`,
-    `i${base}`,
-    // suffixes
-    `${base}uk`,
-    `${base}london`,
-    `${base}ldn`,
-    `${base}blog`,
-    `${base}blogger`,
-    `${base}blogs`,
-    `${base}guide`,
-    `${base}diaries`,
-    `${base}diary`,
-    `${base}life`,
-    `${base}lover`,
-    `${base}lovers`,
-    `${base}gram`,
-    `${base}official`,
-    `${base}world`,
-    `${base}hub`,
-    `${base}scene`,
-    `${base}culture`,
-    `${base}spot`,
-    `${base}spots`,
-    `${base}daily`,
-    `${base}insiders`,
-    `${base}collective`,
-    `${base}community`,
-  ])];
+async function igHashtagSearch(keyword, sessionCookie) {
+  const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
-  console.log(`[ig-search] probing ${candidates.length} handle candidates for "${keyword}"`);
-
-  const profiles = [];
-  for (const handle of candidates) {
-    const r = await verifyInstagram(handle);
-    console.log(`[ig-search] @${handle} → ok=${r.ok} followers=${r.followers} reason=${r.reason||''}`);
-    if (r.ok) {
-      profiles.push({
-        handle,
-        fullName:   r.fullName || '',
-        followers:  r.followers || '',
-        bio:        r.bio || '',
-        isVerified: !!(r.isVerified),
-        postCount:  r.postCount || '',
-        profileUrl: `https://www.instagram.com/${handle}/`,
-        rawPlatform: 'instagram',
-      });
-    }
+  if (!sessionCookie) {
+    throw new Error('Instagram session cookie required for hashtag search. Paste your sessionid= cookie in the search panel.');
   }
-  console.log(`[ig-search] "${keyword}" → ${profiles.length} real accounts found`);
+
+  const cookieHeader = sessionCookie.includes('sessionid=') ? sessionCookie : `sessionid=${sessionCookie}`;
+
+  // Step 1: get hashtag ID
+  const tagResp = await bdFetch(
+    `https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`,
+    {
+      'x-ig-app-id': '936619743392459',
+      'accept': '*/*',
+      'accept-language': 'en-US,en;q=0.9',
+      'referer': `https://www.instagram.com/explore/tags/${tag}/`,
+      'cookie': cookieHeader,
+    },
+    45000
+  );
+  const tagText = await tagResp.text();
+  console.log(`[ig-search] tag_info status=${tagResp.status} len=${tagText.length} snippet=${tagText.slice(0,150)}`);
+  if (!tagResp.ok) throw new Error(`Instagram tag lookup HTTP ${tagResp.status} — cookie may be expired`);
+  let tagJson;
+  try { tagJson = JSON.parse(tagText); } catch (_) { throw new Error(`Instagram tag returned non-JSON: ${tagText.slice(0,150)}`); }
+  const tagId = tagJson?.data?.hashtag?.id || tagJson?.id;
+  if (!tagId) throw new Error(`Hashtag #${tag} not found — check your session cookie`);
+
+  // Step 2: fetch top + recent posts via GraphQL
+  const [topResp, recentResp] = await Promise.all([
+    bdFetch(
+      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=top`,
+      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/`, 'cookie': cookieHeader },
+      45000
+    ),
+    bdFetch(
+      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=recent`,
+      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/`, 'cookie': cookieHeader },
+      45000
+    ),
+  ]);
+
+  const topJson    = topResp.ok    ? await topResp.json().catch(() => ({}))    : {};
+  const recentJson = recentResp.ok ? await recentResp.json().catch(() => ({})) : {};
+  const allItems   = [...(topJson.items || []), ...(recentJson.items || [])];
+  console.log(`[ig-search] top=${topJson.items?.length||0} recent=${recentJson.items?.length||0} total items=${allItems.length}`);
+
+  const seen = new Set();
+  const profiles = [];
+  for (const item of allItems) {
+    const u = item.user || item.owner;
+    if (!u?.username || seen.has(u.username)) continue;
+    seen.add(u.username);
+    profiles.push({
+      handle:     u.username,
+      fullName:   u.full_name || '',
+      followers:  String(u.follower_count ?? u.edge_followed_by?.count ?? ''),
+      bio:        u.biography || '',
+      isVerified: !!(u.is_verified),
+      postCount:  String(u.media_count ?? u.edge_owner_to_timeline_media?.count ?? ''),
+      profileUrl: `https://www.instagram.com/${u.username}/`,
+      rawPlatform: 'instagram',
+    });
+  }
+  console.log(`[ig-search] #${tag} → ${profiles.length} unique authors`);
   return profiles;
 }
 
@@ -460,20 +464,20 @@ async function handleBdSearch(req, res) {
   const token = process.env.BRIGHTDATA_API_TOKEN;
   if (!token) return res.status(500).json({ error: 'BRIGHTDATA_API_TOKEN env var not set' });
 
-  const { platform, keyword } = req.body || {};
+  const { platform, keyword, sessionCookie } = req.body || {};
   const PLATFORMS = ['instagram', 'tiktok', 'youtube', 'x'];
   if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: `Unsupported platform: ${platform}` });
   if (!keyword || !keyword.trim()) return res.status(400).json({ error: 'keyword is required' });
 
   const kw = keyword.trim();
-  console.log(`[bd-search:${platform}] keyword="${kw}"`);
+  console.log(`[bd-search:${platform}] keyword="${kw}" hasCookie=${!!(sessionCookie)}`);
 
   let profiles = [];
   let debug = null;
   try {
     let result;
     if (platform === 'instagram') {
-      result = await igHashtagSearch(kw);
+      result = await igHashtagSearch(kw, sessionCookie || '');
     } else if (platform === 'tiktok') {
       result = await ttHashtagSearch(kw);
     } else if (platform === 'youtube') {

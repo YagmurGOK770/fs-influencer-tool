@@ -3624,6 +3624,14 @@ function closeProfileCard() {
         <button class="btn-green" id="bdRunBtn" onclick="runBdSearch()" style="white-space:nowrap">▶ Search</button>
         <button class="btn-sm" onclick="bdClear()" style="white-space:nowrap">✕ Clear</button>
       </div>
+      <!-- Session cookie row — Instagram/TikTok need auth for hashtag feeds -->
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
+        <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Session Cookie</label>
+        <input type="password" id="bdSessionCookie" placeholder="Paste your Instagram sessionid=... cookie here (stored locally only)"
+          style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace"
+          oninput="localStorage.setItem('bd_session_cookie', this.value)">
+        <span style="font-size:11px;color:var(--muted)">Required for hashtag search · <a href="https://www.instagram.com" target="_blank" style="color:var(--blue)">how to get it</a></span>
+      </div>
     </div>
 
     <!-- Pre-fetch filters -->
@@ -3710,7 +3718,11 @@ function closeProfileCard() {
 let bdAllResults  = []; // all raw results from API
 let bdPlatform    = 'instagram';
 
-function loadEnrichTab() { /* input-driven, nothing to load */ }
+function loadEnrichTab() {
+  // Restore saved session cookie
+  const saved = localStorage.getItem('bd_session_cookie');
+  if (saved) document.getElementById('bdSessionCookie').value = saved;
+}
 
 function bdClear() {
   bdAllResults = [];
@@ -3818,7 +3830,7 @@ async function runBdSearch() {
   try {
     const resp = await fetch('/api/verify', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword }),
+      body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookie: document.getElementById('bdSessionCookie')?.value?.trim() || '' }),
     });
     const data = await resp.json();
     if (!resp.ok || data.error) {
