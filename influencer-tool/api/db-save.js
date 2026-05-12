@@ -47,16 +47,16 @@ function toRow(inf) {
   };
 }
 
-// Cache known columns across warm invocations
-let knownColumns = null;
+// Cache known columns per-table across warm invocations
+const knownColumnsByTable = {};
 
-async function getKnownColumns(supabase) {
-  if (knownColumns) return knownColumns;
-  const { data, error } = await supabase.from('influencers').select('*').limit(1);
+async function getKnownColumns(supabase, table = 'influencers') {
+  if (knownColumnsByTable[table]) return knownColumnsByTable[table];
+  const { data, error } = await supabase.from(table).select('*').limit(1);
   if (!error && data && data.length > 0) {
-    knownColumns = new Set(Object.keys(data[0]));
+    knownColumnsByTable[table] = new Set(Object.keys(data[0]));
   }
-  return knownColumns;
+  return knownColumnsByTable[table];
 }
 
 function filterRow(row, cols) {
@@ -79,6 +79,9 @@ function bdToRow(p) {
     post_count:      p.postCount   || null,
     is_verified:     p.isVerified  ?? null,
     engagement_rate: p.engagementRate != null ? String(p.engagementRate) : null,
+    avg_likes:       p.avgLikes     ?? null,
+    avg_comments:    p.avgComments  ?? null,
+    hashtag_posts:   p.hashtagPosts ?? null,
     location:        p.location    || null,
     country:         p.country     || null,
     likes:           p.likes       || null,
@@ -92,7 +95,8 @@ async function handleBrightDataSave(req, res, supabase) {
   const { profiles } = req.body || {};
   if (!Array.isArray(profiles) || !profiles.length)
     return res.status(400).json({ error: 'profiles[] is required' });
-  const rows = profiles.map(bdToRow).filter(r => r.handle && r.platform);
+  const cols = await getKnownColumns(supabase, 'brightdata_profiles');
+  const rows = profiles.map(bdToRow).map(r => filterRow(r, cols)).filter(r => r.handle && r.platform);
   if (!rows.length) return res.status(400).json({ error: 'No valid profiles to save' });
   const { error, data } = await supabase
     .from('brightdata_profiles')
