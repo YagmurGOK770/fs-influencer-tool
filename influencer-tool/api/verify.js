@@ -269,16 +269,42 @@ async function igHashtagSearch(keyword) {
   // Discovery strategy: try the keyword as a handle, plus common suffix variants,
   // and verify each one using the already-working profile lookup.
   const base = keyword.replace(/^#/, '').toLowerCase().replace(/\s+/g, '').trim();
-  const candidates = [
+  const candidates = [...new Set([
+    // exact
     base,
-    `${base}uk`,
-    `${base}london`,
-    `${base}blog`,
-    `${base}blogger`,
+    // prefixes
+    `the${base}`,
     `london${base}`,
     `uk${base}`,
-    `the${base}`,
-  ];
+    `real${base}`,
+    `official${base}`,
+    `i${base}`,
+    // suffixes
+    `${base}uk`,
+    `${base}london`,
+    `${base}ldn`,
+    `${base}blog`,
+    `${base}blogger`,
+    `${base}blogs`,
+    `${base}guide`,
+    `${base}diaries`,
+    `${base}diary`,
+    `${base}life`,
+    `${base}lover`,
+    `${base}lovers`,
+    `${base}gram`,
+    `${base}official`,
+    `${base}world`,
+    `${base}hub`,
+    `${base}scene`,
+    `${base}culture`,
+    `${base}spot`,
+    `${base}spots`,
+    `${base}daily`,
+    `${base}insiders`,
+    `${base}collective`,
+    `${base}community`,
+  ])];
 
   console.log(`[ig-search] probing ${candidates.length} handle candidates for "${keyword}"`);
 
@@ -305,15 +331,26 @@ async function igHashtagSearch(keyword) {
 
 async function ttHashtagSearch(keyword) {
   const base = keyword.replace(/^#/, '').toLowerCase().replace(/\s+/g, '').trim();
-  const candidates = [
+  const candidates = [...new Set([
     base,
-    `${base}uk`,
-    `${base}london`,
-    `${base}food`,
+    `the${base}`,
     `london${base}`,
     `uk${base}`,
-    `the${base}`,
-  ];
+    `real${base}`,
+    `${base}uk`,
+    `${base}london`,
+    `${base}ldn`,
+    `${base}blog`,
+    `${base}blogger`,
+    `${base}guide`,
+    `${base}diaries`,
+    `${base}diary`,
+    `${base}lover`,
+    `${base}gram`,
+    `${base}official`,
+    `${base}daily`,
+    `${base}collective`,
+  ])];
 
   console.log(`[tt-search] probing ${candidates.length} handle candidates for "${keyword}"`);
 
