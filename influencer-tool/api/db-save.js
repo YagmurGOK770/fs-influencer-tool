@@ -106,6 +106,43 @@ async function handleBrightDataSave(req, res, supabase) {
   return res.status(200).json({ saved: data?.length ?? rows.length });
 }
 
+// ── Filter presets (saved to filter_presets table) ─────────────────────
+async function handlePresetList(req, res, supabase) {
+  const { data, error } = await supabase
+    .from('filter_presets')
+    .select('id, name, state, created_at')
+    .order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(200).json({ presets: data || [] });
+}
+
+async function handlePresetSave(req, res, supabase) {
+  const { name, state } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim())
+    return res.status(400).json({ error: 'name is required' });
+  if (!state || typeof state !== 'object')
+    return res.status(400).json({ error: 'state object is required' });
+  const trimmedName = name.trim();
+  const { data, error } = await supabase
+    .from('filter_presets')
+    .upsert({ name: trimmedName, state }, { onConflict: 'name' })
+    .select('id, name, state, created_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(200).json({ preset: data });
+}
+
+async function handlePresetDelete(req, res, supabase) {
+  const { name } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  const { error } = await supabase
+    .from('filter_presets')
+    .delete()
+    .eq('name', name);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(200).json({ ok: true });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -115,9 +152,11 @@ export default async function handler(req, res) {
   if (!checkAuth(req, res)) return;
 
   const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-  if ((req.body || {}).action === 'brightdata') {
-    return handleBrightDataSave(req, res, supabase);
-  }
+  const action = (req.body || {}).action;
+  if (action === 'brightdata')      return handleBrightDataSave(req, res, supabase);
+  if (action === 'preset-list')     return handlePresetList(req, res, supabase);
+  if (action === 'preset-save')     return handlePresetSave(req, res, supabase);
+  if (action === 'preset-delete')   return handlePresetDelete(req, res, supabase);
 
   const { influencers } = req.body || {};
   if (!Array.isArray(influencers) || influencers.length === 0) {

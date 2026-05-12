@@ -3768,7 +3768,8 @@ function loadEnrichTab() {
   } catch (_) { /* ignore corrupt state */ }
   if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
   bdRenderFilterGroups();
-  bdRenderPresets('');
+  // Fetch presets from DB (async, populates dropdown when it arrives)
+  bdFetchPresets('');
   // Restore collapse state — if user previously collapsed, collapse now
   if (localStorage.getItem('bd_filter_panel_collapsed') === '1') {
     bdToggleFilters(true);
@@ -4167,17 +4168,9 @@ function bdUpdateFilterSummary() {
   sum.textContent = `· ${groups} group${groups===1?'':'s'} · ${rules} active rule${rules===1?'':'s'} · ${top==='AND'?'ALL':'ANY'} match`;
 }
 
-// ── Filter presets ─────────────────────────────────────────────────────
-// Stored as: [{ name, state: { topMode, groups: [{ mode, rules: [{ field, op, value }] }] } }]
-
-function bdGetPresets() {
-  try { return JSON.parse(localStorage.getItem('bd_filter_presets') || '[]'); }
-  catch (_) { return []; }
-}
-
-function bdSetPresets(arr) {
-  try { localStorage.setItem('bd_filter_presets', JSON.stringify(arr)); } catch (_) {}
-}
+// ── Filter presets (stored in Supabase filter_presets table) ──────────
+// Cache locally so the dropdown stays snappy; refresh after save/delete.
+let bdPresets = [];
 
 function bdCurrentFilterState() {
   return {
@@ -4189,30 +4182,47 @@ function bdCurrentFilterState() {
   };
 }
 
+async function bdFetchPresets(selected) {
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'preset-list' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    bdPresets = data.presets || [];
+  } catch (e) {
+    console.warn('Failed to load presets:', e.message);
+    bdPresets = [];
+  }
+  bdRenderPresets(selected || '');
+}
+
 function bdRenderPresets(selected) {
   const sel = document.getElementById('bdPresetSel');
   if (!sel) return;
-  const presets = bdGetPresets();
-  sel.innerHTML = `<option value="">${presets.length ? 'Load preset…' : '(no saved presets)'}</option>` +
-    presets.map(p => `<option value="${p.name.replace(/"/g,'&quot;')}" ${p.name === selected ? 'selected' : ''}>${p.name}</option>`).join('');
+  sel.innerHTML = `<option value="">${bdPresets.length ? 'Load preset…' : '(no saved presets)'}</option>` +
+    bdPresets.map(p => `<option value="${p.name.replace(/"/g,'&quot;')}" ${p.name === selected ? 'selected' : ''}>${p.name}</option>`).join('');
   const delBtn = document.getElementById('bdDeletePresetBtn');
   if (delBtn) delBtn.style.display = selected ? '' : 'none';
 }
 
-function bdSavePreset() {
+async function bdSavePreset() {
   const name = (prompt('Preset name (e.g. "UK food creators 10K+"):') || '').trim();
   if (!name) return;
-  const presets = bdGetPresets();
-  const existing = presets.findIndex(p => p.name === name);
-  const entry = { name, state: bdCurrentFilterState() };
-  if (existing >= 0) {
-    if (!confirm(`A preset called "${name}" already exists. Overwrite it?`)) return;
-    presets[existing] = entry;
-  } else {
-    presets.push(entry);
+  const existing = bdPresets.find(p => p.name === name);
+  if (existing && !confirm(`A preset called "${name}" already exists. Overwrite it?`)) return;
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'preset-save', name, state: bdCurrentFilterState() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    await bdFetchPresets(name);
+  } catch (e) {
+    alert(`Failed to save preset: ${e.message}`);
   }
-  bdSetPresets(presets);
-  bdRenderPresets(name);
 }
 
 function bdLoadPreset(name) {
@@ -4221,9 +4231,9 @@ function bdLoadPreset(name) {
     if (delBtn) delBtn.style.display = 'none';
     return;
   }
-  const preset = bdGetPresets().find(p => p.name === name);
+  const preset = bdPresets.find(p => p.name === name);
   if (!preset) return;
-  const s = preset.state;
+  const s = preset.state || {};
   bdFilterGroups = (s.groups || []).map(g => bdNewGroup({
     mode: g.mode || 'AND',
     rules: (g.rules || []).map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '' })),
@@ -4239,13 +4249,22 @@ function bdLoadPreset(name) {
   if (delBtn) delBtn.style.display = '';
 }
 
-function bdDeletePreset() {
+async function bdDeletePreset() {
   const sel = document.getElementById('bdPresetSel');
   const name = sel?.value;
   if (!name) return;
   if (!confirm(`Delete preset "${name}"?`)) return;
-  bdSetPresets(bdGetPresets().filter(p => p.name !== name));
-  bdRenderPresets('');
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'preset-delete', name }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    await bdFetchPresets('');
+  } catch (e) {
+    alert(`Failed to delete preset: ${e.message}`);
+  }
 }
 
 function renderBdTable(rows) {
