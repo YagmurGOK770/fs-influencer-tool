@@ -285,14 +285,12 @@ async function igHashtagSearch(keyword, sessionCookie) {
           'x-ig-app-id': '936619743392459',
           'x-csrftoken': csrfToken,
           'x-requested-with': 'XMLHttpRequest',
-          'accept': '*/*',
+          'accept': 'application/json',
           'accept-language': 'en-US,en;q=0.9',
-          'referer': `https://www.instagram.com/explore/tags/${tag}/`,
+          'referer': 'https://www.instagram.com/',
+          'origin': 'https://www.instagram.com',
           'cookie': cookieHeader,
           'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'sec-fetch-dest': 'empty',
-          'sec-fetch-mode': 'cors',
-          'sec-fetch-site': 'same-origin',
         },
         signal: ctrl.signal,
       });
@@ -314,16 +312,28 @@ async function igHashtagSearch(keyword, sessionCookie) {
     throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 200)}`);
   }
 
-  // Extract unique authors from top sections
+  // Extract unique authors from top sections.
+  // layout_content uses varying keys (medias, fill_items, one_by_two_item, etc.)
+  // so walk all values to find objects with a .media.user shape.
+  function extractMediaUsers(layoutContent) {
+    const users = [];
+    for (const val of Object.values(layoutContent || {})) {
+      const items = Array.isArray(val) ? val : [val];
+      for (const item of items) {
+        const u = item?.media?.user;
+        if (u?.username) users.push(u);
+      }
+    }
+    return users;
+  }
+
   const topSections = infoJson?.data?.top?.sections || [];
   const seen = new Set();
-  const userStubs = []; // { pk, username, full_name, is_verified }
+  const userStubs = [];
 
   for (const section of topSections) {
-    const medias = section.layout_content?.medias || [];
-    for (const m of medias) {
-      const u = m.media?.user;
-      if (!u?.username || seen.has(u.username)) continue;
+    for (const u of extractMediaUsers(section.layout_content)) {
+      if (seen.has(u.username)) continue;
       seen.add(u.username);
       userStubs.push({ pk: u.pk || u.id, username: u.username, full_name: u.full_name || '', is_verified: !!(u.is_verified) });
     }
