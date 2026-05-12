@@ -3636,38 +3636,22 @@ function closeProfileCard() {
 
     <!-- Pre-fetch filters -->
     <div style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
-      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">
-        Filters <span style="font-weight:400;text-transform:none;font-size:11px">(applied to results — only matching profiles are shown and saved)</span>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap">
+        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+          Filters <span style="font-weight:400;text-transform:none">(applied to results — only matching profiles are shown and saved)</span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <label style="font-size:11px;color:var(--muted)">Match:</label>
+          <select id="bdFltMode" onchange="bdApplyFilters()"
+            style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="AND">ALL (and)</option>
+            <option value="OR">ANY (or)</option>
+          </select>
+        </div>
       </div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Min followers</label>
-          <input type="number" id="bdFltMinF" placeholder="e.g. 10000" min="0"
-            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="bdApplyFilters()">
-        </div>
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Max followers</label>
-          <input type="number" id="bdFltMaxF" placeholder="e.g. 500000" min="0"
-            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="bdApplyFilters()">
-        </div>
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Bio contains</label>
-          <input type="text" id="bdFltBio" placeholder="e.g. london, food"
-            style="width:150px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="bdApplyFilters()">
-        </div>
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Location contains</label>
-          <input type="text" id="bdFltLoc" placeholder="e.g. London, England"
-            style="width:150px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="bdApplyFilters()">
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
-          <input type="checkbox" id="bdFltVerified" onchange="bdApplyFilters()">
-          <label for="bdFltVerified" style="font-size:12px;cursor:pointer">Verified only</label>
-        </div>
+      <div id="bdFilterRows"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="btn-sm" onclick="bdAddFilterRow()">+ Add filter</button>
         <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
         <span id="bdFltCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
@@ -3731,6 +3715,9 @@ function loadEnrichTab() {
   // Restore saved session cookie
   const saved = localStorage.getItem('bd_session_cookie');
   if (saved) document.getElementById('bdSessionCookie').value = saved;
+  // Initialize filter UI with one empty rule
+  if (!bdFilterRules.length) bdFilterRules.push({ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' });
+  bdRenderFilterRows();
 }
 
 function bdClear() {
@@ -3762,40 +3749,159 @@ function bdParseFollowers(val) {
   return parseFloat(s) || 0;
 }
 
-function bdGetFilters() {
-  return {
-    minF:         bdParseFollowers(document.getElementById('bdFltMinF')?.value),
-    maxF:         bdParseFollowers(document.getElementById('bdFltMaxF')?.value) || Infinity,
-    bio:          (document.getElementById('bdFltBio')?.value || '').toLowerCase().trim(),
-    loc:          (document.getElementById('bdFltLoc')?.value || '').toLowerCase().trim(),
-    verifiedOnly: document.getElementById('bdFltVerified')?.checked,
-  };
+// ── Dynamic filter builder ─────────────────────────────────────────────
+// Each rule: { id, field, op, value }
+//   field: followers | bio | location | name | verified
+//   op:    >= | <= | contains | does not contain | is | is not
+//   value: string or boolean
+// Combined with AND or OR via bdFltMode select.
+
+let bdFilterRules = [];
+let bdRuleSeq     = 0;
+
+const BD_FIELD_OPS = {
+  followers: [['>=', '≥'], ['<=', '≤'], ['=', '=']],
+  bio:       [['contains', 'contains'], ['does not contain', 'does not contain']],
+  location:  [['contains', 'contains'], ['does not contain', 'does not contain']],
+  name:      [['contains', 'contains'], ['does not contain', 'does not contain']],
+  verified:  [['is', 'is'], ['is not', 'is not']],
+};
+
+const BD_FIELD_LABELS = {
+  followers: 'Followers',
+  bio:       'Bio',
+  location:  'Location (bio)',
+  name:      'Full name',
+  verified:  'Verified',
+};
+
+function bdDefaultOpFor(field) { return BD_FIELD_OPS[field][0][0]; }
+function bdDefaultValueFor(field) { return field === 'verified' ? 'true' : ''; }
+
+function bdAddFilterRow(initial) {
+  const rule = initial || { id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' };
+  if (!rule.id) rule.id = ++bdRuleSeq;
+  bdFilterRules.push(rule);
+  bdRenderFilterRows();
+  bdApplyFilters();
 }
 
-function bdPassesFilter(r, f) {
-  const followers = bdParseFollowers(r.followers);
-  if (followers < f.minF) return false;
-  if (followers > f.maxF) return false;
-  if (f.verifiedOnly && !r.isVerified) return false;
-  if (f.bio && !(r.bio || '').toLowerCase().includes(f.bio)) return false;
-  if (f.loc && !((r.location || '') + ' ' + (r.country || '')).toLowerCase().includes(f.loc)) return false;
+function bdRemoveFilterRow(id) {
+  bdFilterRules = bdFilterRules.filter(r => r.id !== id);
+  if (!bdFilterRules.length) bdFilterRules.push({ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' });
+  bdRenderFilterRows();
+  bdApplyFilters();
+}
+
+function bdUpdateRule(id, key, val) {
+  const rule = bdFilterRules.find(r => r.id === id);
+  if (!rule) return;
+  rule[key] = val;
+  if (key === 'field') {
+    rule.op = bdDefaultOpFor(val);
+    rule.value = bdDefaultValueFor(val);
+    bdRenderFilterRows();
+  }
+  bdApplyFilters();
+}
+
+function bdRenderFilterRows() {
+  const host = document.getElementById('bdFilterRows');
+  host.innerHTML = bdFilterRules.map(rule => {
+    const opOptions = BD_FIELD_OPS[rule.field].map(([v, label]) =>
+      `<option value="${v}" ${rule.op === v ? 'selected' : ''}>${label}</option>`
+    ).join('');
+    const fieldOptions = Object.entries(BD_FIELD_LABELS).map(([v, label]) =>
+      `<option value="${v}" ${rule.field === v ? 'selected' : ''}>${label}</option>`
+    ).join('');
+
+    let valueInput;
+    if (rule.field === 'verified') {
+      valueInput = `<select onchange="bdUpdateRule(${rule.id}, 'value', this.value)"
+        style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:100px">
+        <option value="true"  ${rule.value === 'true'  ? 'selected' : ''}>verified</option>
+        <option value="false" ${rule.value === 'false' ? 'selected' : ''}>not verified</option>
+      </select>`;
+    } else if (rule.field === 'followers') {
+      valueInput = `<input type="text" value="${rule.value || ''}"
+        placeholder="e.g. 10000 or 10k or 1M"
+        oninput="bdUpdateRule(${rule.id}, 'value', this.value)"
+        style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+    } else {
+      const ph = rule.field === 'location' ? 'e.g. London' : rule.field === 'name' ? 'e.g. Carol' : 'e.g. food, chef';
+      valueInput = `<input type="text" value="${(rule.value || '').replace(/"/g,'&quot;')}"
+        placeholder="${ph}"
+        oninput="bdUpdateRule(${rule.id}, 'value', this.value)"
+        style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+    }
+
+    return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <select onchange="bdUpdateRule(${rule.id}, 'field', this.value)"
+        style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:120px">${fieldOptions}</select>
+      <select onchange="bdUpdateRule(${rule.id}, 'op', this.value)"
+        style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px">${opOptions}</select>
+      ${valueInput}
+      <button onclick="bdRemoveFilterRow(${rule.id})"
+        style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;font-size:14px;color:var(--muted)"
+        title="Remove filter">✕</button>
+    </div>`;
+  }).join('');
+}
+
+function bdEvaluateRule(p, rule) {
+  const { field, op, value } = rule;
+  // Empty text values ignore the rule (it passes everything)
+  if (field !== 'verified' && (value == null || value === '')) return true;
+
+  if (field === 'followers') {
+    const num    = bdParseFollowers(p.followers);
+    const target = bdParseFollowers(value);
+    if (op === '>=') return num >= target;
+    if (op === '<=') return num <= target;
+    if (op === '=')  return num === target;
+  }
+  if (field === 'verified') {
+    const want = value === 'true';
+    return op === 'is' ? !!p.isVerified === want : !!p.isVerified !== want;
+  }
+  // Text fields
+  let haystack = '';
+  if (field === 'bio')      haystack = p.bio || '';
+  if (field === 'name')     haystack = p.fullName || '';
+  if (field === 'location') haystack = `${p.location || ''} ${p.bio || ''}`;  // Instagram lacks location → fall back to bio
+  haystack = haystack.toLowerCase();
+  const needle = String(value).toLowerCase().trim();
+  if (op === 'contains')         return haystack.includes(needle);
+  if (op === 'does not contain') return !haystack.includes(needle);
   return true;
 }
 
+function bdPassesFilters(profile) {
+  const mode = document.getElementById('bdFltMode')?.value || 'AND';
+  // Only count rules that have a non-empty value (verified field always has a value)
+  const active = bdFilterRules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
+  if (!active.length) return true;
+  const results = active.map(r => bdEvaluateRule(profile, r));
+  return mode === 'AND' ? results.every(Boolean) : results.some(Boolean);
+}
+
+// Kept for backwards compat in case anything else references it
+function bdPassesFilter(profile) { return bdPassesFilters(profile); }
+
 function bdApplyFilters() {
-  if (!bdAllResults.length) return;
-  const f = bdGetFilters();
-  const visible = bdAllResults.filter(r => bdPassesFilter(r, f));
+  if (!bdAllResults.length) {
+    document.getElementById('bdFltCount').textContent = '';
+    return;
+  }
+  const visible = bdAllResults.filter(bdPassesFilters);
   document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
   renderBdTable(visible);
 }
 
 function bdResetFilters() {
-  document.getElementById('bdFltMinF').value = '';
-  document.getElementById('bdFltMaxF').value = '';
-  document.getElementById('bdFltBio').value = '';
-  document.getElementById('bdFltLoc').value = '';
-  document.getElementById('bdFltVerified').checked = false;
+  bdFilterRules = [{ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' }];
+  document.getElementById('bdFltMode').value = 'AND';
+  bdRenderFilterRows();
   bdApplyFilters();
 }
 
@@ -3811,17 +3917,35 @@ function renderBdTable(rows) {
   }
   wrap.style.display = '';
   empty.style.display = 'none';
-  tbody.innerHTML = rows.map(r => `
+  tbody.innerHTML = rows.map(r => {
+    const url = r.profileUrl || bdProfileUrlFor(r);
+    const handleHtml = url
+      ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${r.handle || '—'} ↗</a>`
+      : `<span style="font-weight:600;font-size:12px">@${r.handle || '—'}</span>`;
+    return `
     <tr>
-      <td style="font-weight:600;font-size:12px">@${r.handle || '—'}</td>
+      <td>${handleHtml}</td>
       <td style="font-size:12px">${r.fullName || '—'}</td>
       <td style="font-size:12px;font-weight:600">${r.followers || '—'}</td>
       <td style="font-size:12px">${r.postCount || '—'}</td>
       <td style="font-size:12px;text-align:center">${r.isVerified ? '<span style="color:var(--blue)">✓</span>' : '—'}</td>
-      <td style="font-size:11px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.bio||'').replace(/"/g,"'")}">${(r.bio||'—').slice(0,90)}</td>
+      <td style="font-size:11px;color:var(--muted);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.bio||'').replace(/"/g,"'")}">${(r.bio||'—').slice(0,90)}</td>
       <td style="font-size:11px;color:var(--muted)">${r.location || r.country || '—'}</td>
       <td><span class="cov-badge found">✓ live</span></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+}
+
+// Build a fallback profile URL if the backend didn't include one
+function bdProfileUrlFor(r) {
+  if (!r?.handle) return '';
+  const h = r.handle.replace(/^@/, '');
+  const plat = (r.rawPlatform || bdPlatform || '').toLowerCase();
+  if (plat === 'instagram') return `https://www.instagram.com/${h}/`;
+  if (plat === 'tiktok')    return `https://www.tiktok.com/@${h}`;
+  if (plat === 'youtube')   return `https://www.youtube.com/@${h}`;
+  if (plat === 'x')         return `https://x.com/${h}`;
+  return '';
 }
 
 function bdShowProgress(show) {
