@@ -3632,8 +3632,8 @@ function closeProfileCard() {
       <span id="enrichStatusText"></span>
     </div>
 
-    <!-- Filters — shown after first run -->
-    <div id="enrichFilters" style="display:none;background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
+    <!-- Filters — always visible -->
+    <div id="enrichFilters" style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
       <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Filter results</div>
       <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
         <div>
@@ -3788,7 +3788,6 @@ function renderEnrichResults() {
   if (!enrichResults.length) {
     wrap.style.display = 'none';
     empty.style.display = '';
-    if (filters) filters.style.display = 'none';
     return;
   }
   wrap.style.display = '';
@@ -3798,8 +3797,6 @@ function renderEnrichResults() {
   const visible = enrichResults.filter(r => rowPassesFilter(r, f));
   const done = enrichResults.filter(r => r.status === 'done').length;
 
-  // Show filters once we have results
-  if (filters && done > 0) filters.style.display = '';
   const countEl = document.getElementById('enrichFltCount');
   if (countEl) countEl.textContent = `Showing ${visible.length} of ${enrichResults.length}`;
 
@@ -3846,41 +3843,6 @@ async function runBrightDataEnrich() {
   renderEnrichResults();
   setEnrichStatus(`Querying BrightData for ${handles.length} ${platform} profile${handles.length > 1 ? 's' : ''}…`, '');
 
-  let totalDone = 0, totalFailed = 0;
-
-  for (const [platform, entries] of Object.entries(byPlatform)) {
-    if (!entries.length) continue;
-    setEnrichStatus(`[${platform}] Submitting ${entries.length} profiles…`, '');
-    try {
-      const resp = await fetch('/api/verify', {
-        method: 'POST',
-        headers: getApiHeaders(),
-        body: JSON.stringify({ action: 'brightdata', platform, profiles: entries.map(e => e.profile) }),
-      });
-      const data = await resp.json();
-      if (!resp.ok || data.error) {
-        entries.forEach(e => { enrichJobMap[e.handle] = { status: 'error', error: data.error || 'Request failed' }; });
-        totalFailed += entries.length;
-        setEnrichStatus(`[${platform}] Failed: ${data.error || 'unknown'}`, 'red');
-        renderEnrichTable();
-        continue;
-      }
-
-      // Apply results
-      const results = data.results || {};
-      for (const entry of entries) {
-        const r = results[entry.profile] || results[entry.profile.replace(/^@/, '')];
-        if (!r || r.error) {
-          enrichJobMap[entry.handle] = { status: 'error', error: r?.error || 'No data returned' };
-          totalFailed++;
-        } else {
-          enrichJobMap[entry.handle] = { status: 'done', result: r };
-          // Apply to the influencer object
-          const inf = enrichData.find(i => i.handle === entry.handle);
-          if (inf) {
-            if (platform === 'instagram') {
-              if (r.followers)  { inf.igFollowers = r.followers; inf.followers = r.followers; }
-              if (r.fullName && !inf.name) inf.name = r.fullName;
   try {
     const resp = await fetch('/api/verify', {
       method: 'POST', headers: getApiHeaders(),
@@ -3908,7 +3870,7 @@ async function runBrightDataEnrich() {
       }
     }
     renderEnrichResults();
-    setEnrichStatus(`Done — ${done} enriched${failed ? ', ' + failed + ' failed' : ''}. Results saved to BrightData table.`, failed ? '' : 'green');
+    setEnrichStatus(`Done — ${done} enriched${failed ? ', ' + failed + ' failed' : ''}.`, failed ? '' : 'green');
 
     // Save to brightdata_profiles table
     const toSave = enrichResults.filter(r => r.status === 'done').map(r => ({ ...r.data, rawPlatform: platform }));
@@ -3919,7 +3881,8 @@ async function runBrightDataEnrich() {
           body: JSON.stringify({ action: 'brightdata', profiles: toSave }),
         });
         const saveData = await saveResp.json();
-        if (!saveResp.ok) console.warn('BD save failed:', saveData.error);
+        if (saveResp.ok) setEnrichStatus(`Done — ${done} enriched & saved to BrightData table.${failed ? ' ' + failed + ' failed.' : ''}`, 'green');
+        else console.warn('BD save failed:', saveData.error);
       } catch (_) {}
     }
   } catch (e) {
