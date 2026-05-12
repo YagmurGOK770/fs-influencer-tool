@@ -3799,7 +3799,7 @@ function renderBdTable(rows) {
       <td style="font-size:12px;text-align:center">${r.isVerified ? '<span style="color:var(--blue)">✓</span>' : '—'}</td>
       <td style="font-size:11px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.bio||'').replace(/"/g,"'")}">${(r.bio||'—').slice(0,90)}</td>
       <td style="font-size:11px;color:var(--muted)">${r.location || r.country || '—'}</td>
-      <td>${r.followers ? '<span class="cov-badge found">✓ live</span>' : '<span class="cov-badge" style="background:#fff3cd;color:#856404;border:1px solid #ffc107">unverified</span>'}</td>
+      <td><span class="cov-badge found">✓ live</span></td>
     </tr>`).join('');
 }
 
@@ -3829,11 +3829,7 @@ async function runBdSearch() {
     }
     bdAllResults = data.profiles || [];
     if (!bdAllResults.length) {
-      const d = data.debug || {};
-      let msg = 'No profiles found.';
-      if (d.linkSample) msg += ` Google found ${d.linkSample.length} links, 0 handles extracted. Sample: ${d.linkSample[0] || 'none'}`;
-      if (d.handles?.length) msg += ` Handles found: ${d.handles.join(', ')}. Verify: ${(d.verifyResults||[]).map(v=>`${v.handle}=${v.reason||'ok'}`).join(', ')}`;
-      setBdStatus(msg, 'red');
+      setBdStatus('No profiles found. Try a different keyword or hashtag.', 'red');
       document.getElementById('bdEmpty').style.display = '';
       return;
     }

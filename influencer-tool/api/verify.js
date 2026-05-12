@@ -260,191 +260,193 @@ export default async function handler(req, res) {
 // ── BrightData Search: hashtag / keyword discovery ────────────────────────
 // Called when body contains { action: 'bd-search', platform, keyword }
 //
-// Strategy: BrightData Web Unlocker is a browser-rendering proxy.
-// It works well for full HTML pages but returns its own error pages when
-// used against JSON-only API endpoints (no browser rendering to do).
-//
-// So we fetch real HTML pages and parse the embedded data structures that
-// each platform server-renders into their pages for SEO/SSR bots.
-
-// ── Instagram / TikTok / X: Google SERP → extract handles → verify profiles ──
-// Strategy:
-//   1. Query Google via BrightData SERP API for "site:instagram.com <keyword>"
-//   2. Extract @handles from the organic result URLs/snippets
-//   3. For each handle, call the already-working verifyInstagram() to get
-//      follower counts, bio, verified status — this endpoint works through BD.
-//
-// BrightData SERP API: POST https://api.brightdata.com/serp/google
-// Returns structured JSON with organic results (url, title, snippet).
-// Much faster than Web Unlocker page rendering (~2-4s vs 10-20s).
-
-// Fetch Google search results via BrightData Web Unlocker (bypasses CAPTCHA/IP blocks)
-// and parse the organic result URLs. Returns [{url}] objects.
-// BrightData on Google is typically 3-5s — fast enough within the 10s Vercel budget.
-async function bdSerpSearch(query) {
-  const resp = await bdFetch(
-    `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20&hl=en&gl=gb`,
-    {
-      'accept': 'text/html,application/xhtml+xml',
-      'accept-language': 'en-GB,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-    8000
-  );
-  if (!resp.ok) throw new Error(`Google search HTTP ${resp.status}`);
-  const html = await resp.text();
-
-  // Google puts real destination URLs in href="/url?q=<encoded>" or direct href="https://..."
-  const results = [];
-  const seen = new Set();
-
-  // Pattern 1: /url?q=https://... (standard Google result links)
-  const googleUrlRe = /\/url\?q=(https?:\/\/(?!google\.)[^&"]+)/gi;
-  let m;
-  while ((m = googleUrlRe.exec(html)) !== null) {
-    const u = decodeURIComponent(m[1]);
-    if (!seen.has(u)) { seen.add(u); results.push({ url: u }); }
-  }
-
-  // Pattern 2: direct href="https://..." for any missed links
-  if (results.length === 0) {
-    const directRe = /href="(https?:\/\/(?!(?:www\.)?google\.)[^"&]+)/gi;
-    while ((m = directRe.exec(html)) !== null) {
-      const u = m[1];
-      if (!seen.has(u)) { seen.add(u); results.push({ url: u }); }
-    }
-  }
-
-  console.log(`[serp] query="${query}" → ${results.length} links, sample: ${results[0]?.url || 'none'}`);
-  return results;
-}
-
-function extractIgHandles(serpResults) {
-  const handles = new Set();
-  const urlRe = /instagram\.com\/([A-Za-z0-9_.]{1,30})\/?/g;
-  for (const r of serpResults) {
-    for (const text of [r.url || '', r.link || '', r.title || '', r.snippet || '']) {
-      let m;
-      while ((m = urlRe.exec(text)) !== null) {
-        const h = m[1].toLowerCase();
-        if (!['p', 'reel', 'tv', 'explore', 'stories', 'accounts', 'about', 'legal', 'help'].includes(h)) {
-          handles.add(h);
-        }
-      }
-      urlRe.lastIndex = 0;
-    }
-  }
-  return [...handles];
-}
-
-function extractTtHandles(serpResults) {
-  const handles = new Set();
-  const urlRe = /tiktok\.com\/@([A-Za-z0-9_.]{1,30})\/?/g;
-  for (const r of serpResults) {
-    for (const text of [r.url || '', r.link || '', r.title || '', r.snippet || '']) {
-      let m;
-      while ((m = urlRe.exec(text)) !== null) {
-        handles.add(m[1].toLowerCase());
-      }
-      urlRe.lastIndex = 0;
-    }
-  }
-  return [...handles];
-}
-
-function extractYtHandles(serpResults) {
-  const handles = new Set();
-  // YouTube channels: youtube.com/@handle or youtube.com/c/name or youtube.com/channel/UCxxx
-  const handleRe = /youtube\.com\/@([A-Za-z0-9_.%-]{1,60})\/?/g;
-  for (const r of serpResults) {
-    for (const text of [r.url || '', r.link || '', r.title || '', r.snippet || '']) {
-      let m;
-      while ((m = handleRe.exec(text)) !== null) {
-        handles.add(m[1]);
-      }
-      handleRe.lastIndex = 0;
-    }
-  }
-  return [...handles];
-}
-
-function extractXHandles(serpResults) {
-  const handles = new Set();
-  const urlRe = /(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})\/?(?:\s|$|[^/])/g;
-  for (const r of serpResults) {
-    for (const text of [r.url || '', r.link || '', r.title || '', r.snippet || '']) {
-      let m;
-      while ((m = urlRe.exec(text)) !== null) {
-        const h = m[1].toLowerCase();
-        if (!['search', 'home', 'explore', 'i', 'intent', 'hashtag', 'share'].includes(h)) {
-          handles.add(h);
-        }
-      }
-      urlRe.lastIndex = 0;
-    }
-  }
-  return [...handles];
-}
+// Calls platform APIs directly through BrightData Web Unlocker.
+// No timeout issues when running locally via `node devserver.mjs`.
+// On Vercel (10s limit) this will timeout — use locally for discovery.
 
 async function igHashtagSearch(keyword) {
-  const serpQuery = `site:instagram.com "${keyword}" food london -/p/ -/reel/`;
-  const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractIgHandles(links).slice(0, 15);
-  console.log(`[ig-search] links=${links.length} handles=${handles.join(',')}`);
+  const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
-  if (!handles.length) {
-    return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
+  // Step 1: resolve hashtag → ID via public search endpoint
+  const searchResp = await bdFetch(
+    `https://www.instagram.com/api/v1/tags/search/?q=${encodeURIComponent(tag)}`,
+    {
+      'x-ig-app-id': '936619743392459',
+      'accept': 'application/json, text/plain, */*',
+      'accept-language': 'en-US,en;q=0.9',
+      'referer': 'https://www.instagram.com/',
+    },
+    30000
+  );
+  if (!searchResp.ok) throw new Error(`Instagram tag search HTTP ${searchResp.status}`);
+  const searchJson = await searchResp.json();
+  const tagObj = (searchJson.results || []).find(r => r.name?.toLowerCase() === tag) || searchJson.results?.[0];
+  if (!tagObj?.id) throw new Error(`Hashtag #${tag} not found on Instagram`);
+
+  // Step 2: fetch recent + top posts for this tag → collect unique authors
+  const [recentResp, topResp] = await Promise.all([
+    bdFetch(
+      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=recent`,
+      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/` },
+      30000
+    ),
+    bdFetch(
+      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=top`,
+      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/` },
+      30000
+    ),
+  ]);
+
+  const recentJson = recentResp.ok ? await recentResp.json().catch(() => ({})) : {};
+  const topJson    = topResp.ok   ? await topResp.json().catch(() => ({}))    : {};
+  const allItems   = [...(recentJson.items || []), ...(topJson.items || [])];
+
+  const seen = new Set();
+  const profiles = [];
+  for (const item of allItems) {
+    const u = item.user || item.owner;
+    if (!u?.username || seen.has(u.username)) continue;
+    seen.add(u.username);
+    profiles.push({
+      handle:     u.username,
+      fullName:   u.full_name || '',
+      followers:  String(u.follower_count ?? u.edge_followed_by?.count ?? ''),
+      bio:        u.biography || '',
+      isVerified: !!(u.is_verified),
+      postCount:  String(u.media_count ?? u.edge_owner_to_timeline_media?.count ?? ''),
+      profileUrl: `https://www.instagram.com/${u.username}/`,
+      rawPlatform: 'instagram',
+    });
   }
-
-  // Return all handles as stub profiles — follower data shown as "—" until verified.
-  // This avoids chaining multiple BrightData calls which would exceed Vercel's 10s limit.
-  const profiles = handles.map(handle => ({
-    handle,
-    fullName:   '',
-    followers:  '',
-    bio:        '',
-    isVerified: false,
-    postCount:  '',
-    profileUrl: `https://www.instagram.com/${handle}/`,
-    rawPlatform: 'instagram',
-  }));
-  return { profiles };
+  console.log(`[ig-search] #${tag} → ${profiles.length} authors from ${allItems.length} posts`);
+  return profiles;
 }
 
 async function ttHashtagSearch(keyword) {
-  const serpQuery = `site:tiktok.com "@" "${keyword}" food london`;
-  const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractTtHandles(links).slice(0, 15);
-  console.log(`[tt-search] links=${links.length} handles=${handles.join(',')}`);
-  if (!handles.length) return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
-  return { profiles: handles.map(handle => ({
-    handle, fullName: '', followers: '', bio: '', isVerified: false, postCount: '',
-    profileUrl: `https://www.tiktok.com/@${handle}`, rawPlatform: 'tiktok',
-  })) };
+  const tag = keyword.replace(/^#/, '').trim();
+
+  // Step 1: resolve hashtag → challenge ID
+  const challengeResp = await bdFetch(
+    `https://www.tiktok.com/api/challenge/detail/?challengeName=${encodeURIComponent(tag)}&aid=1988&app_language=en`,
+    { 'accept': 'application/json, text/plain, */*', 'referer': 'https://www.tiktok.com/' },
+    30000
+  );
+  if (!challengeResp.ok) throw new Error(`TikTok challenge lookup HTTP ${challengeResp.status}`);
+  const challengeJson = await challengeResp.json();
+  const challengeId = challengeJson?.challengeInfo?.challenge?.id;
+  if (!challengeId) throw new Error(`Hashtag #${tag} not found on TikTok`);
+
+  // Step 2: fetch videos for this challenge → collect unique authors
+  const feedResp = await bdFetch(
+    `https://www.tiktok.com/api/challenge/item_list/?challengeID=${challengeId}&count=30&cursor=0&aid=1988&app_language=en`,
+    { 'accept': 'application/json, text/plain, */*', 'referer': 'https://www.tiktok.com/' },
+    30000
+  );
+  if (!feedResp.ok) throw new Error(`TikTok challenge feed HTTP ${feedResp.status}`);
+  const feedJson = await feedResp.json();
+  const items = feedJson.itemList || [];
+
+  const seen = new Set();
+  const profiles = [];
+  for (const item of items) {
+    const a = item.author;
+    const stats = item.authorStats || {};
+    if (!a?.uniqueId || seen.has(a.uniqueId)) continue;
+    seen.add(a.uniqueId);
+    profiles.push({
+      handle:     a.uniqueId,
+      fullName:   a.nickname || '',
+      followers:  String(stats.followerCount ?? a.fans ?? ''),
+      bio:        a.signature || '',
+      isVerified: !!(a.verified),
+      postCount:  String(stats.videoCount ?? ''),
+      profileUrl: `https://www.tiktok.com/@${a.uniqueId}`,
+      rawPlatform: 'tiktok',
+    });
+  }
+  console.log(`[tt-search] #${tag} → ${profiles.length} authors from ${items.length} videos`);
+  return profiles;
 }
 
 async function ytKeywordSearch(keyword) {
-  const serpQuery = `site:youtube.com "@" "${keyword}" food london channel`;
-  const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractYtHandles(links).slice(0, 15);
-  console.log(`[yt-search] links=${links.length} handles=${handles.join(',')}`);
-  if (!handles.length) return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
-  return { profiles: handles.map(handle => ({
-    handle, fullName: '', followers: '', bio: '', isVerified: false, postCount: '',
-    profileUrl: `https://www.youtube.com/@${handle}`, rawPlatform: 'youtube',
-  })) };
+  // YouTube search page embeds ytInitialData server-side — parse it directly
+  const resp = await bdFetch(
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIQAg%3D%3D`,
+    {
+      'accept': 'text/html,application/xhtml+xml',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    30000
+  );
+  if (!resp.ok) throw new Error(`YouTube search HTTP ${resp.status}`);
+  const html = await resp.text();
+  const m = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s);
+  if (!m) throw new Error('YouTube: could not find ytInitialData in page');
+  const data = JSON.parse(m[1]);
+  const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
+    ?.sectionListRenderer?.contents || [];
+  const profiles = [];
+  for (const section of contents) {
+    for (const item of (section?.itemSectionRenderer?.contents || [])) {
+      const ch = item?.channelRenderer;
+      if (!ch) continue;
+      profiles.push({
+        handle:     ch.channelId || '',
+        fullName:   ch.title?.simpleText || '',
+        followers:  (ch.subscriberCountText?.simpleText || '').replace(/\s*subscribers?/i, '').trim(),
+        bio:        ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
+        isVerified: !!(ch.ownerBadges?.some(b => b?.metadataBadgeRenderer?.style === 'BADGE_STYLE_TYPE_VERIFIED')),
+        postCount:  ch.videoCountText?.runs?.map(r => r.text).join('') || '',
+        profileUrl: `https://www.youtube.com/channel/${ch.channelId}`,
+        rawPlatform: 'youtube',
+      });
+    }
+  }
+  console.log(`[yt-search] "${keyword}" → ${profiles.length} channels`);
+  return profiles;
 }
 
 async function xUserSearch(keyword) {
-  const serpQuery = `site:x.com "${keyword}" food london -/status/`;
-  const links = await bdSerpSearch(serpQuery).catch(e => { throw new Error(`Google search failed: ${e.message}`); });
-  const handles = extractXHandles(links).slice(0, 15);
-  console.log(`[x-search] links=${links.length} handles=${handles.join(',')}`);
-  if (!handles.length) return { profiles: [], debug: { serpQuery, linkSample: links.slice(0, 5).map(l => l.url) } };
-  return { profiles: handles.map(handle => ({
-    handle, fullName: '', followers: '', bio: '', isVerified: false, postCount: '',
-    profileUrl: `https://x.com/${handle}`, rawPlatform: 'x',
-  })) };
+  // X search page with f=user — parse __NEXT_DATA__ embedded server-side
+  const resp = await bdFetch(
+    `https://x.com/search?q=${encodeURIComponent(keyword)}&src=typed_query&f=user`,
+    {
+      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'accept-language': 'en-US,en;q=0.9',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    30000
+  );
+  if (!resp.ok) throw new Error(`X search HTTP ${resp.status}`);
+  const html = await resp.text();
+  const profiles = [];
+  const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (nextMatch) {
+    try {
+      const data = JSON.parse(nextMatch[1]);
+      const timeline = data?.props?.pageProps?.timeline_response?.timeline;
+      const entries = (timeline?.instructions || []).flatMap(i => i.entries || i.addEntries?.entries || []);
+      for (const entry of entries) {
+        const ur = entry?.content?.itemContent?.user_results?.result;
+        const user = ur?.legacy;
+        if (!user?.screen_name) continue;
+        profiles.push({
+          handle:     user.screen_name,
+          fullName:   user.name || '',
+          followers:  String(user.followers_count ?? ''),
+          bio:        user.description || '',
+          isVerified: !!(ur?.is_blue_verified || user.verified),
+          postCount:  String(user.statuses_count ?? ''),
+          location:   user.location || '',
+          profileUrl: `https://x.com/${user.screen_name}`,
+          rawPlatform: 'x',
+        });
+      }
+    } catch (_) { /* skip */ }
+  }
+  console.log(`[x-search] "${keyword}" → ${profiles.length} users, htmlLen=${html.length}`);
+  return profiles;
 }
 
 async function handleBdSearch(req, res) {
