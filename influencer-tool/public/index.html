@@ -3616,7 +3616,13 @@ function closeProfileCard() {
           </select>
         </div>
         <div style="flex:1;min-width:200px">
-          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Hashtags or keywords <span style="font-weight:400;text-transform:none;color:var(--muted2)">— comma-separated runs them sequentially</span></label>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Hashtags or keywords <span style="font-weight:400;text-transform:none;color:var(--muted2)">— comma-separated runs them sequentially</span></label>
+            <select id="bdSearchHistory" onchange="bdLoadSearch(this.value)"
+              style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:11px;background:var(--white);max-width:240px">
+              <option value="">Recent searches…</option>
+            </select>
+          </div>
           <input type="text" id="bdKeyword" placeholder="e.g. londonfood, londonfoodie, #wheretoeat"
             style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px"
             onkeydown="if(event.key==='Enter') runBdSearch()">
@@ -3768,8 +3774,9 @@ function loadEnrichTab() {
   } catch (_) { /* ignore corrupt state */ }
   if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
   bdRenderFilterGroups();
-  // Fetch presets from DB (async, populates dropdown when it arrives)
+  // Fetch presets and recent searches from DB (async; populates dropdowns)
   bdFetchPresets('');
+  bdFetchSearchHistory();
   // Restore collapse state — if user previously collapsed, collapse now
   if (localStorage.getItem('bd_filter_panel_collapsed') === '1') {
     bdToggleFilters(true);
@@ -4285,6 +4292,62 @@ async function bdDeletePreset() {
   }
 }
 
+// ── Recent searches (search_keywords table) ────────────────────────────
+let bdSearchHistory = [];
+
+async function bdFetchSearchHistory() {
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'search-list' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    bdSearchHistory = data.searches || [];
+  } catch (e) {
+    console.warn('Failed to load search history:', e.message);
+    bdSearchHistory = [];
+  }
+  bdRenderSearchHistory();
+}
+
+function bdRenderSearchHistory() {
+  const sel = document.getElementById('bdSearchHistory');
+  if (!sel) return;
+  const cur = sel.value;
+  const label = (s) => {
+    const platBadge = s.platform !== 'instagram' ? ` [${s.platform}]` : '';
+    const count = s.result_count != null ? ` (${s.result_count})` : '';
+    const kw = s.keywords.length > 50 ? s.keywords.slice(0, 47) + '…' : s.keywords;
+    return `${kw}${count}${platBadge}`;
+  };
+  sel.innerHTML = `<option value="">${bdSearchHistory.length ? 'Recent searches…' : '(no saved searches yet)'}</option>` +
+    bdSearchHistory.map(s => `<option value="${s.id}">${label(s)}</option>`).join('');
+  sel.value = cur || '';
+}
+
+function bdLoadSearch(id) {
+  if (!id) return;
+  const s = bdSearchHistory.find(x => String(x.id) === String(id));
+  if (!s) return;
+  const kwEl = document.getElementById('bdKeyword');
+  const ptEl = document.getElementById('bdPlatformSel');
+  if (kwEl) kwEl.value = s.keywords;
+  if (ptEl) ptEl.value = s.platform;
+}
+
+async function bdSaveSearchHistory(keywords, platform, resultCount) {
+  try {
+    await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'search-save', keywords, platform, result_count: resultCount }),
+    });
+    await bdFetchSearchHistory();
+  } catch (e) {
+    console.warn('Failed to save search history:', e.message);
+  }
+}
+
 function renderBdTable(rows) {
   const wrap  = document.getElementById('bdTableWrap');
   const empty = document.getElementById('bdEmpty');
@@ -4540,6 +4603,8 @@ async function runBdSearch() {
       'green',
     );
     bdSaveCachedResults(keywords.join(', '), bdPlatform);
+    // Log this search to the DB history so it appears in the Recent dropdown
+    bdSaveSearchHistory(keywords.join(', '), bdPlatform, bdAllResults.length);
     setTimeout(() => bdShowProgress(false), 2000);
   } catch (e) {
     setBdStatus(`Error: ${e.message}`, 'red');

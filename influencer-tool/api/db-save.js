@@ -146,6 +146,47 @@ async function handlePresetDelete(req, res, supabase) {
   return res.status(200).json({ ok: true });
 }
 
+// ── Saved searches: keyword history per platform ───────────────────────
+async function handleSearchList(req, res, supabase) {
+  const { data, error } = await supabase
+    .from('search_keywords')
+    .select('id, keywords, platform, result_count, last_ran_at')
+    .order('last_ran_at', { ascending: false })
+    .limit(50);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(200).json({ searches: data || [] });
+}
+
+async function handleSearchSave(req, res, supabase) {
+  const { keywords, platform, result_count } = req.body || {};
+  if (!keywords || typeof keywords !== 'string' || !keywords.trim())
+    return res.status(400).json({ error: 'keywords (string) is required' });
+  if (!platform || typeof platform !== 'string')
+    return res.status(400).json({ error: 'platform is required' });
+  const normalized = keywords.trim();
+  const { data, error } = await supabase
+    .from('search_keywords')
+    .upsert(
+      { keywords: normalized, platform, result_count: result_count ?? null, last_ran_at: new Date().toISOString() },
+      { onConflict: 'keywords,platform' },
+    )
+    .select('id, keywords, platform, result_count, last_ran_at')
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(200).json({ search: data });
+}
+
+async function handleSearchDelete(req, res, supabase) {
+  const { id } = req.body || {};
+  if (!id) return res.status(400).json({ error: 'id is required' });
+  const { error } = await supabase
+    .from('search_keywords')
+    .delete()
+    .eq('id', id);
+  if (error) return res.status(500).json({ error: error.message });
+  return res.status(200).json({ ok: true });
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -160,6 +201,9 @@ export default async function handler(req, res) {
   if (action === 'preset-list')     return handlePresetList(req, res, supabase);
   if (action === 'preset-save')     return handlePresetSave(req, res, supabase);
   if (action === 'preset-delete')   return handlePresetDelete(req, res, supabase);
+  if (action === 'search-list')     return handleSearchList(req, res, supabase);
+  if (action === 'search-save')     return handleSearchSave(req, res, supabase);
+  if (action === 'search-delete')   return handleSearchDelete(req, res, supabase);
 
   const { influencers } = req.body || {};
   if (!Array.isArray(influencers) || influencers.length === 0) {
