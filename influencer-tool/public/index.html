@@ -3825,7 +3825,7 @@ async function runBdSearch() {
   bdAllResults = [];
   document.getElementById('bdTableWrap').style.display = 'none';
   document.getElementById('bdEmpty').style.display = 'none';
-  setBdStatus(`Searching ${bdPlatform} for "${keyword}" via BrightData…`, '');
+  setBdStatus(`Searching ${bdPlatform} for "${keyword}"… paginating + enriching profiles (~60-120s, human-paced to avoid rate limits)`, '');
 
   try {
     const resp = await fetch('/api/verify', {

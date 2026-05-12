@@ -274,14 +274,18 @@ async function igHashtagSearch(keyword, sessionCookie) {
   const cookieHeader = sessionCookie.includes('sessionid=') ? sessionCookie : `sessionid=${sessionCookie}`;
   const csrfMatch = cookieHeader.match(/csrftoken=([^;]+)/);
   const csrfToken = csrfMatch ? csrfMatch[1].trim() : '';
-  console.log(`[ig-search] tag=${tag} cookieLen=${cookieHeader.length} hasSessionId=${cookieHeader.includes('sessionid=')} hasCsrf=${!!csrfToken} cookieStart=${cookieHeader.slice(0,60)}`);
+
+  // Human-like jittered delay: returns a Promise that resolves after random ms in [minMs, maxMs]
+  const sleep = (minMs, maxMs) => new Promise(r => setTimeout(r, minMs + Math.random() * (maxMs - minMs)));
 
   // Direct fetch (not BrightData) — BrightData strips cookies; home/office IPs not blocked
-  async function igDirect(url) {
+  async function igDirect(url, opts = {}) {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 20000);
     try {
       return await fetch(url, {
+        method: opts.method || 'GET',
+        body: opts.body,
         headers: {
           'x-ig-app-id': '936619743392459',
           'x-csrftoken': csrfToken,
@@ -295,6 +299,7 @@ async function igHashtagSearch(keyword, sessionCookie) {
           'sec-fetch-dest': 'empty',
           'cookie': cookieHeader,
           'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          ...(opts.headers || {}),
         },
         signal: ctrl.signal,
       });
@@ -306,19 +311,14 @@ async function igHashtagSearch(keyword, sessionCookie) {
   // user fields: pk, username, full_name, is_verified (no follower_count here)
   const infoResp = await igDirect(`https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`);
   const infoText = await infoResp.text();
-  const respHeaders = Object.fromEntries(infoResp.headers.entries());
   console.log(`[ig-search] web_info status=${infoResp.status} len=${infoText.length}`);
-  console.log(`[ig-search] resp headers:`, JSON.stringify(respHeaders));
-  console.log(`[ig-search] body first 500:`, infoText.slice(0, 500));
 
-  const diag = `status=${infoResp.status} bodyLen=${infoText.length} cookieLen=${cookieHeader.length} hasSession=${cookieHeader.includes('sessionid=')} hasCsrf=${!!csrfToken} ct=${respHeaders['content-type']||'?'}`;
-
-  if (!infoResp.ok) throw new Error(`Instagram HTTP ${infoResp.status}. ${diag}. Body: "${infoText.slice(0, 300)}"`);
-  if (!infoText.trim()) throw new Error(`Instagram empty body. ${diag}. Headers: ${JSON.stringify(respHeaders).slice(0,400)}`);
+  if (!infoResp.ok) throw new Error(`Instagram HTTP ${infoResp.status} — cookie may be expired`);
+  if (!infoText.trim()) throw new Error(`Instagram returned empty body — cookie may be invalid`);
 
   let infoJson;
   try { infoJson = JSON.parse(infoText); } catch (_) {
-    throw new Error(`Non-JSON. ${diag}. Body: "${infoText.slice(0, 400)}"`);
+    throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 300)}`);
   }
 
   // Extract unique authors from top sections.
@@ -336,23 +336,71 @@ async function igHashtagSearch(keyword, sessionCookie) {
     return users;
   }
 
-  const topSections = infoJson?.data?.top?.sections || [];
   const seen = new Set();
   const userStubs = [];
 
-  for (const section of topSections) {
-    for (const u of extractMediaUsers(section.layout_content)) {
-      if (seen.has(u.username)) continue;
-      seen.add(u.username);
-      userStubs.push({ pk: u.pk || u.id, username: u.username, full_name: u.full_name || '', is_verified: !!(u.is_verified) });
+  function harvestSections(sections) {
+    let added = 0;
+    for (const section of sections || []) {
+      for (const u of extractMediaUsers(section.layout_content)) {
+        if (seen.has(u.username)) continue;
+        seen.add(u.username);
+        userStubs.push({ pk: u.pk || u.id, username: u.username, full_name: u.full_name || '', is_verified: !!(u.is_verified) });
+        added++;
+      }
+    }
+    return added;
+  }
+
+  // Page 1: from web_info top sections
+  const topRoot = infoJson?.data?.top || {};
+  harvestSections(topRoot.sections);
+  console.log(`[ig-search] page 1: ${userStubs.length} unique authors`);
+
+  // Pages 2+: paginate via /api/v1/tags/{tag}/sections/ POST
+  // Cap at 5 pages (~150 authors) with 2-4s human-like delays between pages
+  const MAX_PAGES = 5;
+  let nextMaxId = topRoot.next_max_id;
+  let nextPage = topRoot.next_page;
+  let moreAvailable = !!topRoot.more_available;
+
+  for (let p = 2; p <= MAX_PAGES && moreAvailable && nextMaxId; p++) {
+    await sleep(2000, 4000); // mimic scroll pause
+    try {
+      const body = new URLSearchParams({
+        include_persistent: 'true',
+        max_id: nextMaxId,
+        page: String(nextPage ?? p - 1),
+        surface: 'grid',
+        tab: 'top',
+      }).toString();
+
+      const r = await igDirect(`https://www.instagram.com/api/v1/tags/${encodeURIComponent(tag)}/sections/`, {
+        method: 'POST',
+        body,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      });
+      if (!r.ok) { console.log(`[ig-search] page ${p} HTTP ${r.status}, stopping pagination`); break; }
+      const j = await r.json().catch(() => null);
+      if (!j) { console.log(`[ig-search] page ${p} non-JSON, stopping`); break; }
+
+      const added = harvestSections(j.sections);
+      moreAvailable = !!j.more_available;
+      nextMaxId = j.next_max_id;
+      nextPage = j.next_page;
+      console.log(`[ig-search] page ${p}: +${added} new authors (total ${userStubs.length})`);
+      if (added === 0) break; // no new uniques — stop early
+    } catch (e) {
+      console.log(`[ig-search] page ${p} error: ${e.message}, stopping`);
+      break;
     }
   }
-  console.log(`[ig-search] #${tag} found ${userStubs.length} unique authors in top sections`);
 
   if (userStubs.length === 0) return [];
 
-  // Step 2: fetch full profile for each author to get follower_count + biography
-  // /api/v1/users/{pk}/info/ returns user.follower_count and user.biography
+  // Step 2: enrich each author with follower_count + biography via /api/v1/users/{pk}/info/
+  // Sequential with 600-1400ms jittered delay (mimics human profile browsing)
+  // Slower than parallel but far safer for sustained use
   async function fetchProfile(stub) {
     try {
       const r = await igDirect(`https://www.instagram.com/api/v1/users/${stub.pk}/info/`);
@@ -373,14 +421,12 @@ async function igHashtagSearch(keyword, sessionCookie) {
     } catch (_) { return null; }
   }
 
-  // Fetch up to 20 profiles in parallel batches of 5 to avoid rate limits
   const profiles = [];
-  const toFetch = userStubs.slice(0, 20);
-  for (let i = 0; i < toFetch.length; i += 5) {
-    const batch = toFetch.slice(i, i + 5);
-    const results = await Promise.all(batch.map(fetchProfile));
-    profiles.push(...results.filter(Boolean));
-    if (i + 5 < toFetch.length) await new Promise(r => setTimeout(r, 300));
+  for (let i = 0; i < userStubs.length; i++) {
+    const result = await fetchProfile(userStubs[i]);
+    if (result) profiles.push(result);
+    if (i < userStubs.length - 1) await sleep(600, 1400);
+    if ((i + 1) % 20 === 0) console.log(`[ig-search] enriched ${i + 1}/${userStubs.length}`);
   }
 
   console.log(`[ig-search] #${tag} → ${profiles.length} profiles with follower counts`);
