@@ -93,18 +93,20 @@ function bdToRow(p) {
 }
 
 async function handleBrightDataSave(req, res, supabase) {
-  const { profiles } = req.body || {};
+  const { profiles, target } = req.body || {};
   if (!Array.isArray(profiles) || !profiles.length)
     return res.status(400).json({ error: 'profiles[] is required' });
-  const cols = await getKnownColumns(supabase, 'brightdata_profiles');
+  // target='excluded' writes to the review/excluded table; default = main table
+  const table = target === 'excluded' ? 'brightdata_excluded_profiles' : 'brightdata_profiles';
+  const cols = await getKnownColumns(supabase, table);
   const rows = profiles.map(bdToRow).map(r => filterRow(r, cols)).filter(r => r.handle && r.platform);
   if (!rows.length) return res.status(400).json({ error: 'No valid profiles to save' });
   const { error, data } = await supabase
-    .from('brightdata_profiles')
+    .from(table)
     .upsert(rows, { onConflict: 'handle,platform' })
     .select('handle, platform');
   if (error) return res.status(500).json({ error: error.message });
-  return res.status(200).json({ saved: data?.length ?? rows.length });
+  return res.status(200).json({ saved: data?.length ?? rows.length, table });
 }
 
 // ── Filter presets (saved to filter_presets table) ─────────────────────

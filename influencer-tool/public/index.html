@@ -3697,7 +3697,7 @@ function closeProfileCard() {
         <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px">💾 Save filtered results to DB</button>
       </div>
       <div id="bdExclHint" style="display:none;padding:8px 12px;margin-bottom:8px;background:#fef8ec;border:1px solid #f5c9a8;border-radius:6px;font-size:11.5px;color:#92400e">
-        Reviewing profiles that did <strong>not</strong> match your filters. The Save button is hidden here — switch to Matching to save.
+        Reviewing profiles that did <strong>not</strong> match your filters. Use <strong>Save to review table</strong> to keep them for later analysis (they're stored separately from your main results).
       </div>
       <div class="table-wrap" style="max-height:60vh">
         <table class="cov-table">
@@ -4126,7 +4126,22 @@ function bdSetView(mode) {
     exclBtn.style.background = active ? '#fef3ec'         : 'var(--white)';
     exclBtn.style.color      = active ? 'var(--orange)'   : 'var(--muted)';
   }
-  if (saveBtn) saveBtn.style.display = bdViewMode === 'excluded' ? 'none' : '';
+  // Save button now switches label/style based on view (so excluded view can still save to review table)
+  if (saveBtn) {
+    if (bdViewMode === 'excluded') {
+      saveBtn.textContent       = '💾 Save to review table';
+      saveBtn.style.background  = 'var(--amber-bg)';
+      saveBtn.style.color       = 'var(--amber)';
+      saveBtn.style.border      = '1px solid #f5c9a8';
+      saveBtn.title             = 'Saves to brightdata_excluded_profiles for later review';
+    } else {
+      saveBtn.textContent       = '💾 Save filtered results to DB';
+      saveBtn.style.background  = '';
+      saveBtn.style.color       = '';
+      saveBtn.style.border      = '';
+      saveBtn.title             = 'Saves to brightdata_profiles';
+    }
+  }
   if (hint)    hint.style.display    = bdViewMode === 'excluded' ? '' : 'none';
   bdApplyFilters();
 }
@@ -4537,24 +4552,30 @@ async function runBdSearch() {
 }
 
 async function bdSaveFiltered() {
-  const toSave = bdAllResults.filter(bdPassesFilters).map(r => ({ ...r, rawPlatform: bdPlatform }));
-  if (!toSave.length) { setBdStatus('No filtered profiles to save.', 'red'); return; }
+  // Save matching → brightdata_profiles; excluded → brightdata_excluded_profiles
+  const isExcluded = bdViewMode === 'excluded';
+  const toSave = (isExcluded
+      ? bdAllResults.filter(r => !bdPassesFilters(r))
+      : bdAllResults.filter(bdPassesFilters)
+    ).map(r => ({ ...r, rawPlatform: bdPlatform }));
+  if (!toSave.length) { setBdStatus(`No ${isExcluded ? 'excluded' : 'filtered'} profiles to save.`, 'red'); return; }
   const btn = document.getElementById('bdSaveBtn');
+  const originalText = btn.textContent;
   btn.disabled = true;
   btn.textContent = '⏳ Saving…';
   try {
     const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata', profiles: toSave }),
+      body: JSON.stringify({ action: 'brightdata', profiles: toSave, target: isExcluded ? 'excluded' : 'matching' }),
     });
     const data = await resp.json();
-    if (resp.ok) setBdStatus(`Saved ${data.saved} profiles to BrightData table.`, 'green');
+    if (resp.ok) setBdStatus(`Saved ${data.saved} profiles to ${data.table || 'BrightData table'}.`, 'green');
     else setBdStatus(`Save failed: ${data.error}`, 'red');
   } catch (e) {
     setBdStatus(`Save error: ${e.message}`, 'red');
   } finally {
     btn.disabled = false;
-    btn.textContent = '💾 Save filtered results to DB';
+    btn.textContent = originalText;
   }
 }
 </script>
