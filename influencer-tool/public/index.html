@@ -3627,10 +3627,10 @@ function closeProfileCard() {
       <!-- Session cookie row — Instagram/TikTok need auth for hashtag feeds -->
       <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
         <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Session Cookie</label>
-        <input type="password" id="bdSessionCookie" placeholder="Paste your Instagram sessionid=... cookie here (stored locally only)"
+        <input type="password" id="bdSessionCookie" placeholder="Paste full cookie string from DevTools → Network → instagram.com request → Cookie header"
           style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace"
           oninput="localStorage.setItem('bd_session_cookie', this.value)">
-        <span style="font-size:11px;color:var(--muted)">Required for hashtag search · <a href="https://www.instagram.com" target="_blank" style="color:var(--blue)">how to get it</a></span>
+        <span style="font-size:11px;color:var(--muted)">Required for Instagram · DevTools (F12) → Network → any instagram.com request → Headers → Cookie</span>
       </div>
     </div>
 

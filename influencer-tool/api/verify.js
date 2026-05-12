@@ -268,68 +268,103 @@ async function igHashtagSearch(keyword, sessionCookie) {
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
   if (!sessionCookie) {
-    throw new Error('Instagram session cookie required for hashtag search. Paste your sessionid= cookie in the search panel.');
+    throw new Error('Instagram session cookie required. Paste your sessionid= cookie in the search panel.');
   }
 
   const cookieHeader = sessionCookie.includes('sessionid=') ? sessionCookie : `sessionid=${sessionCookie}`;
+  const csrfMatch = cookieHeader.match(/csrftoken=([^;]+)/);
+  const csrfToken = csrfMatch ? csrfMatch[1].trim() : '';
 
-  // Step 1: get hashtag ID
-  const tagResp = await bdFetch(
-    `https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`,
-    {
-      'x-ig-app-id': '936619743392459',
-      'accept': '*/*',
-      'accept-language': 'en-US,en;q=0.9',
-      'referer': `https://www.instagram.com/explore/tags/${tag}/`,
-      'cookie': cookieHeader,
-    },
-    45000
-  );
-  const tagText = await tagResp.text();
-  console.log(`[ig-search] tag_info status=${tagResp.status} len=${tagText.length} snippet=${tagText.slice(0,150)}`);
-  if (!tagResp.ok) throw new Error(`Instagram tag lookup HTTP ${tagResp.status} — cookie may be expired`);
-  let tagJson;
-  try { tagJson = JSON.parse(tagText); } catch (_) { throw new Error(`Instagram tag returned non-JSON: ${tagText.slice(0,150)}`); }
-  const tagId = tagJson?.data?.hashtag?.id || tagJson?.id;
-  if (!tagId) throw new Error(`Hashtag #${tag} not found — check your session cookie`);
-
-  // Step 2: fetch top + recent posts via GraphQL
-  const [topResp, recentResp] = await Promise.all([
-    bdFetch(
-      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=top`,
-      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/`, 'cookie': cookieHeader },
-      45000
-    ),
-    bdFetch(
-      `https://www.instagram.com/api/v1/feed/tag/?tag_name=${encodeURIComponent(tag)}&tab_type=recent`,
-      { 'x-ig-app-id': '936619743392459', 'accept': '*/*', 'referer': `https://www.instagram.com/explore/tags/${tag}/`, 'cookie': cookieHeader },
-      45000
-    ),
-  ]);
-
-  const topJson    = topResp.ok    ? await topResp.json().catch(() => ({}))    : {};
-  const recentJson = recentResp.ok ? await recentResp.json().catch(() => ({})) : {};
-  const allItems   = [...(topJson.items || []), ...(recentJson.items || [])];
-  console.log(`[ig-search] top=${topJson.items?.length||0} recent=${recentJson.items?.length||0} total items=${allItems.length}`);
-
-  const seen = new Set();
-  const profiles = [];
-  for (const item of allItems) {
-    const u = item.user || item.owner;
-    if (!u?.username || seen.has(u.username)) continue;
-    seen.add(u.username);
-    profiles.push({
-      handle:     u.username,
-      fullName:   u.full_name || '',
-      followers:  String(u.follower_count ?? u.edge_followed_by?.count ?? ''),
-      bio:        u.biography || '',
-      isVerified: !!(u.is_verified),
-      postCount:  String(u.media_count ?? u.edge_owner_to_timeline_media?.count ?? ''),
-      profileUrl: `https://www.instagram.com/${u.username}/`,
-      rawPlatform: 'instagram',
-    });
+  // Direct fetch (not BrightData) — BrightData strips cookies; home/office IPs not blocked
+  async function igDirect(url) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 20000);
+    try {
+      return await fetch(url, {
+        headers: {
+          'x-ig-app-id': '936619743392459',
+          'x-csrftoken': csrfToken,
+          'x-requested-with': 'XMLHttpRequest',
+          'accept': '*/*',
+          'accept-language': 'en-US,en;q=0.9',
+          'referer': `https://www.instagram.com/explore/tags/${tag}/`,
+          'cookie': cookieHeader,
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'sec-fetch-dest': 'empty',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-site': 'same-origin',
+        },
+        signal: ctrl.signal,
+      });
+    } finally { clearTimeout(t); }
   }
-  console.log(`[ig-search] #${tag} → ${profiles.length} unique authors`);
+
+  // Step 1: fetch hashtag top posts via web_info
+  // Verified working: returns data.top.sections[].layout_content.medias[].media.user
+  // user fields: pk, username, full_name, is_verified (no follower_count here)
+  const infoResp = await igDirect(`https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`);
+  const infoText = await infoResp.text();
+  console.log(`[ig-search] web_info status=${infoResp.status} len=${infoText.length}`);
+
+  if (!infoResp.ok) throw new Error(`Instagram returned HTTP ${infoResp.status} — cookie may be expired`);
+  if (!infoText.trim()) throw new Error(`Instagram returned empty body — cookie may be invalid`);
+
+  let infoJson;
+  try { infoJson = JSON.parse(infoText); } catch (_) {
+    throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 200)}`);
+  }
+
+  // Extract unique authors from top sections
+  const topSections = infoJson?.data?.top?.sections || [];
+  const seen = new Set();
+  const userStubs = []; // { pk, username, full_name, is_verified }
+
+  for (const section of topSections) {
+    const medias = section.layout_content?.medias || [];
+    for (const m of medias) {
+      const u = m.media?.user;
+      if (!u?.username || seen.has(u.username)) continue;
+      seen.add(u.username);
+      userStubs.push({ pk: u.pk || u.id, username: u.username, full_name: u.full_name || '', is_verified: !!(u.is_verified) });
+    }
+  }
+  console.log(`[ig-search] #${tag} found ${userStubs.length} unique authors in top sections`);
+
+  if (userStubs.length === 0) return [];
+
+  // Step 2: fetch full profile for each author to get follower_count + biography
+  // /api/v1/users/{pk}/info/ returns user.follower_count and user.biography
+  async function fetchProfile(stub) {
+    try {
+      const r = await igDirect(`https://www.instagram.com/api/v1/users/${stub.pk}/info/`);
+      if (!r.ok) return null;
+      const j = await r.json().catch(() => null);
+      const u = j?.user;
+      if (!u) return null;
+      return {
+        handle:      u.username || stub.username,
+        fullName:    u.full_name || stub.full_name,
+        followers:   String(u.follower_count ?? ''),
+        bio:         u.biography || '',
+        isVerified:  !!(u.is_verified ?? stub.is_verified),
+        postCount:   String(u.media_count ?? ''),
+        profileUrl:  `https://www.instagram.com/${stub.username}/`,
+        rawPlatform: 'instagram',
+      };
+    } catch (_) { return null; }
+  }
+
+  // Fetch up to 20 profiles in parallel batches of 5 to avoid rate limits
+  const profiles = [];
+  const toFetch = userStubs.slice(0, 20);
+  for (let i = 0; i < toFetch.length; i += 5) {
+    const batch = toFetch.slice(i, i + 5);
+    const results = await Promise.all(batch.map(fetchProfile));
+    profiles.push(...results.filter(Boolean));
+    if (i + 5 < toFetch.length) await new Promise(r => setTimeout(r, 300));
+  }
+
+  console.log(`[ig-search] #${tag} → ${profiles.length} profiles with follower counts`);
   return profiles;
 }
 
