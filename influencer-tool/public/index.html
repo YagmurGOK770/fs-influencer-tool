@@ -3616,12 +3616,16 @@ function closeProfileCard() {
           </select>
         </div>
         <div style="flex:1;min-width:200px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
             <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Hashtags or keywords <span style="font-weight:400;text-transform:none;color:var(--muted2)">— comma-separated runs them sequentially</span></label>
-            <select id="bdSearchHistory" onchange="bdLoadSearch(this.value)"
-              style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:11px;background:var(--white);max-width:240px">
-              <option value="">Recent searches…</option>
-            </select>
+            <div style="display:flex;gap:4px;align-items:center">
+              <select id="bdSearchHistory" onchange="bdLoadSearch(this.value)"
+                style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:11px;background:var(--white);max-width:240px">
+                <option value="">Saved searches…</option>
+              </select>
+              <button class="btn-sm" onclick="bdSaveCurrentSearch()" title="Save the current keyword list">💾 Save</button>
+              <button class="btn-sm" id="bdDeleteSearchBtn" onclick="bdDeleteSelectedSearch()" title="Delete the selected saved search" style="display:none">🗑</button>
+            </div>
           </div>
           <input type="text" id="bdKeyword" placeholder="e.g. londonfood, londonfoodie, #wheretoeat"
             style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px"
@@ -4292,10 +4296,10 @@ async function bdDeletePreset() {
   }
 }
 
-// ── Recent searches (search_keywords table) ────────────────────────────
+// ── Saved searches (search_keywords table) — manual save/load/delete ──
 let bdSearchHistory = [];
 
-async function bdFetchSearchHistory() {
+async function bdFetchSearchHistory(selectedId) {
   try {
     const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
@@ -4308,43 +4312,73 @@ async function bdFetchSearchHistory() {
     console.warn('Failed to load search history:', e.message);
     bdSearchHistory = [];
   }
-  bdRenderSearchHistory();
+  bdRenderSearchHistory(selectedId);
 }
 
-function bdRenderSearchHistory() {
+function bdRenderSearchHistory(selectedId) {
   const sel = document.getElementById('bdSearchHistory');
   if (!sel) return;
-  const cur = sel.value;
   const label = (s) => {
     const platBadge = s.platform !== 'instagram' ? ` [${s.platform}]` : '';
     const count = s.result_count != null ? ` (${s.result_count})` : '';
     const kw = s.keywords.length > 50 ? s.keywords.slice(0, 47) + '…' : s.keywords;
     return `${kw}${count}${platBadge}`;
   };
-  sel.innerHTML = `<option value="">${bdSearchHistory.length ? 'Recent searches…' : '(no saved searches yet)'}</option>` +
-    bdSearchHistory.map(s => `<option value="${s.id}">${label(s)}</option>`).join('');
-  sel.value = cur || '';
+  sel.innerHTML = `<option value="">${bdSearchHistory.length ? 'Saved searches…' : '(no saved searches yet)'}</option>` +
+    bdSearchHistory.map(s => `<option value="${s.id}" ${String(s.id) === String(selectedId || '') ? 'selected' : ''}>${label(s)}</option>`).join('');
+  const delBtn = document.getElementById('bdDeleteSearchBtn');
+  if (delBtn) delBtn.style.display = selectedId ? '' : 'none';
 }
 
 function bdLoadSearch(id) {
-  if (!id) return;
+  const delBtn = document.getElementById('bdDeleteSearchBtn');
+  if (!id) { if (delBtn) delBtn.style.display = 'none'; return; }
   const s = bdSearchHistory.find(x => String(x.id) === String(id));
   if (!s) return;
   const kwEl = document.getElementById('bdKeyword');
   const ptEl = document.getElementById('bdPlatformSel');
   if (kwEl) kwEl.value = s.keywords;
   if (ptEl) ptEl.value = s.platform;
+  if (delBtn) delBtn.style.display = '';
 }
 
-async function bdSaveSearchHistory(keywords, platform, resultCount) {
+async function bdSaveCurrentSearch() {
+  const keywords = (document.getElementById('bdKeyword')?.value || '').trim();
+  const platform = document.getElementById('bdPlatformSel')?.value || 'instagram';
+  if (!keywords) { setBdStatus('Enter keywords first, then save.', 'red'); return; }
+  // Use last result count if it matches the current keywords (so saving right
+  // after a search captures the count; saving before a search saves with null)
+  const cachedCount = (Array.isArray(bdAllResults) && bdAllResults.length) ? bdAllResults.length : null;
   try {
-    await fetch('/api/db-save', {
+    const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'search-save', keywords, platform, result_count: resultCount }),
+      body: JSON.stringify({ action: 'search-save', keywords, platform, result_count: cachedCount }),
     });
-    await bdFetchSearchHistory();
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    await bdFetchSearchHistory(data.search?.id);
+    setBdStatus(`Saved search "${keywords}" to your library.`, 'green');
   } catch (e) {
-    console.warn('Failed to save search history:', e.message);
+    setBdStatus(`Failed to save search: ${e.message}`, 'red');
+  }
+}
+
+async function bdDeleteSelectedSearch() {
+  const sel = document.getElementById('bdSearchHistory');
+  const id = sel?.value;
+  if (!id) return;
+  const s = bdSearchHistory.find(x => String(x.id) === String(id));
+  if (!confirm(`Delete saved search "${s?.keywords || ''}"?`)) return;
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'search-delete', id }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    await bdFetchSearchHistory('');
+  } catch (e) {
+    setBdStatus(`Failed to delete search: ${e.message}`, 'red');
   }
 }
 
@@ -4603,8 +4637,6 @@ async function runBdSearch() {
       'green',
     );
     bdSaveCachedResults(keywords.join(', '), bdPlatform);
-    // Log this search to the DB history so it appears in the Recent dropdown
-    bdSaveSearchHistory(keywords.join(', '), bdPlatform, bdAllResults.length);
     setTimeout(() => bdShowProgress(false), 2000);
   } catch (e) {
     setBdStatus(`Error: ${e.message}`, 'red');
