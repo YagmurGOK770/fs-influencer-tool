@@ -3592,90 +3592,90 @@ function closeProfileCard() {
   </div>
 </div>
 
-<!-- ── BrightData Enrich tab ──────────────────────────────────── -->
+<!-- ── BrightData Search tab ───────────────────────────────────── -->
 <div id="mainEnrich" style="display:none">
   <div class="cov-page">
 
     <div class="cl-toolbar" style="margin-bottom:20px">
       <div>
-        <div class="cl-toolbar-title">BrightData Enrich</div>
-        <div class="cl-toolbar-sub">Pull live profile data from Instagram, TikTok, YouTube and X via BrightData Web Scraper API</div>
+        <div class="cl-toolbar-title">BrightData Search</div>
+        <div class="cl-toolbar-sub">Search platforms directly via BrightData Web Unlocker — real data, no blocks</div>
       </div>
     </div>
 
-    <!-- Input panel -->
-    <div style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1.25rem;margin-bottom:18px;box-shadow:var(--shadow-sm)">
-      <div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap">
-        <div style="flex:1;min-width:220px">
+    <!-- Search panel -->
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+        <div>
           <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Platform</label>
-          <select id="enrichPlatformSel" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--white)">
+          <select id="bdPlatformSel" style="width:160px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--white)">
             <option value="instagram">Instagram</option>
             <option value="tiktok">TikTok</option>
             <option value="youtube">YouTube</option>
             <option value="x">X / Twitter</option>
           </select>
         </div>
-        <div style="flex:3;min-width:280px">
-          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Handles <span style="font-weight:400;text-transform:none">(one per line, @ optional)</span></label>
-          <textarea id="enrichHandlesInput" rows="4" placeholder="foodie_london&#10;londonbites&#10;@eatwithem"
-            style="width:100%;box-sizing:border-box;font-family:monospace;font-size:12px;border:1px solid var(--border);border-radius:6px;padding:8px;resize:vertical"></textarea>
+        <div style="flex:1;min-width:200px">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Hashtag or keyword</label>
+          <input type="text" id="bdKeyword" placeholder="e.g. eatlondon, london food, foodie"
+            style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px"
+            onkeydown="if(event.key==='Enter') runBdSearch()">
         </div>
-        <div style="display:flex;flex-direction:column;gap:8px;padding-top:22px">
-          <button class="btn-green" id="enrichRunBtn" onclick="runBrightDataEnrich()">▶ Run BrightData query</button>
-          <button class="btn-sm" onclick="enrichClear()">✕ Clear results</button>
+        <button class="btn-green" id="bdRunBtn" onclick="runBdSearch()" style="white-space:nowrap">▶ Search</button>
+        <button class="btn-sm" onclick="bdClear()" style="white-space:nowrap">✕ Clear</button>
+      </div>
+    </div>
+
+    <!-- Pre-fetch filters -->
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">
+        Filters <span style="font-weight:400;text-transform:none;font-size:11px">(applied to results — only matching profiles are shown and saved)</span>
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Min followers</label>
+          <input type="number" id="bdFltMinF" placeholder="e.g. 10000" min="0"
+            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="bdApplyFilters()">
         </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Max followers</label>
+          <input type="number" id="bdFltMaxF" placeholder="e.g. 500000" min="0"
+            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="bdApplyFilters()">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Bio contains</label>
+          <input type="text" id="bdFltBio" placeholder="e.g. london, food"
+            style="width:150px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="bdApplyFilters()">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Location contains</label>
+          <input type="text" id="bdFltLoc" placeholder="e.g. London, England"
+            style="width:150px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
+            oninput="bdApplyFilters()">
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
+          <input type="checkbox" id="bdFltVerified" onchange="bdApplyFilters()">
+          <label for="bdFltVerified" style="font-size:12px;cursor:pointer">Verified only</label>
+        </div>
+        <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
+        <span id="bdFltCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
     </div>
 
     <!-- Status bar -->
-    <div id="enrichStatusBar" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:12.5px;background:var(--surface);border:1px solid var(--border)">
-      <span id="enrichStatusText"></span>
+    <div id="bdStatusBar" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;font-size:12.5px;background:var(--surface);border:1px solid var(--border)">
+      <span id="bdStatusText"></span>
     </div>
 
-    <!-- Filters — always visible -->
-    <div id="enrichFilters" style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
-      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Filter results</div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Min followers</label>
-          <input type="number" id="enrichFltMinF" placeholder="e.g. 10000" min="0"
-            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="applyEnrichFilters()">
-        </div>
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Max followers</label>
-          <input type="number" id="enrichFltMaxF" placeholder="e.g. 500000" min="0"
-            style="width:120px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="applyEnrichFilters()">
-        </div>
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Bio keyword</label>
-          <input type="text" id="enrichFltBio" placeholder="e.g. food, london"
-            style="width:160px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="applyEnrichFilters()">
-        </div>
-        <div>
-          <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px">Location</label>
-          <input type="text" id="enrichFltLoc" placeholder="e.g. London, UK"
-            style="width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px"
-            oninput="applyEnrichFilters()">
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
-          <input type="checkbox" id="enrichFltVerified" onchange="applyEnrichFilters()">
-          <label for="enrichFltVerified" style="font-size:12px;cursor:pointer">Verified only</label>
-        </div>
-        <div style="display:flex;align-items:center;gap:6px;padding-bottom:2px">
-          <input type="checkbox" id="enrichFltSuccessOnly" onchange="applyEnrichFilters()" checked>
-          <label for="enrichFltSuccessOnly" style="font-size:12px;cursor:pointer">Hide failed</label>
-        </div>
-        <button class="btn-sm" onclick="resetEnrichFilters()">Reset filters</button>
-        <span id="enrichFltCount" style="font-size:12px;color:var(--muted);margin-left:4px"></span>
+    <!-- Results table -->
+    <div id="bdTableWrap" style="display:none">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+        <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px">💾 Save filtered results to DB</button>
       </div>
-    </div>
-
-    <!-- Results table — hidden until first run -->
-    <div id="enrichTableWrap" style="display:none">
-      <div class="table-wrap" style="max-height:65vh">
+      <div class="table-wrap" style="max-height:60vh">
         <table class="cov-table">
           <thead>
             <tr>
@@ -3683,49 +3683,48 @@ function closeProfileCard() {
               <th>Full Name</th>
               <th>Followers</th>
               <th>Posts</th>
-              <th>Verified</th>
+              <th>✓</th>
               <th>Bio</th>
-              <th>Location / Country</th>
-              <th>Engagement</th>
+              <th>Location</th>
               <th>Status</th>
             </tr>
           </thead>
-          <tbody id="enrichTbody"></tbody>
+          <tbody id="bdTbody"></tbody>
         </table>
       </div>
     </div>
 
     <!-- Empty state -->
-    <div id="enrichEmpty" style="padding:3rem;text-align:center;color:var(--muted)">
-      <div style="font-size:2rem;margin-bottom:10px">📡</div>
-      <div style="font-weight:600;font-size:14px;margin-bottom:6px">No data yet</div>
-      <div style="font-size:12.5px">Enter handles above and click <strong>Run BrightData query</strong> to fetch live profile data.</div>
+    <div id="bdEmpty" style="padding:3rem;text-align:center;color:var(--muted)">
+      <div style="font-size:2rem;margin-bottom:10px">🔍</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px">Search platforms directly</div>
+      <div style="font-size:12.5px">Enter a hashtag or keyword, set your filters, and click <strong>Search</strong>.<br>Only profiles matching your filters will be shown — you pay only for what you keep.</div>
     </div>
 
   </div>
 </div>
 
 <script>
-// ── BrightData Enrich tab ─────────────────────────────────────────────────
+// ── BrightData Search tab ─────────────────────────────────────────────────
 
-let enrichResults = []; // { handle, platform, status, data, error }
+let bdAllResults  = []; // all raw results from API
+let bdPlatform    = 'instagram';
 
-function loadEnrichTab() {
-  // Tab is input-driven — nothing to load on open
+function loadEnrichTab() { /* input-driven, nothing to load */ }
+
+function bdClear() {
+  bdAllResults = [];
+  document.getElementById('bdTbody').innerHTML = '';
+  document.getElementById('bdTableWrap').style.display = 'none';
+  document.getElementById('bdEmpty').style.display = '';
+  document.getElementById('bdStatusBar').style.display = 'none';
+  document.getElementById('bdKeyword').value = '';
+  document.getElementById('bdFltCount').textContent = '';
 }
 
-function enrichClear() {
-  enrichResults = [];
-  document.getElementById('enrichTbody').innerHTML = '';
-  document.getElementById('enrichTableWrap').style.display = 'none';
-  document.getElementById('enrichEmpty').style.display = '';
-  document.getElementById('enrichStatusBar').style.display = 'none';
-  document.getElementById('enrichHandlesInput').value = '';
-}
-
-function setEnrichStatus(msg, color) {
-  const bar = document.getElementById('enrichStatusBar');
-  const txt = document.getElementById('enrichStatusText');
+function setBdStatus(msg, color) {
+  const bar = document.getElementById('bdStatusBar');
+  const txt = document.getElementById('bdStatusText');
   bar.style.display = '';
   bar.style.borderColor = color === 'green' ? 'var(--green-border)' : color === 'red' ? '#fca5a5' : 'var(--border)';
   bar.style.background  = color === 'green' ? 'var(--green-bg)'     : color === 'red' ? '#fee2e2' : 'var(--surface)';
@@ -3733,7 +3732,7 @@ function setEnrichStatus(msg, color) {
   txt.textContent = msg;
 }
 
-function parseFollowers(val) {
+function bdParseFollowers(val) {
   if (!val) return 0;
   const s = String(val).replace(/,/g, '').trim().toUpperCase();
   if (s.endsWith('M')) return parseFloat(s) * 1_000_000;
@@ -3741,157 +3740,133 @@ function parseFollowers(val) {
   return parseFloat(s) || 0;
 }
 
-function getEnrichFilters() {
+function bdGetFilters() {
   return {
-    minF:        parseFollowers(document.getElementById('enrichFltMinF')?.value),
-    maxF:        parseFollowers(document.getElementById('enrichFltMaxF')?.value) || Infinity,
-    bio:         (document.getElementById('enrichFltBio')?.value || '').toLowerCase().trim(),
-    loc:         (document.getElementById('enrichFltLoc')?.value || '').toLowerCase().trim(),
-    verifiedOnly: document.getElementById('enrichFltVerified')?.checked,
-    successOnly:  document.getElementById('enrichFltSuccessOnly')?.checked,
+    minF:         bdParseFollowers(document.getElementById('bdFltMinF')?.value),
+    maxF:         bdParseFollowers(document.getElementById('bdFltMaxF')?.value) || Infinity,
+    bio:          (document.getElementById('bdFltBio')?.value || '').toLowerCase().trim(),
+    loc:          (document.getElementById('bdFltLoc')?.value || '').toLowerCase().trim(),
+    verifiedOnly: document.getElementById('bdFltVerified')?.checked,
   };
 }
 
-function rowPassesFilter(r, f) {
-  if (r.status === 'running') return true;
-  if (r.status === 'error') return !f.successOnly;
-  const d = r.data;
-  const followers = parseFollowers(d.followers);
+function bdPassesFilter(r, f) {
+  if (!r.ok) return false;
+  const followers = bdParseFollowers(r.followers);
   if (followers < f.minF) return false;
   if (followers > f.maxF) return false;
-  if (f.verifiedOnly && !d.isVerified) return false;
-  if (f.bio && !(d.bio || '').toLowerCase().includes(f.bio)) return false;
-  if (f.loc) {
-    const loc = ((d.location || '') + ' ' + (d.country || '')).toLowerCase();
-    if (!loc.includes(f.loc)) return false;
-  }
+  if (f.verifiedOnly && !r.isVerified) return false;
+  if (f.bio && !(r.bio || '').toLowerCase().includes(f.bio)) return false;
+  if (f.loc && !((r.location || '') + ' ' + (r.country || '')).toLowerCase().includes(f.loc)) return false;
   return true;
 }
 
-function applyEnrichFilters() { renderEnrichResults(); }
-
-function resetEnrichFilters() {
-  document.getElementById('enrichFltMinF').value = '';
-  document.getElementById('enrichFltMaxF').value = '';
-  document.getElementById('enrichFltBio').value = '';
-  document.getElementById('enrichFltLoc').value = '';
-  document.getElementById('enrichFltVerified').checked = false;
-  document.getElementById('enrichFltSuccessOnly').checked = true;
-  renderEnrichResults();
+function bdApplyFilters() {
+  if (!bdAllResults.length) return;
+  const f = bdGetFilters();
+  const visible = bdAllResults.filter(r => bdPassesFilter(r, f));
+  document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
+  renderBdTable(visible);
 }
 
-function renderEnrichResults() {
-  const tbody   = document.getElementById('enrichTbody');
-  const wrap    = document.getElementById('enrichTableWrap');
-  const empty   = document.getElementById('enrichEmpty');
-  const filters = document.getElementById('enrichFilters');
-  if (!enrichResults.length) {
+function bdResetFilters() {
+  document.getElementById('bdFltMinF').value = '';
+  document.getElementById('bdFltMaxF').value = '';
+  document.getElementById('bdFltBio').value = '';
+  document.getElementById('bdFltLoc').value = '';
+  document.getElementById('bdFltVerified').checked = false;
+  bdApplyFilters();
+}
+
+function renderBdTable(rows) {
+  const wrap  = document.getElementById('bdTableWrap');
+  const empty = document.getElementById('bdEmpty');
+  const tbody = document.getElementById('bdTbody');
+  if (!rows.length) {
     wrap.style.display = 'none';
     empty.style.display = '';
+    empty.innerHTML = '<div style="font-size:2rem;margin-bottom:10px">🔍</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No profiles match your filters</div><div style="font-size:12.5px">Try relaxing the follower range or removing location/bio filters.</div>';
     return;
   }
   wrap.style.display = '';
   empty.style.display = 'none';
-
-  const f = getEnrichFilters();
-  const visible = enrichResults.filter(r => rowPassesFilter(r, f));
-  const done = enrichResults.filter(r => r.status === 'done').length;
-
-  const countEl = document.getElementById('enrichFltCount');
-  if (countEl) countEl.textContent = `Showing ${visible.length} of ${enrichResults.length}`;
-
-  tbody.innerHTML = visible.map(r => {
-    if (r.status === 'running') return `
-      <tr>
-        <td style="font-weight:600;font-size:12px">${r.handle}</td>
-        <td colspan="7" style="color:var(--muted);font-size:12px">Fetching…</td>
-        <td><span class="cov-badge" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a">⏳ running</span></td>
-      </tr>`;
-    if (r.status === 'error') return `
-      <tr>
-        <td style="font-weight:600;font-size:12px">${r.handle}</td>
-        <td colspan="7" style="color:var(--red);font-size:12px">${r.error || 'Failed'}</td>
-        <td><span class="cov-badge" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca">✗ failed</span></td>
-      </tr>`;
-    const d = r.data;
-    return `
-      <tr>
-        <td style="font-weight:600;font-size:12px">${d.handle || r.handle}</td>
-        <td style="font-size:12px">${d.fullName || '—'}</td>
-        <td style="font-size:12px">${d.followers || '—'}</td>
-        <td style="font-size:12px">${d.postCount || '—'}</td>
-        <td style="font-size:12px;text-align:center">${d.isVerified ? '✓' : '—'}</td>
-        <td style="font-size:11px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(d.bio||'').replace(/"/g,"'")}">${(d.bio||'—').slice(0,80)}</td>
-        <td style="font-size:11px;color:var(--muted)">${d.location || d.country || '—'}</td>
-        <td style="font-size:12px">${d.engagementRate != null ? d.engagementRate + '%' : '—'}</td>
-        <td><span class="cov-badge found">✓ enriched</span></td>
-      </tr>`;
-  }).join('') || '<tr><td colspan="9" style="padding:1.5rem;text-align:center;color:var(--muted)">No results match the current filters.</td></tr>';
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td style="font-weight:600;font-size:12px">@${r.handle || '—'}</td>
+      <td style="font-size:12px">${r.fullName || '—'}</td>
+      <td style="font-size:12px;font-weight:600">${r.followers || '—'}</td>
+      <td style="font-size:12px">${r.postCount || '—'}</td>
+      <td style="font-size:12px;text-align:center">${r.isVerified ? '<span style="color:var(--blue)">✓</span>' : '—'}</td>
+      <td style="font-size:11px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.bio||'').replace(/"/g,"'")}">${(r.bio||'—').slice(0,90)}</td>
+      <td style="font-size:11px;color:var(--muted)">${r.location || r.country || '—'}</td>
+      <td><span class="cov-badge found">✓ live</span></td>
+    </tr>`).join('');
 }
 
-async function runBrightDataEnrich() {
-  const platform = document.getElementById('enrichPlatformSel').value;
-  const raw = document.getElementById('enrichHandlesInput').value;
-  const handles = raw.split('\n').map(h => h.trim().replace(/^@/, '')).filter(Boolean);
-  if (!handles.length) { setEnrichStatus('Enter at least one handle.', 'red'); return; }
+async function runBdSearch() {
+  const keyword  = document.getElementById('bdKeyword').value.trim();
+  bdPlatform     = document.getElementById('bdPlatformSel').value;
+  if (!keyword) { setBdStatus('Enter a hashtag or keyword first.', 'red'); return; }
 
-  const btn = document.getElementById('enrichRunBtn');
+  const btn = document.getElementById('bdRunBtn');
   btn.disabled = true;
-  btn.textContent = '⏳ Running…';
-
-  enrichResults = handles.map(h => ({ handle: h, platform, status: 'running' }));
-  renderEnrichResults();
-  setEnrichStatus(`Querying BrightData for ${handles.length} ${platform} profile${handles.length > 1 ? 's' : ''}…`, '');
+  btn.textContent = '⏳ Searching…';
+  bdAllResults = [];
+  document.getElementById('bdTableWrap').style.display = 'none';
+  document.getElementById('bdEmpty').style.display = 'none';
+  setBdStatus(`Searching ${bdPlatform} for "${keyword}" via BrightData…`, '');
 
   try {
     const resp = await fetch('/api/verify', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata', platform, profiles: handles }),
+      body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword }),
     });
     const data = await resp.json();
     if (!resp.ok || data.error) {
-      enrichResults.forEach(r => { r.status = 'error'; r.error = data.error || 'Request failed'; });
-      setEnrichStatus(`BrightData error: ${data.error || resp.statusText}`, 'red');
-      renderEnrichResults();
+      setBdStatus(`Error: ${data.error || resp.statusText}`, 'red');
+      document.getElementById('bdEmpty').style.display = '';
       return;
     }
-    const results = data.results || {};
-    let done = 0, failed = 0;
-    for (const r of enrichResults) {
-      const res = results[r.handle] || results['@' + r.handle];
-      if (!res || res.error) {
-        r.status = 'error';
-        r.error = res?.error || 'No data returned';
-        failed++;
-      } else {
-        r.status = 'done';
-        r.data = res;
-        done++;
-      }
+    bdAllResults = data.profiles || [];
+    if (!bdAllResults.length && data.debug) {
+      setBdStatus(`No profiles parsed. Page length: ${data.debug.htmlLength} chars. Snippet: ${data.debug.htmlSnippet}`, 'red');
+      document.getElementById('bdEmpty').style.display = '';
+      return;
     }
-    renderEnrichResults();
-    setEnrichStatus(`Done — ${done} enriched${failed ? ', ' + failed + ' failed' : ''}.`, failed ? '' : 'green');
-
-    // Save to brightdata_profiles table
-    const toSave = enrichResults.filter(r => r.status === 'done').map(r => ({ ...r.data, rawPlatform: platform }));
-    if (toSave.length) {
-      try {
-        const saveResp = await fetch('/api/db-save', {
-          method: 'POST', headers: getApiHeaders(),
-          body: JSON.stringify({ action: 'brightdata', profiles: toSave }),
-        });
-        const saveData = await saveResp.json();
-        if (saveResp.ok) setEnrichStatus(`Done — ${done} enriched & saved to BrightData table.${failed ? ' ' + failed + ' failed.' : ''}`, 'green');
-        else console.warn('BD save failed:', saveData.error);
-      } catch (_) {}
-    }
+    const f = bdGetFilters();
+    const visible = bdAllResults.filter(r => bdPassesFilter(r, f));
+    document.getElementById('bdFltCount').textContent = `${visible.length} of ${bdAllResults.length} match filters`;
+    renderBdTable(visible);
+    setBdStatus(`Found ${bdAllResults.length} profiles — ${visible.length} match your filters.`, 'green');
   } catch (e) {
-    enrichResults.forEach(r => { r.status = 'error'; r.error = e.message; });
-    renderEnrichResults();
-    setEnrichStatus(`Error: ${e.message}`, 'red');
+    setBdStatus(`Error: ${e.message}`, 'red');
+    document.getElementById('bdEmpty').style.display = '';
   } finally {
     btn.disabled = false;
-    btn.textContent = '▶ Run BrightData query';
+    btn.textContent = '▶ Search';
+  }
+}
+
+async function bdSaveFiltered() {
+  const f = bdGetFilters();
+  const toSave = bdAllResults.filter(r => bdPassesFilter(r, f)).map(r => ({ ...r, rawPlatform: bdPlatform }));
+  if (!toSave.length) { setBdStatus('No filtered profiles to save.', 'red'); return; }
+  const btn = document.getElementById('bdSaveBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Saving…';
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'brightdata', profiles: toSave }),
+    });
+    const data = await resp.json();
+    if (resp.ok) setBdStatus(`Saved ${data.saved} profiles to BrightData table.`, 'green');
+    else setBdStatus(`Save failed: ${data.error}`, 'red');
+  } catch (e) {
+    setBdStatus(`Save error: ${e.message}`, 'red');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Save filtered results to DB';
   }
 }
 </script>
