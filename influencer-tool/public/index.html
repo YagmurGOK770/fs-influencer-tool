@@ -3638,20 +3638,20 @@ function closeProfileCard() {
     <div style="background:var(--white);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.25rem;margin-bottom:14px;box-shadow:var(--shadow-sm)">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap">
         <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
-          Filters <span style="font-weight:400;text-transform:none">(applied to results — only matching profiles are shown and saved)</span>
+          Filters <span style="font-weight:400;text-transform:none">(grouped — set match logic per group and between groups)</span>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
-          <label style="font-size:11px;color:var(--muted)">Match:</label>
-          <select id="bdFltMode" onchange="bdSaveFilterState(); bdApplyFilters()"
+          <label style="font-size:11px;color:var(--muted)">Between groups:</label>
+          <select id="bdFltTopMode" onchange="bdSaveFilterState(); bdRenderFilterGroups(); bdApplyFilters()"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="AND">ALL (and)</option>
             <option value="OR">ANY (or)</option>
           </select>
         </div>
       </div>
-      <div id="bdFilterRows"></div>
+      <div id="bdFilterGroups"></div>
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
-        <button class="btn-sm" onclick="bdAddFilterRow()">+ Add filter</button>
+        <button class="btn-sm" onclick="bdAddGroup()">+ Add group</button>
         <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
         <span id="bdFltCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
       </div>
@@ -3716,17 +3716,31 @@ function loadEnrichTab() {
   const saved = localStorage.getItem('bd_session_cookie');
   if (saved) document.getElementById('bdSessionCookie').value = saved;
 
-  // Restore saved filter rules + mode (if any), else one empty rule
+  // Restore saved filter state. Two formats may exist:
+  //   New: { topMode, groups: [{ mode, rules }, ...] }
+  //   Old: { mode, rules: [...] }  ← migrated into a single group
   try {
     const f = JSON.parse(localStorage.getItem('bd_filter_state') || 'null');
-    if (f && Array.isArray(f.rules) && f.rules.length) {
-      bdFilterRules = f.rules.map(r => ({ ...r, id: ++bdRuleSeq }));
-      const modeSel = document.getElementById('bdFltMode');
-      if (modeSel && f.mode) modeSel.value = f.mode;
+    if (f && Array.isArray(f.groups) && f.groups.length) {
+      // New format
+      bdFilterGroups = f.groups.map(g => bdNewGroup({
+        mode: g.mode || 'AND',
+        rules: (g.rules || []).map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '' })),
+      }));
+      const top = document.getElementById('bdFltTopMode');
+      if (top && f.topMode) top.value = f.topMode;
+    } else if (f && Array.isArray(f.rules) && f.rules.length) {
+      // Legacy format — wrap as one group
+      bdFilterGroups = [bdNewGroup({
+        mode: f.mode || 'AND',
+        rules: f.rules.map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '' })),
+      })];
+      const top = document.getElementById('bdFltTopMode');
+      if (top) top.value = 'AND';
     }
   } catch (_) { /* ignore corrupt state */ }
-  if (!bdFilterRules.length) bdFilterRules.push({ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' });
-  bdRenderFilterRows();
+  if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
+  bdRenderFilterGroups();
 
   // Restore cached search results (if any) so a refresh doesn't lose them
   try {
@@ -3748,9 +3762,12 @@ function loadEnrichTab() {
 
 function bdSaveFilterState() {
   try {
-    const mode = document.getElementById('bdFltMode')?.value || 'AND';
-    const rules = bdFilterRules.map(({ field, op, value }) => ({ field, op, value }));
-    localStorage.setItem('bd_filter_state', JSON.stringify({ rules, mode }));
+    const topMode = document.getElementById('bdFltTopMode')?.value || 'AND';
+    const groups = bdFilterGroups.map(g => ({
+      mode: g.mode,
+      rules: g.rules.map(({ field, op, value }) => ({ field, op, value })),
+    }));
+    localStorage.setItem('bd_filter_state', JSON.stringify({ topMode, groups }));
   } catch (_) { /* quota exceeded — ignore */ }
 }
 
@@ -3798,15 +3815,17 @@ function bdParseFollowers(val) {
   return parseFloat(s) || 0;
 }
 
-// ── Dynamic filter builder ─────────────────────────────────────────────
-// Each rule: { id, field, op, value }
-//   field: followers | bio | location | name | verified
-//   op:    >= | <= | contains | does not contain | is | is not
-//   value: string or boolean
-// Combined with AND or OR via bdFltMode select.
+// ── Dynamic filter builder with nested groups ─────────────────────────
+// Data model:
+//   bdFilterGroups = [{ id, mode: 'AND'|'OR', rules: [{ id, field, op, value }, ...] }, ...]
+//   bdTopMode      = 'AND' | 'OR' (between groups)
+//
+// Evaluation: within each group, rules are combined by group.mode.
+// Across groups, the group results are combined by bdTopMode.
 
-let bdFilterRules = [];
-let bdRuleSeq     = 0;
+let bdFilterGroups = [];
+let bdGroupSeq     = 0;
+let bdRuleSeq      = 0;
 
 const BD_FIELD_OPS = {
   followers: [['>=', '≥'], ['<=', '≤'], ['=', '=']],
@@ -3827,84 +3846,153 @@ const BD_FIELD_LABELS = {
 function bdDefaultOpFor(field) { return BD_FIELD_OPS[field][0][0]; }
 function bdDefaultValueFor(field) { return field === 'verified' ? 'true' : ''; }
 
-function bdAddFilterRow(initial) {
-  const rule = initial || { id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' };
-  if (!rule.id) rule.id = ++bdRuleSeq;
-  bdFilterRules.push(rule);
-  bdRenderFilterRows();
+function bdNewRule(initial) {
+  return { id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '', ...(initial || {}) };
+}
+
+function bdNewGroup(initial) {
+  const g = { id: ++bdGroupSeq, mode: 'AND', rules: [bdNewRule()], ...(initial || {}) };
+  if (!g.rules?.length) g.rules = [bdNewRule()];
+  // Reassign rule IDs from current sequence so they're unique across groups
+  g.rules = g.rules.map(r => ({ ...r, id: ++bdRuleSeq }));
+  return g;
+}
+
+function bdAddGroup() {
+  bdFilterGroups.push(bdNewGroup());
+  bdRenderFilterGroups();
   bdSaveFilterState();
   bdApplyFilters();
 }
 
-function bdRemoveFilterRow(id) {
-  bdFilterRules = bdFilterRules.filter(r => r.id !== id);
-  if (!bdFilterRules.length) bdFilterRules.push({ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' });
-  bdRenderFilterRows();
+function bdRemoveGroup(groupId) {
+  bdFilterGroups = bdFilterGroups.filter(g => g.id !== groupId);
+  if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
+  bdRenderFilterGroups();
   bdSaveFilterState();
   bdApplyFilters();
 }
 
-function bdUpdateRule(id, key, val) {
-  const rule = bdFilterRules.find(r => r.id === id);
+function bdUpdateGroupMode(groupId, mode) {
+  const g = bdFilterGroups.find(x => x.id === groupId);
+  if (!g) return;
+  g.mode = mode;
+  bdSaveFilterState();
+  bdApplyFilters();
+}
+
+function bdAddFilterRow(groupId) {
+  const g = bdFilterGroups.find(x => x.id === groupId);
+  if (!g) return;
+  g.rules.push(bdNewRule());
+  bdRenderFilterGroups();
+  bdSaveFilterState();
+  bdApplyFilters();
+}
+
+function bdRemoveFilterRow(groupId, ruleId) {
+  const g = bdFilterGroups.find(x => x.id === groupId);
+  if (!g) return;
+  g.rules = g.rules.filter(r => r.id !== ruleId);
+  if (!g.rules.length) g.rules.push(bdNewRule());
+  bdRenderFilterGroups();
+  bdSaveFilterState();
+  bdApplyFilters();
+}
+
+function bdUpdateRule(groupId, ruleId, key, val) {
+  const g = bdFilterGroups.find(x => x.id === groupId);
+  if (!g) return;
+  const rule = g.rules.find(r => r.id === ruleId);
   if (!rule) return;
   rule[key] = val;
   if (key === 'field') {
     rule.op = bdDefaultOpFor(val);
     rule.value = bdDefaultValueFor(val);
-    bdRenderFilterRows();
+    bdRenderFilterGroups();
   }
   bdSaveFilterState();
   bdApplyFilters();
 }
 
-function bdRenderFilterRows() {
-  const host = document.getElementById('bdFilterRows');
-  host.innerHTML = bdFilterRules.map(rule => {
-    const opOptions = BD_FIELD_OPS[rule.field].map(([v, label]) =>
-      `<option value="${v}" ${rule.op === v ? 'selected' : ''}>${label}</option>`
-    ).join('');
-    const fieldOptions = Object.entries(BD_FIELD_LABELS).map(([v, label]) =>
-      `<option value="${v}" ${rule.field === v ? 'selected' : ''}>${label}</option>`
-    ).join('');
+function bdRenderFilterGroups() {
+  const host = document.getElementById('bdFilterGroups');
+  host.innerHTML = bdFilterGroups.map((group, idx) => {
+    const groupHeader = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="display:flex;gap:8px;align-items:center;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
+          Group ${idx + 1}
+          <span style="font-weight:400;text-transform:none;color:var(--muted2)">— match:</span>
+          <select onchange="bdUpdateGroupMode(${group.id}, this.value)"
+            style="padding:4px 6px;border:1px solid var(--border);border-radius:6px;font-size:11px;background:var(--white)">
+            <option value="AND" ${group.mode === 'AND' ? 'selected' : ''}>ALL (and)</option>
+            <option value="OR"  ${group.mode === 'OR'  ? 'selected' : ''}>ANY (or)</option>
+          </select>
+        </div>
+        <button onclick="bdRemoveGroup(${group.id})"
+          style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;font-size:11px;color:var(--muted)"
+          title="Remove group">✕ remove group</button>
+      </div>`;
 
-    let valueInput;
-    if (rule.field === 'verified') {
-      valueInput = `<select onchange="bdUpdateRule(${rule.id}, 'value', this.value)"
-        style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:100px">
-        <option value="true"  ${rule.value === 'true'  ? 'selected' : ''}>verified</option>
-        <option value="false" ${rule.value === 'false' ? 'selected' : ''}>not verified</option>
-      </select>`;
-    } else if (rule.field === 'followers') {
-      valueInput = `<input type="text" value="${rule.value || ''}"
-        placeholder="e.g. 10000 or 10k or 1M"
-        oninput="bdUpdateRule(${rule.id}, 'value', this.value)"
-        style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
-    } else {
-      const ph = rule.field === 'location' ? 'e.g. London' : rule.field === 'name' ? 'e.g. Carol' : 'e.g. food, chef';
-      valueInput = `<input type="text" value="${(rule.value || '').replace(/"/g,'&quot;')}"
-        placeholder="${ph}"
-        oninput="bdUpdateRule(${rule.id}, 'value', this.value)"
-        style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
-    }
+    const ruleRows = group.rules.map(rule => {
+      const opOptions = BD_FIELD_OPS[rule.field].map(([v, label]) =>
+        `<option value="${v}" ${rule.op === v ? 'selected' : ''}>${label}</option>`
+      ).join('');
+      const fieldOptions = Object.entries(BD_FIELD_LABELS).map(([v, label]) =>
+        `<option value="${v}" ${rule.field === v ? 'selected' : ''}>${label}</option>`
+      ).join('');
 
-    return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-      <select onchange="bdUpdateRule(${rule.id}, 'field', this.value)"
-        style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:120px">${fieldOptions}</select>
-      <select onchange="bdUpdateRule(${rule.id}, 'op', this.value)"
-        style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px">${opOptions}</select>
-      ${valueInput}
-      <button onclick="bdRemoveFilterRow(${rule.id})"
-        style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;font-size:14px;color:var(--muted)"
-        title="Remove filter">✕</button>
-    </div>`;
+      let valueInput;
+      if (rule.field === 'verified') {
+        valueInput = `<select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:100px">
+          <option value="true"  ${rule.value === 'true'  ? 'selected' : ''}>verified</option>
+          <option value="false" ${rule.value === 'false' ? 'selected' : ''}>not verified</option>
+        </select>`;
+      } else if (rule.field === 'followers') {
+        valueInput = `<input type="text" value="${rule.value || ''}"
+          placeholder="e.g. 10000 or 10k or 1M"
+          oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+      } else {
+        const ph = rule.field === 'location' ? 'e.g. London' : rule.field === 'name' ? 'e.g. Carol' : 'e.g. food, chef';
+        valueInput = `<input type="text" value="${(rule.value || '').replace(/"/g,'&quot;')}"
+          placeholder="${ph}"
+          oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+      }
+
+      return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'field', this.value)"
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:120px">${fieldOptions}</select>
+        <select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'op', this.value)"
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px">${opOptions}</select>
+        ${valueInput}
+        <button onclick="bdRemoveFilterRow(${group.id}, ${rule.id})"
+          style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;font-size:14px;color:var(--muted)"
+          title="Remove filter">✕</button>
+      </div>`;
+    }).join('');
+
+    const addBtn = `<button class="btn-sm" onclick="bdAddFilterRow(${group.id})" style="font-size:11px">+ Add filter to this group</button>`;
+
+    const sep = idx < bdFilterGroups.length - 1
+      ? `<div style="text-align:center;margin:8px 0;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.08em">
+           ${(document.getElementById('bdFltTopMode')?.value === 'OR') ? 'OR' : 'AND'}
+         </div>`
+      : '';
+
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px">
+      ${groupHeader}
+      ${ruleRows}
+      <div style="margin-top:4px">${addBtn}</div>
+    </div>${sep}`;
   }).join('');
 }
 
 function bdEvaluateRule(p, rule) {
   const { field, op, value } = rule;
-  // Empty text values ignore the rule (it passes everything)
   if (field !== 'verified' && (value == null || value === '')) return true;
-
   if (field === 'followers') {
     const num    = bdParseFollowers(p.followers);
     const target = bdParseFollowers(value);
@@ -3916,11 +4004,10 @@ function bdEvaluateRule(p, rule) {
     const want = value === 'true';
     return op === 'is' ? !!p.isVerified === want : !!p.isVerified !== want;
   }
-  // Text fields
   let haystack = '';
   if (field === 'bio')      haystack = p.bio || '';
   if (field === 'name')     haystack = p.fullName || '';
-  if (field === 'location') haystack = `${p.location || ''} ${p.bio || ''}`;  // Instagram lacks location → fall back to bio
+  if (field === 'location') haystack = `${p.location || ''} ${p.bio || ''}`;
   haystack = haystack.toLowerCase();
   const needle = String(value).toLowerCase().trim();
   if (op === 'contains')         return haystack.includes(needle);
@@ -3928,16 +4015,21 @@ function bdEvaluateRule(p, rule) {
   return true;
 }
 
-function bdPassesFilters(profile) {
-  const mode = document.getElementById('bdFltMode')?.value || 'AND';
-  // Only count rules that have a non-empty value (verified field always has a value)
-  const active = bdFilterRules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
-  if (!active.length) return true;
+function bdEvaluateGroup(profile, group) {
+  const active = group.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
+  if (!active.length) return true; // empty group passes through
   const results = active.map(r => bdEvaluateRule(profile, r));
-  return mode === 'AND' ? results.every(Boolean) : results.some(Boolean);
+  return group.mode === 'AND' ? results.every(Boolean) : results.some(Boolean);
 }
 
-// Kept for backwards compat in case anything else references it
+function bdPassesFilters(profile) {
+  if (!bdFilterGroups.length) return true;
+  const topMode = document.getElementById('bdFltTopMode')?.value || 'AND';
+  const groupResults = bdFilterGroups.map(g => bdEvaluateGroup(profile, g));
+  return topMode === 'AND' ? groupResults.every(Boolean) : groupResults.some(Boolean);
+}
+
+// Backwards compat
 function bdPassesFilter(profile) { return bdPassesFilters(profile); }
 
 function bdApplyFilters() {
@@ -3951,9 +4043,11 @@ function bdApplyFilters() {
 }
 
 function bdResetFilters() {
-  bdFilterRules = [{ id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '' }];
-  document.getElementById('bdFltMode').value = 'AND';
-  bdRenderFilterRows();
+  bdFilterGroups = [bdNewGroup()];
+  const top = document.getElementById('bdFltTopMode');
+  if (top) top.value = 'AND';
+  bdSaveFilterState();
+  bdRenderFilterGroups();
   bdApplyFilters();
 }
 
