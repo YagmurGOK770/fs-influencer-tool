@@ -3642,6 +3642,15 @@ function closeProfileCard() {
           oninput="localStorage.setItem('bd_session_cookie', this.value)">
         <span style="font-size:11px;color:var(--muted)">Required for Instagram · DevTools (F12) → Network → any instagram.com request → Headers → Cookie</span>
       </div>
+      <!-- Recent-feed scan toggle: opt in to richer post-content filtering -->
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <input type="checkbox" id="bdScanRecentFeed"
+          onchange="localStorage.setItem('bd_scan_recent_feed', this.checked ? '1' : '0')">
+        <label for="bdScanRecentFeed" style="font-size:12px;cursor:pointer">
+          Also scan last 12 recent posts per creator
+          <span style="color:var(--muted)">— richer content filtering · adds ~1-2 min per 100 profiles</span>
+        </label>
+      </div>
     </div>
 
     <!-- Pre-fetch filters -->
@@ -3752,6 +3761,9 @@ function loadEnrichTab() {
   // Restore saved session cookie
   const saved = localStorage.getItem('bd_session_cookie');
   if (saved) document.getElementById('bdSessionCookie').value = saved;
+  // Restore scan-recent-feed toggle
+  const scanFeedEl = document.getElementById('bdScanRecentFeed');
+  if (scanFeedEl) scanFeedEl.checked = localStorage.getItem('bd_scan_recent_feed') === '1';
 
   // Restore saved filter state. Two formats may exist:
   //   New: { topMode, groups: [{ mode, rules }, ...] }
@@ -3881,6 +3893,8 @@ const BD_FIELD_OPS = {
   location:       [['contains', 'contains'], ['does not contain', 'does not contain']],
   name:           [['contains', 'contains'], ['does not contain', 'does not contain']],
   matchedKeyword: [['contains', 'contains'], ['does not contain', 'does not contain']],
+  postContent:    [['contains', 'contains'], ['does not contain', 'does not contain']],
+  postLocation:   [['contains', 'contains'], ['does not contain', 'does not contain']],
   verified:       [['is', 'is'], ['is not', 'is not']],
 };
 
@@ -3894,6 +3908,8 @@ const BD_FIELD_LABELS = {
   location:       'Location (bio)',
   name:           'Full name',
   matchedKeyword: 'Matched keyword',
+  postContent:    'Post content',
+  postLocation:   'Post location (tag)',
   verified:       'Verified',
 };
 
@@ -4079,6 +4095,8 @@ function bdEvaluateRule(p, rule) {
   if (field === 'name')           haystack = p.fullName || '';
   if (field === 'location')       haystack = `${p.location || ''} ${p.bio || ''}`;
   if (field === 'matchedKeyword') haystack = (p.matchedKeywords || []).join(' ');
+  if (field === 'postContent')    haystack = (p.postCaptions  || []).join(' ');
+  if (field === 'postLocation')   haystack = (p.postLocations || []).join(' ');
   haystack = haystack.toLowerCase();
   const needle = String(value).toLowerCase().trim();
   if (op === 'contains')         return haystack.includes(needle);
@@ -4406,9 +4424,20 @@ function renderBdTable(rows) {
       ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${r.matchedKeywords.map(k =>
           `<span style="display:inline-block;background:var(--green-bg);color:var(--green);padding:1px 6px;border-radius:8px;margin-right:3px">${k}</span>`).join('')}</div>`
       : '';
+    // Post-content badges (hover for full text) — only shown if we captured any
+    const captions  = r.postCaptions  || [];
+    const locations = r.postLocations || [];
+    const capTip = captions.map(c => c.length > 200 ? c.slice(0, 197) + '…' : c).join('\n\n').replace(/"/g, "'");
+    const locTip = locations.join(', ').replace(/"/g, "'");
+    const postBadges = (captions.length || locations.length)
+      ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">
+          ${captions.length ? `<span title="${capTip}" style="display:inline-block;background:var(--surface);border:1px solid var(--border);padding:1px 6px;border-radius:8px;margin-right:3px;cursor:help">📝 ${captions.length}</span>` : ''}
+          ${locations.length ? `<span title="${locTip}" style="display:inline-block;background:var(--surface);border:1px solid var(--border);padding:1px 6px;border-radius:8px;margin-right:3px;cursor:help">📍 ${locations.length}</span>` : ''}
+        </div>`
+      : '';
     return `
     <tr>
-      <td>${handleHtml}${matchedChips}</td>
+      <td>${handleHtml}${matchedChips}${postBadges}</td>
       <td style="font-size:12px">${r.fullName || '—'}</td>
       <td style="font-size:12px;font-weight:600">${r.followers || '—'}</td>
       <td style="font-size:12px">${r.postCount || '—'}</td>
@@ -4479,10 +4508,11 @@ function bdRenderProgress(status, startedAt, ctx = {}) {
     const maxPages = 5;
     innerFrac = 0.25 * Math.min(pageNum / maxPages, 1);
     inner = `finding posts · page ${pageNum}/${maxPages} · ${current} authors`;
-  } else if (phase === 'enriching') {
+  } else if (phase === 'enriching' || phase === 'enriching+feed') {
     const enrichFrac = total > 0 ? current / total : 0;
     innerFrac = 0.25 + 0.75 * enrichFrac;
-    inner = `enriching profiles · ${current}/${total}`;
+    const tail = phase === 'enriching+feed' ? ' + scanning feed' : '';
+    inner = `enriching profiles${tail} · ${current}/${total}`;
   } else if (phase === 'searching') {
     innerFrac = 0.5;
     inner = `searching ${bdPlatform}…`;
@@ -4516,9 +4546,10 @@ function bdRenderProgress(status, startedAt, ctx = {}) {
 // Run a single keyword search to completion. Returns array of profiles or
 // throws on backend error. Updates progress bar via the supplied context.
 async function bdRunOneSearch(keyword, sessionCookie, ctx) {
+  const scanRecentFeed = !!document.getElementById('bdScanRecentFeed')?.checked;
   const startResp = await fetch('/api/verify', {
     method: 'POST', headers: getApiHeaders(),
-    body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookie }),
+    body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookie, scanRecentFeed }),
   });
   const startData = await startResp.json();
   if (!startResp.ok || startData.error || !startData.searchId) {

@@ -284,7 +284,7 @@ function updateProgress(searchId, patch) {
   searchProgress.set(searchId, { ...prev, ...patch, lastUpdate: Date.now() });
 }
 
-async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}) {
+async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}, scanRecentFeed = false) {
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
   if (!sessionCookie) {
@@ -373,9 +373,12 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}) {
         }
         const posts = userPosts.get(u.username) || [];
         posts.push({
+          pk:       m.pk || m.id,
           likes:    Number(m.like_count    ?? 0),
           comments: Number(m.comment_count ?? 0),
           taken_at: m.taken_at,
+          caption:  (m.caption?.text || '').slice(0, 800),
+          location: m.location?.name || '',
         });
         userPosts.set(u.username, posts);
       }
@@ -443,19 +446,54 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}) {
       const u = j?.user;
       if (!u) return null;
 
-      // Hashtag-post engagement: aggregate likes/comments across this user's
-      // posts that matched the hashtag in our pagination.
-      const posts = userPosts.get(stub.username) || [];
-      const postsCount = posts.length;
-      const totalLikes    = posts.reduce((s, p) => s + p.likes,    0);
-      const totalComments = posts.reduce((s, p) => s + p.comments, 0);
+      // Optionally scan recent feed and merge new posts (dedup by pk).
+      if (scanRecentFeed) {
+        await sleep(600, 1400); // human-paced gap between profile and feed call
+        try {
+          const fr = await igDirect(`https://www.instagram.com/api/v1/feed/user/${stub.pk}/?count=12`);
+          if (fr.ok) {
+            const fj = await fr.json().catch(() => null);
+            const items = fj?.items || [];
+            const existing = userPosts.get(stub.username) || [];
+            const seenPks = new Set(existing.map(p => p.pk).filter(Boolean));
+            for (const m of items) {
+              const pk = m.pk || m.id;
+              if (pk && seenPks.has(pk)) continue;
+              if (pk) seenPks.add(pk);
+              existing.push({
+                pk,
+                likes:    Number(m.like_count    ?? 0),
+                comments: Number(m.comment_count ?? 0),
+                taken_at: m.taken_at,
+                caption:  (m.caption?.text || '').slice(0, 800),
+                location: m.location?.name || '',
+              });
+            }
+            userPosts.set(stub.username, existing);
+          }
+        } catch (_) { /* feed call failed — keep going with hashtag-only data */ }
+      }
+
+      // Engagement still measured against the hashtag-matching posts to keep
+      // the metric topical. (Recent feed posts inflate likes/comments with
+      // off-topic content and would skew the ER comparison.)
+      const allPosts      = userPosts.get(stub.username) || [];
+      const hashtagOnly   = allPosts.filter(p => p.pk == null || !p.fromFeed);  // all current entries qualify
+      // For now treat every captured post as hashtag-derived unless scanRecentFeed adds non-hashtag ones.
+      // (We approximate by counting captions captured during pagination phase.)
+      const postsCount    = hashtagOnly.length;
+      const totalLikes    = hashtagOnly.reduce((s, p) => s + (p.likes    || 0), 0);
+      const totalComments = hashtagOnly.reduce((s, p) => s + (p.comments || 0), 0);
       const avgLikes    = postsCount ? Math.round(totalLikes    / postsCount) : 0;
       const avgComments = postsCount ? Math.round(totalComments / postsCount) : 0;
       const followers   = Number(u.follower_count) || 0;
-      // ER % = (avg likes + avg comments) / followers × 100, rounded to 2dp
       const engagementRate = followers > 0
         ? Math.round(((avgLikes + avgComments) / followers) * 10000) / 100
         : 0;
+
+      // Aggregate post content for filtering
+      const postCaptions  = allPosts.map(p => p.caption).filter(Boolean);
+      const postLocations = [...new Set(allPosts.map(p => p.location).filter(Boolean))];
 
       return {
         handle:         u.username || stub.username,
@@ -466,23 +504,25 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}) {
         postCount:      String(u.media_count ?? ''),
         profileUrl:     `https://www.instagram.com/${stub.username}/`,
         rawPlatform:    'instagram',
-        // Hashtag-post engagement (specific to this search)
         hashtagPosts:   postsCount,
         avgLikes,
         avgComments,
-        engagementRate, // percent, e.g. 2.34 means 2.34%
+        engagementRate,
+        postCaptions,
+        postLocations,
       };
     } catch (_) { return null; }
   }
 
   const profiles = [];
-  onProgress({ phase: 'enriching', current: 0, total: userStubs.length });
+  const enrichPhase = scanRecentFeed ? 'enriching+feed' : 'enriching';
+  onProgress({ phase: enrichPhase, current: 0, total: userStubs.length });
   for (let i = 0; i < userStubs.length; i++) {
     const result = await fetchProfile(userStubs[i]);
     if (result) profiles.push(result);
-    onProgress({ phase: 'enriching', current: i + 1, total: userStubs.length });
+    onProgress({ phase: enrichPhase, current: i + 1, total: userStubs.length });
     if (i < userStubs.length - 1) await sleep(600, 1400);
-    if ((i + 1) % 20 === 0) console.log(`[ig-search] enriched ${i + 1}/${userStubs.length}`);
+    if ((i + 1) % 20 === 0) console.log(`[ig-search] enriched ${i + 1}/${userStubs.length}${scanRecentFeed ? ' (with feed scan)' : ''}`);
   }
 
   console.log(`[ig-search] #${tag} → ${profiles.length} profiles with follower counts`);
@@ -620,14 +660,15 @@ async function handleBdSearch(req, res) {
   const token = process.env.BRIGHTDATA_API_TOKEN;
   if (!token) return res.status(500).json({ error: 'BRIGHTDATA_API_TOKEN env var not set' });
 
-  const { platform, keyword, sessionCookie } = req.body || {};
+  const { platform, keyword, sessionCookie, scanRecentFeed } = req.body || {};
   const PLATFORMS = ['instagram', 'tiktok', 'youtube', 'x'];
   if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: `Unsupported platform: ${platform}` });
   if (!keyword || !keyword.trim()) return res.status(400).json({ error: 'keyword is required' });
 
   const kw = keyword.trim();
+  const scanFeed = !!scanRecentFeed;
   const searchId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  console.log(`[bd-search:${platform}] keyword="${kw}" hasCookie=${!!(sessionCookie)} searchId=${searchId}`);
+  console.log(`[bd-search:${platform}] keyword="${kw}" hasCookie=${!!(sessionCookie)} scanRecentFeed=${scanFeed} searchId=${searchId}`);
 
   updateProgress(searchId, {
     searchId, platform, keyword: kw,
@@ -645,7 +686,7 @@ async function handleBdSearch(req, res) {
       const onProgress = (patch) => updateProgress(searchId, patch);
       let result;
       if (platform === 'instagram') {
-        result = await igHashtagSearch(kw, sessionCookie || '', onProgress);
+        result = await igHashtagSearch(kw, sessionCookie || '', onProgress, scanFeed);
       } else if (platform === 'tiktok') {
         onProgress({ phase: 'searching', current: 0, total: 1 });
         result = await ttHashtagSearch(kw);

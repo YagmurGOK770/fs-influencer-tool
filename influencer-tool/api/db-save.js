@@ -83,6 +83,8 @@ function bdToRow(p) {
     avg_comments:    p.avgComments  ?? null,
     hashtag_posts:   p.hashtagPosts ?? null,
     matched_keywords: Array.isArray(p.matchedKeywords) ? p.matchedKeywords : null,
+    post_captions:   Array.isArray(p.postCaptions)  ? p.postCaptions  : null,
+    post_locations:  Array.isArray(p.postLocations) ? p.postLocations : null,
     location:        p.location    || null,
     country:         p.country     || null,
     likes:           p.likes       || null,
