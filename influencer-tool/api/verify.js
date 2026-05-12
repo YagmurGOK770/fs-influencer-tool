@@ -265,92 +265,76 @@ export default async function handler(req, res) {
 // On Vercel (10s limit) this will timeout — use locally for discovery.
 
 async function igHashtagSearch(keyword) {
-  const tag = keyword.replace(/^#/, '').toLowerCase().trim();
+  // Only /api/v1/users/web_profile_info/ works without auth through BrightData.
+  // Discovery strategy: try the keyword as a handle, plus common suffix variants,
+  // and verify each one using the already-working profile lookup.
+  const base = keyword.replace(/^#/, '').toLowerCase().replace(/\s+/g, '').trim();
+  const candidates = [
+    base,
+    `${base}uk`,
+    `${base}london`,
+    `${base}blog`,
+    `${base}blogger`,
+    `london${base}`,
+    `uk${base}`,
+    `the${base}`,
+  ];
 
-  // Use Instagram's public account search — works without a session through BrightData.
-  // Same endpoint pattern as web_profile_info which already works for verify.
-  // Searches accounts by name/username — great for "londonfood", "london food blogger" etc.
-  const resp = await bdFetch(
-    `https://www.instagram.com/api/v1/users/search/?q=${encodeURIComponent(tag)}&count=30`,
-    {
-      'x-ig-app-id': '936619743392459',
-      'accept': 'application/json, text/plain, */*',
-      'accept-language': 'en-US,en;q=0.9',
-      'referer': 'https://www.instagram.com/',
-    },
-    45000
-  );
+  console.log(`[ig-search] probing ${candidates.length} handle candidates for "${keyword}"`);
 
-  const text = await resp.text();
-  console.log(`[ig-search] status=${resp.status} len=${text.length} snippet=${text.slice(0,200)}`);
-
-  if (!resp.ok) throw new Error(`Instagram user search HTTP ${resp.status}: ${text.slice(0,200)}`);
-
-  let json;
-  try { json = JSON.parse(text); }
-  catch (_) { throw new Error(`Instagram returned non-JSON (status ${resp.status}): ${text.slice(0,150)}`); }
-
-  const users = json?.users || json?.accounts || [];
   const profiles = [];
-  for (const u of users) {
-    const user = u.user || u;
-    if (!user.username) continue;
-    profiles.push({
-      handle:     user.username,
-      fullName:   user.full_name || '',
-      followers:  String(user.follower_count ?? ''),
-      bio:        user.biography || '',
-      isVerified: !!(user.is_verified),
-      postCount:  String(user.media_count ?? ''),
-      profileUrl: `https://www.instagram.com/${user.username}/`,
-      rawPlatform: 'instagram',
-    });
+  for (const handle of candidates) {
+    const r = await verifyInstagram(handle);
+    console.log(`[ig-search] @${handle} → ok=${r.ok} followers=${r.followers} reason=${r.reason||''}`);
+    if (r.ok) {
+      profiles.push({
+        handle,
+        fullName:   r.fullName || '',
+        followers:  r.followers || '',
+        bio:        r.bio || '',
+        isVerified: !!(r.isVerified),
+        postCount:  r.postCount || '',
+        profileUrl: `https://www.instagram.com/${handle}/`,
+        rawPlatform: 'instagram',
+      });
+    }
   }
-  console.log(`[ig-search] "${tag}" → ${profiles.length} accounts`);
+  console.log(`[ig-search] "${keyword}" → ${profiles.length} real accounts found`);
   return profiles;
 }
 
 async function ttHashtagSearch(keyword) {
-  const tag = keyword.replace(/^#/, '').trim();
+  const base = keyword.replace(/^#/, '').toLowerCase().replace(/\s+/g, '').trim();
+  const candidates = [
+    base,
+    `${base}uk`,
+    `${base}london`,
+    `${base}food`,
+    `london${base}`,
+    `uk${base}`,
+    `the${base}`,
+  ];
 
-  // TikTok public user search — works without session through BrightData
-  const resp = await bdFetch(
-    `https://www.tiktok.com/api/search/user/full/?keyword=${encodeURIComponent(tag)}&count=30&cursor=0&aid=1988&app_language=en`,
-    {
-      'accept': 'application/json, text/plain, */*',
-      'referer': 'https://www.tiktok.com/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-    45000
-  );
+  console.log(`[tt-search] probing ${candidates.length} handle candidates for "${keyword}"`);
 
-  const text = await resp.text();
-  console.log(`[tt-search] status=${resp.status} len=${text.length} snippet=${text.slice(0,200)}`);
-
-  if (!resp.ok) throw new Error(`TikTok user search HTTP ${resp.status}: ${text.slice(0,200)}`);
-
-  let json;
-  try { json = JSON.parse(text); }
-  catch (_) { throw new Error(`TikTok returned non-JSON: ${text.slice(0,150)}`); }
-
-  const userList = json?.user_list || json?.userList || [];
   const profiles = [];
-  for (const item of userList) {
-    const u = item.user_info || item.userInfo?.user || item;
-    if (!u?.unique_id && !u?.uniqueId) continue;
-    const handle = u.unique_id || u.uniqueId;
-    profiles.push({
-      handle,
-      fullName:   u.nickname || '',
-      followers:  String(u.follower_count ?? u.fans ?? ''),
-      bio:        u.signature || '',
-      isVerified: !!(u.custom_verify || u.verified),
-      postCount:  String(u.aweme_count ?? u.videoCount ?? ''),
-      profileUrl: `https://www.tiktok.com/@${handle}`,
-      rawPlatform: 'tiktok',
-    });
+  for (const handle of candidates) {
+    const r = await verifyTikTok(handle);
+    console.log(`[tt-search] @${handle} → ok=${r.ok} followers=${r.followers} reason=${r.reason||''}`);
+    if (r.ok) {
+      profiles.push({
+        handle,
+        fullName:   r.fullName || '',
+        followers:  r.followers || '',
+        bio:        r.bio || '',
+        isVerified: !!(r.isVerified),
+        postCount:  r.postCount || '',
+        profileUrl: `https://www.tiktok.com/@${handle}`,
+        rawPlatform: 'tiktok',
+      });
+    }
   }
-  console.log(`[tt-search] "${tag}" → ${profiles.length} accounts`);
+  console.log(`[tt-search] "${keyword}" → ${profiles.length} real accounts found`);
   return profiles;
 }
 
