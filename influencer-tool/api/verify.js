@@ -342,32 +342,42 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}) {
     throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 300)}`);
   }
 
-  // Extract unique authors from top sections.
+  // Extract every media object (with user) from a section's layout_content.
   // layout_content uses varying keys (medias, fill_items, one_by_two_item, etc.)
-  // so walk all values to find objects with a .media.user shape.
-  function extractMediaUsers(layoutContent) {
-    const users = [];
+  function extractMedias(layoutContent) {
+    const out = [];
     for (const val of Object.values(layoutContent || {})) {
       const items = Array.isArray(val) ? val : [val];
       for (const item of items) {
-        const u = item?.media?.user;
-        if (u?.username) users.push(u);
+        const m = item?.media;
+        if (m?.user?.username) out.push(m);
       }
     }
-    return users;
+    return out;
   }
 
   const seen = new Set();
   const userStubs = [];
+  // username → array of { likes, comments, taken_at } for posts that matched this hashtag
+  const userPosts = new Map();
 
   function harvestSections(sections) {
     let added = 0;
     for (const section of sections || []) {
-      for (const u of extractMediaUsers(section.layout_content)) {
-        if (seen.has(u.username)) continue;
-        seen.add(u.username);
-        userStubs.push({ pk: u.pk || u.id, username: u.username, full_name: u.full_name || '', is_verified: !!(u.is_verified) });
-        added++;
+      for (const m of extractMedias(section.layout_content)) {
+        const u = m.user;
+        if (!seen.has(u.username)) {
+          seen.add(u.username);
+          userStubs.push({ pk: u.pk || u.id, username: u.username, full_name: u.full_name || '', is_verified: !!(u.is_verified) });
+          added++;
+        }
+        const posts = userPosts.get(u.username) || [];
+        posts.push({
+          likes:    Number(m.like_count    ?? 0),
+          comments: Number(m.comment_count ?? 0),
+          taken_at: m.taken_at,
+        });
+        userPosts.set(u.username, posts);
       }
     }
     return added;
@@ -432,15 +442,35 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}) {
       const j = await r.json().catch(() => null);
       const u = j?.user;
       if (!u) return null;
+
+      // Hashtag-post engagement: aggregate likes/comments across this user's
+      // posts that matched the hashtag in our pagination.
+      const posts = userPosts.get(stub.username) || [];
+      const postsCount = posts.length;
+      const totalLikes    = posts.reduce((s, p) => s + p.likes,    0);
+      const totalComments = posts.reduce((s, p) => s + p.comments, 0);
+      const avgLikes    = postsCount ? Math.round(totalLikes    / postsCount) : 0;
+      const avgComments = postsCount ? Math.round(totalComments / postsCount) : 0;
+      const followers   = Number(u.follower_count) || 0;
+      // ER % = (avg likes + avg comments) / followers × 100, rounded to 2dp
+      const engagementRate = followers > 0
+        ? Math.round(((avgLikes + avgComments) / followers) * 10000) / 100
+        : 0;
+
       return {
-        handle:      u.username || stub.username,
-        fullName:    u.full_name || stub.full_name,
-        followers:   String(u.follower_count ?? ''),
-        bio:         u.biography || '',
-        isVerified:  !!(u.is_verified ?? stub.is_verified),
-        postCount:   String(u.media_count ?? ''),
-        profileUrl:  `https://www.instagram.com/${stub.username}/`,
-        rawPlatform: 'instagram',
+        handle:         u.username || stub.username,
+        fullName:       u.full_name || stub.full_name,
+        followers:      String(u.follower_count ?? ''),
+        bio:            u.biography || '',
+        isVerified:     !!(u.is_verified ?? stub.is_verified),
+        postCount:      String(u.media_count ?? ''),
+        profileUrl:     `https://www.instagram.com/${stub.username}/`,
+        rawPlatform:    'instagram',
+        // Hashtag-post engagement (specific to this search)
+        hashtagPosts:   postsCount,
+        avgLikes,
+        avgComments,
+        engagementRate, // percent, e.g. 2.34 means 2.34%
       };
     } catch (_) { return null; }
   }

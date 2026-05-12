@@ -3697,6 +3697,9 @@ function closeProfileCard() {
               <th>Full Name</th>
               <th>Followers</th>
               <th>Posts</th>
+              <th title="Posts that matched the hashtag in this search">#Tag</th>
+              <th title="Average likes on hashtag posts">Avg ♥</th>
+              <th title="Engagement rate on hashtag posts = (avgLikes + avgComments) / followers × 100">ER %</th>
               <th>✓</th>
               <th>Bio</th>
               <th>Location</th>
@@ -3842,19 +3845,27 @@ let bdGroupSeq     = 0;
 let bdRuleSeq      = 0;
 
 const BD_FIELD_OPS = {
-  followers: [['>=', '≥'], ['<=', '≤'], ['=', '=']],
-  bio:       [['contains', 'contains'], ['does not contain', 'does not contain']],
-  location:  [['contains', 'contains'], ['does not contain', 'does not contain']],
-  name:      [['contains', 'contains'], ['does not contain', 'does not contain']],
-  verified:  [['is', 'is'], ['is not', 'is not']],
+  followers:      [['>=', '≥'], ['<=', '≤'], ['=', '=']],
+  engagementRate: [['>=', '≥'], ['<=', '≤']],
+  avgLikes:       [['>=', '≥'], ['<=', '≤']],
+  avgComments:    [['>=', '≥'], ['<=', '≤']],
+  hashtagPosts:   [['>=', '≥'], ['<=', '≤']],
+  bio:            [['contains', 'contains'], ['does not contain', 'does not contain']],
+  location:       [['contains', 'contains'], ['does not contain', 'does not contain']],
+  name:           [['contains', 'contains'], ['does not contain', 'does not contain']],
+  verified:       [['is', 'is'], ['is not', 'is not']],
 };
 
 const BD_FIELD_LABELS = {
-  followers: 'Followers',
-  bio:       'Bio',
-  location:  'Location (bio)',
-  name:      'Full name',
-  verified:  'Verified',
+  followers:      'Followers',
+  engagementRate: 'Engagement rate %',
+  avgLikes:       'Avg likes (#tag)',
+  avgComments:    'Avg comments (#tag)',
+  hashtagPosts:   '# Hashtag posts',
+  bio:            'Bio',
+  location:       'Location (bio)',
+  name:           'Full name',
+  verified:       'Verified',
 };
 
 function bdDefaultOpFor(field) { return BD_FIELD_OPS[field][0][0]; }
@@ -3963,9 +3974,19 @@ function bdRenderFilterGroups() {
           <option value="true"  ${rule.value === 'true'  ? 'selected' : ''}>verified</option>
           <option value="false" ${rule.value === 'false' ? 'selected' : ''}>not verified</option>
         </select>`;
-      } else if (rule.field === 'followers') {
+      } else if (rule.field === 'followers' || rule.field === 'avgLikes' || rule.field === 'avgComments') {
         valueInput = `<input type="text" value="${rule.value || ''}"
           placeholder="e.g. 10000 or 10k or 1M"
+          oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+      } else if (rule.field === 'engagementRate') {
+        valueInput = `<input type="text" value="${rule.value || ''}"
+          placeholder="e.g. 2 (means 2%)"
+          oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+      } else if (rule.field === 'hashtagPosts') {
+        valueInput = `<input type="text" value="${rule.value || ''}"
+          placeholder="e.g. 2 (at least 2 hashtag posts)"
           oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
           style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
       } else {
@@ -4007,9 +4028,14 @@ function bdRenderFilterGroups() {
 function bdEvaluateRule(p, rule) {
   const { field, op, value } = rule;
   if (field !== 'verified' && (value == null || value === '')) return true;
-  if (field === 'followers') {
-    const num    = bdParseFollowers(p.followers);
-    const target = bdParseFollowers(value);
+
+  // Numeric fields share comparison logic
+  const NUMERIC = { followers: 1, engagementRate: 1, avgLikes: 1, avgComments: 1, hashtagPosts: 1 };
+  if (NUMERIC[field]) {
+    const num = field === 'followers' ? bdParseFollowers(p.followers) : Number(p[field] || 0);
+    const target = field === 'followers' || field === 'avgLikes' || field === 'avgComments'
+      ? bdParseFollowers(value)   // accept 10k / 1M shorthand for follower-like counts
+      : Number(value);
     if (op === '>=') return num >= target;
     if (op === '<=') return num <= target;
     if (op === '=')  return num === target;
@@ -4018,6 +4044,7 @@ function bdEvaluateRule(p, rule) {
     const want = value === 'true';
     return op === 'is' ? !!p.isVerified === want : !!p.isVerified !== want;
   }
+  // Text fields
   let haystack = '';
   if (field === 'bio')      haystack = p.bio || '';
   if (field === 'name')     haystack = p.fullName || '';
@@ -4111,18 +4138,32 @@ function renderBdTable(rows) {
     const handleHtml = url
       ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${r.handle || '—'} ↗</a>`
       : `<span style="font-weight:600;font-size:12px">@${r.handle || '—'}</span>`;
+    const er = r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
+    const tagPosts = r.hashtagPosts != null ? r.hashtagPosts : '—';
+    const avgLikes = r.avgLikes != null ? bdFormatCompact(r.avgLikes) : '—';
     return `
     <tr>
       <td>${handleHtml}</td>
       <td style="font-size:12px">${r.fullName || '—'}</td>
       <td style="font-size:12px;font-weight:600">${r.followers || '—'}</td>
       <td style="font-size:12px">${r.postCount || '—'}</td>
+      <td style="font-size:12px;text-align:center">${tagPosts}</td>
+      <td style="font-size:12px;text-align:right">${avgLikes}</td>
+      <td style="font-size:12px;text-align:right;font-weight:600;color:${r.engagementRate >= 3 ? 'var(--green)' : r.engagementRate >= 1 ? 'var(--amber)' : 'var(--muted)'}">${er}</td>
       <td style="font-size:12px;text-align:center">${r.isVerified ? '<span style="color:var(--blue)">✓</span>' : '—'}</td>
       <td style="font-size:11px;color:var(--muted);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(r.bio||'').replace(/"/g,"'")}">${(r.bio||'—').slice(0,90)}</td>
       <td style="font-size:11px;color:var(--muted)">${r.location || r.country || '—'}</td>
       <td><span class="cov-badge found">✓ live</span></td>
     </tr>`;
   }).join('');
+}
+
+// Format big numbers compactly: 1234 → 1.2K, 1234567 → 1.2M
+function bdFormatCompact(n) {
+  n = Number(n) || 0;
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/,'') + 'M';
+  if (n >= 1_000)     return (n / 1_000).toFixed(1).replace(/\.0$/,'') + 'K';
+  return String(n);
 }
 
 // Build a fallback profile URL if the backend didn't include one
