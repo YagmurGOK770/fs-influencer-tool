@@ -274,7 +274,7 @@ async function igHashtagSearch(keyword, sessionCookie) {
   const cookieHeader = sessionCookie.includes('sessionid=') ? sessionCookie : `sessionid=${sessionCookie}`;
   const csrfMatch = cookieHeader.match(/csrftoken=([^;]+)/);
   const csrfToken = csrfMatch ? csrfMatch[1].trim() : '';
-  console.log(`[ig-search] tag=${tag} cookieLen=${cookieHeader.length} hasSessionId=${cookieHeader.includes('sessionid=')} hasCsrf=${!!csrfToken}`);
+  console.log(`[ig-search] tag=${tag} cookieLen=${cookieHeader.length} hasSessionId=${cookieHeader.includes('sessionid=')} hasCsrf=${!!csrfToken} cookieStart=${cookieHeader.slice(0,60)}`);
 
   // Direct fetch (not BrightData) — BrightData strips cookies; home/office IPs not blocked
   async function igDirect(url) {
