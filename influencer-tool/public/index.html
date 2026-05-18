@@ -3747,6 +3747,10 @@ function closeProfileCard() {
           </button>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
+          <button onclick="bdBulkToggleBadges('bdTbody', this)" type="button"
+            style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
+            ⊞ Expand all
+          </button>
           <button id="bdReenrichBtn" onclick="bdReenrichMissing()" type="button"
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
             🔄 Re-enrich missing
@@ -3940,7 +3944,10 @@ function closeProfileCard() {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-top:1px solid var(--border);font-size:12px;color:var(--muted)" id="bdrFooter">
         <span id="bdrFooterInfo">—</span>
-        <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-sm" onclick="bdBulkToggleBadges('bdrTbody', this)">⊞ Expand all</button>
+          <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
+        </div>
       </div>
     </div>
 
@@ -4614,6 +4621,17 @@ function bdToggleBadges(uid) {
   const expand = d.style.display === 'none';
   s.style.display = expand ? 'none' : '';
   d.style.display = expand ? '' : 'none';
+}
+
+function bdBulkToggleBadges(tbodyId, btnEl) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  const details   = tbody.querySelectorAll('[id^="bdb-d-"]');
+  const summaries = tbody.querySelectorAll('[id^="bdb-s-"]');
+  const anyExpanded = Array.from(details).some(d => d.style.display !== 'none');
+  summaries.forEach(s => { s.style.display = anyExpanded ? '' : 'none'; });
+  details.forEach(d   => { d.style.display = anyExpanded ? 'none' : ''; });
+  if (btnEl) btnEl.textContent = anyExpanded ? '⊞ Expand all' : '⊟ Collapse all';
 }
 
 function bdRenderCondBadges(items, uid) {
@@ -6110,9 +6128,23 @@ function bdrRenderTable(rows) {
     const avatarHtml = m.avatar_url
       ? `<img src="${m.avatar_url}" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:6px;object-fit:cover">`
       : '';
-    const handleHtml = url
-      ? `${avatarHtml}<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${m.handle||'—'} ↗</a>`
-      : `${avatarHtml}<span style="font-weight:600;font-size:12px">@${m.handle||'—'}</span>`;
+    // Per-platform clickable icon links
+    const platIconLinks = m.platforms.map(p => {
+      const h = (m.handle || '').replace(/^@/, '');
+      const row = m._rows.find(r => (r.platform || r.raw_platform || '').toLowerCase().includes(p));
+      let platUrl = row?.profile_url || '';
+      if (!platUrl) {
+        if (p.includes('instagram')) platUrl = `https://www.instagram.com/${h}/`;
+        else if (p.includes('tiktok'))   platUrl = `https://www.tiktok.com/@${h}`;
+        else if (p.includes('youtube'))  platUrl = `https://www.youtube.com/@${h}`;
+        else if (p.includes('x'))        platUrl = `https://x.com/${h}`;
+      }
+      if (!platUrl) return '';
+      const color = PLAT_COLORS[p] || '#888';
+      const lbl   = PLAT_LABEL[p]  || p.slice(0,2).toUpperCase();
+      return `<a href="${platUrl}" target="_blank" rel="noopener" title="Open ${p} profile" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:${color};color:#fff;font-size:9px;font-weight:700;text-decoration:none;flex-shrink:0;margin-left:4px">${lbl}</a>`;
+    }).filter(Boolean).join('');
+    const handleHtml = `${avatarHtml}<span style="font-weight:600;font-size:12px">@${m.handle||'—'}</span>${platIconLinks}`;
 
     // Platform pills with per-platform follower counts
     const platPills = m.platforms.map(p => {
