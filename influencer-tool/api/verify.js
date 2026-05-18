@@ -974,9 +974,18 @@ async function ytKeywordSearch(keyword) {
     const atMatch = canonicalUrl.match(/^\/@(.+)$/);
     const handle = atMatch ? atMatch[1] : channelId;
 
-    const subText = ch.subscriberCountText?.simpleText
+    // BrightData sometimes swaps subscriberCountText / videoCountText field values.
+    // Always validate: a subscriber count must contain at least one digit.
+    const subRaw = ch.subscriberCountText?.simpleText
       || ch.subscriberCountText?.runs?.map(r => r.text).join('')
       || '';
+    const subCleaned = subRaw.replace(/\s*subscribers?/i, '').trim();
+    const followers  = /\d/.test(subCleaned) ? subCleaned : '';
+
+    const videoRaw   = ch.videoCountText?.runs?.map(r => r.text).join('') || ch.videoCountText?.simpleText || '';
+    // Don't store subscriber-like text as post count
+    const postCount  = /subscriber/i.test(videoRaw) ? '' : videoRaw;
+
     const profileUrl = canonicalUrl
       ? `https://www.youtube.com${canonicalUrl}`
       : `https://www.youtube.com/channel/${channelId}`;
@@ -984,13 +993,13 @@ async function ytKeywordSearch(keyword) {
     profiles.push({
       handle,
       fullName:    ch.title?.simpleText || ch.title?.runs?.map(r => r.text).join('') || '',
-      followers:   subText.replace(/\s*subscribers?/i, '').trim(),
+      followers,
       bio:         ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
       isVerified:  !!(ch.ownerBadges?.some(b =>
         b?.metadataBadgeRenderer?.style?.includes('VERIFIED') ||
         b?.metadataBadgeRenderer?.icon?.iconType === 'CHECK_CIRCLE_THICK'
       )),
-      postCount:   ch.videoCountText?.runs?.map(r => r.text).join('') || ch.videoCountText?.simpleText || '',
+      postCount,
       profileUrl,
       rawPlatform: 'youtube',
     });

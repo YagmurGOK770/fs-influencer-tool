@@ -4497,6 +4497,43 @@ function bdEvaluateGroup(profile, group) {
   return group.mode === 'AND' ? results.every(Boolean) : results.some(Boolean);
 }
 
+function bdMatchedConditionLabels(profile) {
+  const FIELD_LABEL = {
+    bio: 'Bio', name: 'Full name', location: 'Location (bio)',
+    matchedKeyword: 'Keyword', postContent: 'Post content', postLocation: 'Post location (tag)',
+    followers: 'Followers', engagementRate: 'Engagement %', avgLikes: 'Avg likes',
+    avgComments: 'Avg comments', hashtagPosts: 'Tag posts', verified: 'Verified'
+  };
+  const NUMERIC = { followers: 1, engagementRate: 1, avgLikes: 1, avgComments: 1, hashtagPosts: 1 };
+  const matched = [];
+  for (const group of bdFilterGroups) {
+    const active = group.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
+    for (const rule of active) {
+      if (!bdEvaluateRule(profile, rule)) continue;
+      const label = FIELD_LABEL[rule.field] || rule.field;
+      if (rule.field === 'verified') {
+        matched.push(rule.value === 'true' ? 'Verified ✓' : 'Not verified');
+      } else if (NUMERIC[rule.field]) {
+        // For numeric fields: show the actual profile value so the user can see the count.
+        // Skip entirely if no data (null bypass passed the filter but nothing to display).
+        const raw = profile[rule.field];
+        if (raw == null || raw === '') continue;
+        const display = rule.field === 'followers' || rule.field === 'avgLikes' || rule.field === 'avgComments'
+          ? String(raw)
+          : Number(raw).toFixed(rule.field === 'engagementRate' ? 2 : 0);
+        matched.push(`${label}: ${display}`);
+      } else if (rule.op === 'contains') {
+        matched.push(`${label}: ${rule.value}`);
+      } else if (rule.op === 'does not contain') {
+        matched.push(`${label} ≠ ${rule.value}`);
+      } else {
+        matched.push(`${label} ${rule.op} ${rule.value}`);
+      }
+    }
+  }
+  return matched;
+}
+
 function bdPassesFilters(profile) {
   // Instagram stub profiles (pre-enrichment) have no follower count — exclude until enriched.
   // YouTube, TikTok and X return whatever data the search found directly; don't gate on followers.
@@ -4847,9 +4884,14 @@ function renderBdTable(rows) {
           ${locations.length ? `<span title="${locTip}" style="display:inline-block;background:var(--surface);border:1px solid var(--border);padding:1px 6px;border-radius:8px;margin-right:3px;cursor:help">📍 ${locations.length}</span>` : ''}
         </div>`
       : '';
+    const condLabels = bdFilterGroups.length ? bdMatchedConditionLabels(r) : [];
+    const condBadges = condLabels.length
+      ? `<div style="font-size:10px;margin-top:3px">${condLabels.map(l =>
+          `<span style="display:inline-block;background:#eef2ff;color:#4f6ef7;padding:1px 6px;border-radius:8px;margin-right:3px;margin-bottom:2px;white-space:nowrap">${l}</span>`).join('')}</div>`
+      : '';
     return `
     <tr>
-      <td>${handleHtml}${matchedChips}${postBadges}</td>
+      <td>${handleHtml}${matchedChips}${postBadges}${condBadges}</td>
       <td style="font-size:12px">${r.fullName || '—'}</td>
       <td style="font-size:12px;font-weight:600">${r.followers || '—'}</td>
       <td style="font-size:12px">${r.postCount || '—'}</td>
