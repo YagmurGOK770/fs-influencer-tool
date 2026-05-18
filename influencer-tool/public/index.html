@@ -4457,7 +4457,9 @@ function bdEvaluateRule(p, rule) {
   const NUMERIC = { followers: 1, engagementRate: 1, avgLikes: 1, avgComments: 1, hashtagPosts: 1 };
   if (NUMERIC[field]) {
     const raw = p[field];
-    if (raw === '' || raw == null) return true; // no data (enrichment skipped) — don't filter out
+    // No data: followers = fail filter (unknown reach shouldn't pass a min-followers rule)
+    //          ER/avgLikes/etc = pass through (post enrichment may not have run yet)
+    if (raw === '' || raw == null) return field !== 'followers';
     const num = field === 'followers' ? bdParseFollowers(p.followers) : Number(p[field] || 0);
     const target = field === 'followers' || field === 'avgLikes' || field === 'avgComments'
       ? bdParseFollowers(value)   // accept 10k / 1M shorthand for follower-like counts
