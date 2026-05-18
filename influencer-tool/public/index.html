@@ -5728,12 +5728,12 @@ function bdrMergeByHandle(rows) {
     byHandle.get(key).push(r);
   }
   return Array.from(byHandle.values()).map(platformRows => {
-    const sorted  = [...platformRows].sort((a,b) => (Number(b.followers)||0) - (Number(a.followers)||0));
+    const sorted  = [...platformRows].sort((a,b) => bdParseCompact(b.followers) - bdParseCompact(a.followers));
     const primary = sorted[0];
     const findPlat = p => platformRows.find(r => (r.platform||r.raw_platform||'').toLowerCase().includes(p));
     const ig = findPlat('instagram'), tt = findPlat('tiktok'),
           yt = findPlat('youtube'),   xr = platformRows.find(r => { const p=(r.platform||r.raw_platform||'').toLowerCase(); return p==='x'||p.includes('twitter'); });
-    const totalFollowers = platformRows.reduce((s,r) => s + (Number(r.followers)||0), 0);
+    const totalFollowers = platformRows.reduce((s,r) => s + bdParseCompact(r.followers), 0);
     const allCaptions  = [...new Set(platformRows.flatMap(r => Array.isArray(r.post_captions)  ? r.post_captions  : []))];
     const allLocations = [...new Set(platformRows.flatMap(r => Array.isArray(r.post_locations) ? r.post_locations : []))];
     const allKeywords  = [...new Set(platformRows.flatMap(r => Array.isArray(r.matched_keywords) ? r.matched_keywords : []))];
@@ -5747,6 +5747,7 @@ function bdrMergeByHandle(rows) {
       engagement_rate: primary.engagement_rate,
       avg_likes:       primary.avg_likes,
       avg_comments:    primary.avg_comments,
+      post_count:      (yt || primary).post_count || null,
       followers:       String(totalFollowers),
       ig_followers:    ig ? ig.followers : null,
       tt_followers:    tt ? tt.followers : null,
@@ -6081,7 +6082,7 @@ function bdrRenderTable(rows) {
     // Platform pills with per-platform follower counts
     const platPills = m.platforms.map(p => {
       const row = m._rows.find(r => (r.platform||r.raw_platform||'').toLowerCase().includes(p));
-      const flw = row?.followers ? bdFormatCompact(Number(row.followers)) : '?';
+      const flw = row?.followers ? bdFormatCompact(bdParseCompact(row.followers)) : '?';
       const color = PLAT_COLORS[p] || 'var(--muted)';
       const lbl   = PLAT_LABEL[p]  || p.toUpperCase().slice(0,2);
       return `<span style="display:inline-flex;align-items:center;gap:3px;background:${color}18;color:${color};border:1px solid ${color}40;border-radius:100px;padding:2px 7px;font-size:10px;font-weight:700;white-space:nowrap;margin:1px 2px 1px 0">${lbl} <span style="font-weight:500">${flw}</span></span>`;
