@@ -992,9 +992,10 @@ async function ytKeywordSearch(keyword) {
     const subCleaned   = subRaw.replace(/\s*subscribers?/i, '').trim();
     const videoCleaned = videoRaw.replace(/\s*subscribers?/i, '').trim();
     let followers, postCount;
-    if (/^\d/.test(subCleaned))        { followers = subCleaned;   postCount = /subscriber/i.test(videoRaw) ? '' : videoRaw; }
+    const cleanVideoCount = v => v.replace(/\s*videos?/i, '').trim();
+    if (/^\d/.test(subCleaned))        { followers = subCleaned;   postCount = /subscriber/i.test(videoRaw) ? '' : cleanVideoCount(videoRaw); }
     else if (/^\d/.test(videoCleaned)) { followers = videoCleaned; postCount = ''; }
-    else                               { followers = '';            postCount = /subscriber/i.test(videoRaw) ? '' : videoRaw; }
+    else                               { followers = '';            postCount = /subscriber/i.test(videoRaw) ? '' : cleanVideoCount(videoRaw); }
     return {
       handle, followers, postCount,
       fullName:   ch.title?.simpleText || ch.title?.runs?.map(r => r.text).join('') || '',

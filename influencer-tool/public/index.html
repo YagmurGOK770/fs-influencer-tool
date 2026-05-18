@@ -4178,12 +4178,17 @@ function bdSaveFilterState() {
 }
 
 function bdSaveCachedResults(keyword, platform) {
+  const base = { keyword, platform, timestamp: Date.now() };
   try {
-    localStorage.setItem('bd_cached_results', JSON.stringify({
-      keyword, platform, profiles: bdAllResults, timestamp: Date.now(),
-    }));
-  } catch (e) {
-    console.warn('Could not cache results (likely quota):', e.message);
+    localStorage.setItem('bd_cached_results', JSON.stringify({ ...base, profiles: bdAllResults }));
+  } catch (_) {
+    // Full save exceeded quota — retry without post captions/locations (large arrays)
+    try {
+      const slim = bdAllResults.map(({ postCaptions, postLocations, ...rest }) => rest);
+      localStorage.setItem('bd_cached_results', JSON.stringify({ ...base, profiles: slim }));
+    } catch (e) {
+      console.warn('Could not cache results (quota exceeded):', e.message);
+    }
   }
 }
 
@@ -4888,9 +4893,8 @@ function bdLoadSearch(id) {
   const s = bdSearchHistory.find(x => String(x.id) === String(id));
   if (!s) return;
   const kwEl = document.getElementById('bdKeyword');
-  const ptEl = document.getElementById('bdPlatformSel');
   if (kwEl) kwEl.value = s.keywords;
-  if (ptEl) ptEl.value = s.platform;
+  // Intentionally NOT resetting platform — user keeps whatever platform they have selected
   if (delBtn) delBtn.style.display = '';
 }
 
@@ -4951,9 +4955,14 @@ function renderBdTable(rows) {
     const handleHtml = url
       ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${r.handle || '—'} ↗</a>`
       : `<span style="font-weight:600;font-size:12px">@${r.handle || '—'}</span>`;
-    const er = r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
-    const tagPosts = r.hashtagPosts != null ? r.hashtagPosts : '—';
-    const avgLikes = r.avgLikes != null ? bdFormatCompact(r.avgLikes) : '—';
+    const isYT = (r.rawPlatform || '').toLowerCase() === 'youtube';
+    const er = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
+      : r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
+    const tagPosts = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
+      : r.hashtagPosts != null ? r.hashtagPosts : '—';
+    const avgLikes = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
+      : r.avgLikes != null ? bdFormatCompact(r.avgLikes) : '—';
+    const postCount = r.postCount || (isYT ? '' : '—');
     const matchedChips = (r.matchedKeywords || []).length
       ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${r.matchedKeywords.map(k =>
           `<span style="display:inline-block;background:var(--green-bg);color:var(--green);padding:1px 6px;border-radius:8px;margin-right:3px">${k}</span>`).join('')}</div>`
@@ -4976,7 +4985,7 @@ function renderBdTable(rows) {
       <td>${handleHtml}${matchedChips}${postBadges}${condBadges}</td>
       <td style="font-size:12px">${r.fullName || '—'}</td>
       <td style="font-size:12px;font-weight:600">${r.followers || '—'}</td>
-      <td style="font-size:12px">${r.postCount || '—'}</td>
+      <td style="font-size:12px">${postCount || '—'}</td>
       <td style="font-size:12px;text-align:center">${tagPosts}</td>
       <td style="font-size:12px;text-align:right">${avgLikes}</td>
       <td style="font-size:12px;text-align:right;font-weight:600;color:${r.engagementRate >= 3 ? 'var(--green)' : r.engagementRate >= 1 ? 'var(--amber)' : 'var(--muted)'}">${er}</td>
