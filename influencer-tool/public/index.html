@@ -4970,7 +4970,15 @@ function renderBdTable(rows) {
     const handleHtml = url
       ? `${avatarImg}<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${r.handle || '—'} ↗</a>`
       : `${avatarImg}<span style="font-weight:600;font-size:12px">@${r.handle || '—'}</span>`;
-    const er = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
+    const ytER = (() => {
+      if (!isYT || !totalViewsNum || !r.postCount || !r.followers) return null;
+      const videos = bdParseCompact(String(r.postCount).replace(/\s*videos?/i,''));
+      const subs   = bdParseCompact(String(r.followers));
+      if (!videos || !subs) return null;
+      return ((totalViewsNum / videos) / subs * 100).toFixed(1);
+    })();
+    const er = isYT
+      ? (ytER ? `<span title="View rate: avg views per video ÷ subscribers">${ytER}%</span>` : '<span style="color:var(--muted2);font-size:10px">n/a</span>')
       : r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
     const tagPosts = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
       : r.hashtagPosts != null ? r.hashtagPosts : '—';
@@ -5019,6 +5027,15 @@ function bdFormatCompact(n) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/,'') + 'M';
   if (n >= 1_000)     return (n / 1_000).toFixed(1).replace(/\.0$/,'') + 'K';
   return String(n);
+}
+// Parse compact strings back to numbers: "342K" → 342000, "2.24M" → 2240000
+function bdParseCompact(s) {
+  if (!s) return 0;
+  const m = String(s).replace(/,/g,'').trim().match(/^([\d.]+)\s*([KMBkmb]?)$/);
+  if (!m) return 0;
+  const n = parseFloat(m[1]);
+  const u = m[2].toUpperCase();
+  return u === 'K' ? n * 1e3 : u === 'M' ? n * 1e6 : u === 'B' ? n * 1e9 : n;
 }
 
 // Build a fallback profile URL if the backend didn't include one
