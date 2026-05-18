@@ -5392,48 +5392,32 @@ async function bdEnrichYoutube() {
   setBdStatus(`Enriching ${profiles.length} YouTube channels…`, '');
 
   try {
-    const startResp = await fetch('/api/verify', {
+    setBdStatus(`Enriching ${profiles.length} YouTube channels in parallel…`, '');
+    const resp = await fetch('/api/verify', {
       method: 'POST', headers: getApiHeaders(),
       body: JSON.stringify({ action: 'yt-enrich', profiles }),
     });
-    const startData = await startResp.json();
-    if (!startResp.ok || startData.error) throw new Error(startData.error || startResp.statusText);
-    const { scanId } = startData;
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error || resp.statusText);
 
-    while (true) {
-      await new Promise(r => setTimeout(r, 1000));
-      const sResp = await fetch('/api/verify', {
-        method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ action: 'bd-search-status', searchId: scanId }),
-      });
-      const status = await sResp.json();
-      if (status.phase === 'enriching') {
-        btn.textContent = `⏳ ${status.current}/${status.total}`;
-        setBdStatus(`Enriching YT channels… ${status.current}/${status.total} done`, '');
-      }
-      if (status.phase === 'error') throw new Error(status.error);
-      if (status.phase === 'complete') {
-        const byHandle = new Map(status.results.map(r => [r.handle.toLowerCase(), r]));
-        let enrichedCount = 0;
-        bdAllResults = bdAllResults.map(p => {
-          const r = byHandle.get((p.handle || '').toLowerCase());
-          if (!r || !r.enriched) return p;
-          enrichedCount++;
-          return {
-            ...p,
-            postCount:  r.postCount  || p.postCount,
-            totalViews: r.totalViews || p.totalViews,
-            followers:  r.followers  || p.followers,
-            location:   r.location   || p.location,
-            bio:        r.bio        || p.bio,
-          };
-        });
-        setBdStatus(`Enriched ${enrichedCount}/${profiles.length} YouTube channels.`, enrichedCount > 0 ? 'green' : 'red');
-        bdApplyFilters();
-        bdSaveCachedResults(null, bdPlatform);
-        break;
-      }
-    }
+    const byHandle = new Map((data.results || []).map(r => [r.handle.toLowerCase(), r]));
+    let enrichedCount = 0;
+    bdAllResults = bdAllResults.map(p => {
+      const r = byHandle.get((p.handle || '').toLowerCase());
+      if (!r || !r.enriched) return p;
+      enrichedCount++;
+      return {
+        ...p,
+        postCount:  r.postCount  || p.postCount,
+        totalViews: r.totalViews || p.totalViews,
+        followers:  r.followers  || p.followers,
+        location:   r.location   || p.location,
+        bio:        r.bio        || p.bio,
+      };
+    });
+    setBdStatus(`Enriched ${enrichedCount}/${profiles.length} YouTube channels.`, enrichedCount > 0 ? 'green' : 'red');
+    bdApplyFilters();
+    bdSaveCachedResults(null, bdPlatform);
   } catch (e) {
     setBdStatus(`YT enrich error: ${e.message}`, 'red');
   } finally {

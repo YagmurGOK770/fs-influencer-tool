@@ -1708,21 +1708,18 @@ async function handleBrightData(req, res) {
   return res.status(200).json({ results });
 }
 
-// ── YouTube channel enrichment (manual button — reuses ytEnrichOne) ──────────
+// ── YouTube channel enrichment (manual button — synchronous, no polling) ─────
+// Runs all enrichment in parallel batches and returns results directly.
+// Avoids Vercel's 10s function timeout that killed the old background-task approach.
 async function handleYtEnrich(req, res) {
   const { profiles } = req.body || {};
   if (!Array.isArray(profiles) || !profiles.length)
     return res.status(400).json({ error: 'profiles[] required' });
 
-  const scanId = `yt-enrich-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  updateProgress(scanId, { phase: 'enriching', current: 0, total: profiles.length });
-  res.status(200).json({ scanId });
-
-  (async () => {
-    const results = [];
-    for (let i = 0; i < profiles.length; i++) {
-      const { handle, profileUrl } = profiles[i];
-      updateProgress(scanId, { phase: 'enriching', current: i, total: profiles.length });
+  const BATCH = 8;
+  const results = [];
+  for (let i = 0; i < profiles.length; i += BATCH) {
+    await Promise.all(profiles.slice(i, i + BATCH).map(async ({ handle, profileUrl }) => {
       try {
         const e = await ytEnrichOne(handle, profileUrl);
         console.log(`[yt-enrich] ${handle}: videos=${e.videoCount} views=${e.totalViews} country=${e.country}`);
@@ -1738,7 +1735,7 @@ async function handleYtEnrich(req, res) {
         console.warn(`[yt-enrich] ${handle}: ${e.message}`);
         results.push({ handle, enriched: false });
       }
-    }
-    updateProgress(scanId, { phase: 'complete', results });
-  })().catch(e => updateProgress(scanId, { phase: 'error', error: e.message }));
+    }));
+  }
+  return res.status(200).json({ results });
 }
