@@ -5748,6 +5748,7 @@ function bdrMergeByHandle(rows) {
       avg_likes:       primary.avg_likes,
       avg_comments:    primary.avg_comments,
       post_count:      (yt || primary).post_count || null,
+      avatar_url:      (yt || primary).avatar_url || null,
       followers:       String(totalFollowers),
       ig_followers:    ig ? ig.followers : null,
       tt_followers:    tt ? tt.followers : null,
@@ -5881,6 +5882,7 @@ async function loadBdResults(forceRefresh) {
     if (localStorage.getItem('bdr_filter_panel_collapsed') === '1') bdrToggleFilters();
     bdrUpdateStats();        // show DB state as-is on load
     bdrApplyFilter();
+    bdrAutoApply();          // re-classify by active filter rules (shows banner if anything changed)
   } catch (e) {
     document.getElementById('bdrLoading').innerHTML =
       `<div style="color:var(--red);font-size:13px">Failed to load: ${e.message}</div>`;
@@ -6075,9 +6077,12 @@ function bdrRenderTable(rows) {
       return '';
     })();
 
+    const avatarHtml = m.avatar_url
+      ? `<img src="${m.avatar_url}" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:6px;object-fit:cover">`
+      : '';
     const handleHtml = url
-      ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${m.handle||'—'} ↗</a>`
-      : `<span style="font-weight:600;font-size:12px">@${m.handle||'—'}</span>`;
+      ? `${avatarHtml}<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${m.handle||'—'} ↗</a>`
+      : `${avatarHtml}<span style="font-weight:600;font-size:12px">@${m.handle||'—'}</span>`;
 
     // Platform pills with per-platform follower counts
     const platPills = m.platforms.map(p => {
