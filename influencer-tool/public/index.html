@@ -4954,16 +4954,18 @@ function renderBdTable(rows) {
   empty.style.display = 'none';
   tbody.innerHTML = rows.map(r => {
     const url = r.profileUrl || bdProfileUrlFor(r);
-    const handleHtml = url
-      ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${r.handle || '—'} ↗</a>`
-      : `<span style="font-weight:600;font-size:12px">@${r.handle || '—'}</span>`;
     const isYT = (r.rawPlatform || '').toLowerCase() === 'youtube';
+    const avatarImg = (isYT && r.avatarUrl)
+      ? `<img src="${r.avatarUrl}" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:6px;object-fit:cover">`
+      : '';
+    const handleHtml = url
+      ? `${avatarImg}<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${r.handle || '—'} ↗</a>`
+      : `${avatarImg}<span style="font-weight:600;font-size:12px">@${r.handle || '—'}</span>`;
     const er = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
       : r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
     const tagPosts = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
       : r.hashtagPosts != null ? r.hashtagPosts : '—';
-    const avgLikes = isYT
-      ? (r.totalViews ? `<span style="font-size:11px" title="Total channel views">${bdFormatCompact(Number(r.totalViews.replace(/,/g,'')) || 0)} views</span>` : '<span style="color:var(--muted2);font-size:10px">n/a</span>')
+    const avgLikes = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
       : r.avgLikes != null ? bdFormatCompact(r.avgLikes) : '—';
     const postCount = r.postCount || (isYT ? '' : '—');
     const matchedChips = (r.matchedKeywords || []).length

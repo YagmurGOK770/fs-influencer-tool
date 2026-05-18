@@ -995,16 +995,17 @@ async function ytKeywordSearch(keyword) {
     const subCleaned   = subRaw.replace(/\s*subscribers?/i, '').trim();
     const videoCleaned = videoRaw.replace(/\s*subscribers?/i, '').trim();
     // viewCountText may appear for some channels (total channel views)
-    const viewRaw      = ch.viewCountText?.simpleText || ch.viewCountText?.runs?.map(r => r.text).join('') || '';
-    const totalViews   = viewRaw.replace(/\s*views?/i, '').replace(/,/g, '').trim();
-    let followers, postCount;
-    const cleanVideoCount = v => v.replace(/\s*videos?/i, '').trim();
-    if (/^\d/.test(subCleaned))        { followers = subCleaned;   postCount = /subscriber/i.test(videoRaw) ? '' : cleanVideoCount(videoRaw); }
-    else if (/^\d/.test(videoCleaned)) { followers = videoCleaned; postCount = ''; }
-    else                               { followers = '';            postCount = /subscriber/i.test(videoRaw) ? '' : cleanVideoCount(videoRaw); }
+    // YouTube search results do NOT include video count, views, or engagement data.
+    // videoCountText = subscribers (mislabelled), subscriberCountText = @handle (mislabelled).
+    let followers;
+    if (/^\d/.test(subCleaned))        followers = subCleaned;
+    else if (/^\d/.test(videoCleaned)) followers = videoCleaned;
+    else                               followers = '';
+    const thumbs = ch.thumbnail?.thumbnails || [];
+    const avatarUrl = thumbs.length ? ('https:' + (thumbs[thumbs.length - 1].url || thumbs[0].url)) : '';
     return {
-      handle, followers, postCount,
-      totalViews: /^\d/.test(totalViews) ? totalViews : '',
+      handle, followers, postCount: '',
+      avatarUrl,
       fullName:   ch.title?.simpleText || ch.title?.runs?.map(r => r.text).join('') || '',
       bio:        ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
       isVerified: !!(ch.ownerBadges?.some(b => b?.metadataBadgeRenderer?.style?.includes('VERIFIED') || b?.metadataBadgeRenderer?.icon?.iconType === 'CHECK_CIRCLE_THICK')),
