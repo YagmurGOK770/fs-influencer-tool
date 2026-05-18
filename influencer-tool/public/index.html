@@ -3751,6 +3751,9 @@ function closeProfileCard() {
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
             🔄 Re-enrich missing
           </button>
+          <button id="bdYtEnrichBtn" onclick="bdEnrichYoutube()" type="button" style="display:none;font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
+            🎬 Enrich YT channels
+          </button>
           <button id="bdScanPostsBtn" onclick="bdScanPosts()" type="button"
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
             📝 Scan recent posts
@@ -4637,6 +4640,12 @@ function bdApplyFilters() {
   } else {
     document.getElementById('bdFltCount').textContent = '';
   }
+  // Show correct enrichment button based on platform
+  const isYT = bdPlatform === 'youtube';
+  const reenrichBtn = document.getElementById('bdReenrichBtn');
+  const ytEnrichBtn = document.getElementById('bdYtEnrichBtn');
+  if (reenrichBtn) reenrichBtn.style.display = isYT ? 'none' : '';
+  if (ytEnrichBtn) ytEnrichBtn.style.display = isYT ? '' : 'none';
   // Always update BD Results tab if loaded — runs even when no Enrich search is active
   if (typeof bdrLoaded !== 'undefined' && bdrLoaded) bdrAutoApply();
 }
@@ -4965,9 +4974,11 @@ function renderBdTable(rows) {
       : r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
     const tagPosts = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
       : r.hashtagPosts != null ? r.hashtagPosts : '—';
-    const avgLikes = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
+    const totalViewsNum = isYT && r.totalViews ? Number(r.totalViews.replace(/,/g,'')) || 0 : 0;
+    const avgLikes = isYT
+      ? (totalViewsNum ? `<span style="font-size:11px" title="Total channel views">${bdFormatCompact(totalViewsNum)} views</span>` : '<span style="color:var(--muted2);font-size:10px">—</span>')
       : r.avgLikes != null ? bdFormatCompact(r.avgLikes) : '—';
-    const postCount = r.postCount || (isYT ? '' : '—');
+    const postCount = r.postCount ? (isYT ? `${r.postCount} videos` : r.postCount) : (isYT ? '—' : '—');
     const matchedChips = (r.matchedKeywords || []).length
       ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${r.matchedKeywords.map(k =>
           `<span style="display:inline-block;background:var(--green-bg);color:var(--green);padding:1px 6px;border-radius:8px;margin-right:3px">${k}</span>`).join('')}</div>`
@@ -5367,6 +5378,67 @@ async function bdReenrichMissing() {
   } finally {
     btn.disabled = false;
     btn.textContent = '🔄 Re-enrich missing';
+  }
+}
+
+async function bdEnrichYoutube() {
+  if (!bdAllResults.length) return;
+  const profiles = bdAllResults.map(p => ({ handle: p.handle, profileUrl: p.profileUrl })).filter(p => p.handle);
+  if (!profiles.length) return;
+
+  const btn = document.getElementById('bdYtEnrichBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Enriching…';
+  setBdStatus(`Enriching ${profiles.length} YouTube channels…`, '');
+
+  try {
+    const startResp = await fetch('/api/verify', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'yt-enrich', profiles }),
+    });
+    const startData = await startResp.json();
+    if (!startResp.ok || startData.error) throw new Error(startData.error || startResp.statusText);
+    const { scanId } = startData;
+
+    while (true) {
+      await new Promise(r => setTimeout(r, 1000));
+      const sResp = await fetch('/api/verify', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'bd-search-status', searchId: scanId }),
+      });
+      const status = await sResp.json();
+      if (status.phase === 'enriching') {
+        btn.textContent = `⏳ ${status.current}/${status.total}`;
+        setBdStatus(`Enriching YT channels… ${status.current}/${status.total} done`, '');
+      }
+      if (status.phase === 'error') throw new Error(status.error);
+      if (status.phase === 'complete') {
+        const byHandle = new Map(status.results.map(r => [r.handle.toLowerCase(), r]));
+        let enrichedCount = 0;
+        bdAllResults = bdAllResults.map(p => {
+          const r = byHandle.get((p.handle || '').toLowerCase());
+          if (!r || !r.enriched) return p;
+          enrichedCount++;
+          return {
+            ...p,
+            postCount:  r.postCount  || p.postCount,
+            totalViews: r.totalViews || p.totalViews,
+            followers:  r.followers  || p.followers,
+            location:   r.location   || p.location,
+            bio:        r.bio        || p.bio,
+          };
+        });
+        setBdStatus(`Enriched ${enrichedCount}/${profiles.length} YouTube channels.`, enrichedCount > 0 ? 'green' : 'red');
+        bdApplyFilters();
+        bdSaveCachedResults(null, bdPlatform);
+        break;
+      }
+    }
+  } catch (e) {
+    setBdStatus(`YT enrich error: ${e.message}`, 'red');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🎬 Enrich YT channels';
   }
 }
 
