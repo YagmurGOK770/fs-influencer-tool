@@ -3689,7 +3689,7 @@ function closeProfileCard() {
           <button class="btn-sm" id="bdDeletePresetBtn" onclick="bdDeletePreset()" title="Delete the selected preset" style="display:none">🗑</button>
           <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
           <label style="font-size:11px;color:var(--muted)">Between groups:</label>
-          <select id="bdFltTopMode" onchange="bdSetTopMode(this.value); bdSaveFilterState(); bdRenderFilterGroups(); bdApplyFilters()"
+          <select id="bdFltTopMode" onchange="bdSetTopMode(this.value); bdSaveFilterState(); bdRenderFilterGroups()"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="AND">ALL (and)</option>
             <option value="OR">ANY (or)</option>
@@ -3701,6 +3701,7 @@ function closeProfileCard() {
         <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
           <button class="btn-sm" onclick="bdAddGroup()">+ Add group</button>
           <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
+          <button onclick="bdApplyFilters()" style="padding:6px 14px;border:none;border-radius:6px;background:var(--green);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Apply Filters</button>
           <span id="bdFltCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
         </div>
       </div>
@@ -3812,7 +3813,7 @@ function closeProfileCard() {
           <button class="btn-sm" id="bdrDeletePresetBtn" onclick="bdDeletePreset()" title="Delete the selected preset" style="display:none">🗑</button>
           <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
           <label style="font-size:11px;color:var(--muted)">Between groups:</label>
-          <select id="bdrFltTopMode" onchange="bdSetTopMode(this.value); bdSaveFilterState(); bdRenderFilterGroups(); bdApplyFilters()"
+          <select id="bdrFltTopMode" onchange="bdSetTopMode(this.value); bdSaveFilterState(); bdRenderFilterGroups()"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="AND">ALL (and)</option>
             <option value="OR">ANY (or)</option>
@@ -3824,6 +3825,7 @@ function closeProfileCard() {
         <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
           <button class="btn-sm" onclick="bdAddGroup()">+ Add group</button>
           <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
+          <button onclick="bdApplyFilters()" style="padding:6px 14px;border:none;border-radius:6px;background:var(--green);color:#fff;font-size:12px;font-weight:700;cursor:pointer">Apply Filters</button>
         </div>
       </div>
     </div>
@@ -4279,7 +4281,6 @@ function bdAddGroup() {
   bdFilterGroups.push(bdNewGroup());
   bdRenderFilterGroups();
   bdSaveFilterState();
-  bdApplyFilters();
 }
 
 function bdRemoveGroup(groupId) {
@@ -4287,7 +4288,6 @@ function bdRemoveGroup(groupId) {
   if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
   bdRenderFilterGroups();
   bdSaveFilterState();
-  bdApplyFilters();
 }
 
 function bdUpdateGroupMode(groupId, mode) {
@@ -4295,7 +4295,6 @@ function bdUpdateGroupMode(groupId, mode) {
   if (!g) return;
   g.mode = mode;
   bdSaveFilterState();
-  bdApplyFilters();
 }
 
 function bdAddFilterRow(groupId) {
@@ -4304,7 +4303,6 @@ function bdAddFilterRow(groupId) {
   g.rules.push(bdNewRule());
   bdRenderFilterGroups();
   bdSaveFilterState();
-  bdApplyFilters();
 }
 
 function bdRemoveFilterRow(groupId, ruleId) {
@@ -4314,7 +4312,6 @@ function bdRemoveFilterRow(groupId, ruleId) {
   if (!g.rules.length) g.rules.push(bdNewRule());
   bdRenderFilterGroups();
   bdSaveFilterState();
-  bdApplyFilters();
 }
 
 function bdUpdateRule(groupId, ruleId, key, val) {
@@ -4329,7 +4326,6 @@ function bdUpdateRule(groupId, ruleId, key, val) {
     bdRenderFilterGroups();
   }
   bdSaveFilterState();
-  bdApplyFilters();
 }
 
 function bdSetTopMode(val) {
