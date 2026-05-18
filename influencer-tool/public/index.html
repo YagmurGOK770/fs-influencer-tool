@@ -3901,7 +3901,10 @@ function closeProfileCard() {
         <button class="pfill pfyt" id="bdrPfYt" onclick="bdrSetPlatform('youtube',this)">YouTube <span class="fcount" id="bdrPcYt">0</span></button>
         <button class="pfill pfx" id="bdrPfX" onclick="bdrSetPlatform('x',this)">X <span class="fcount" id="bdrPcX">0</span></button>
       </div>
-      <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrApplyFilter()" style="width:210px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-sm" onclick="bdBulkToggleBadges('bdrTbody', this)">⊞ Expand all</button>
+        <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrApplyFilter()" style="width:210px">
+      </div>
     </div>
 
     <!-- Loading state -->
@@ -3944,10 +3947,7 @@ function closeProfileCard() {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-top:1px solid var(--border);font-size:12px;color:var(--muted)" id="bdrFooter">
         <span id="bdrFooterInfo">—</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn-sm" onclick="bdBulkToggleBadges('bdrTbody', this)">⊞ Expand all</button>
-          <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
-        </div>
+        <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
       </div>
     </div>
 
@@ -5776,16 +5776,24 @@ function bdrMergeByHandle(rows) {
     byHandle.get(key).push(r);
   }
   return Array.from(byHandle.values()).map(platformRows => {
+    // Sort by followers desc, then deduplicate by platform key (keep highest-followers row per platform)
     const sorted  = [...platformRows].sort((a,b) => bdParseCompact(b.followers) - bdParseCompact(a.followers));
-    const primary = sorted[0];
-    const findPlat = p => platformRows.find(r => (r.platform||r.raw_platform||'').toLowerCase().includes(p));
+    const seenPlat = new Set();
+    const uniqueRows = sorted.filter(r => {
+      const pk = (r.platform||r.raw_platform||'').toLowerCase();
+      if (seenPlat.has(pk)) return false;
+      seenPlat.add(pk);
+      return true;
+    });
+    const primary = uniqueRows[0];
+    const findPlat = p => uniqueRows.find(r => (r.platform||r.raw_platform||'').toLowerCase().includes(p));
     const ig = findPlat('instagram'), tt = findPlat('tiktok'),
-          yt = findPlat('youtube'),   xr = platformRows.find(r => { const p=(r.platform||r.raw_platform||'').toLowerCase(); return p==='x'||p.includes('twitter'); });
-    const totalFollowers = platformRows.reduce((s,r) => s + bdParseCompact(r.followers), 0);
+          yt = findPlat('youtube'),   xr = uniqueRows.find(r => { const p=(r.platform||r.raw_platform||'').toLowerCase(); return p==='x'||p.includes('twitter'); });
+    const totalFollowers = uniqueRows.reduce((s,r) => s + bdParseCompact(r.followers), 0);
     const allCaptions  = [...new Set(platformRows.flatMap(r => Array.isArray(r.post_captions)  ? r.post_captions  : []))];
     const allLocations = [...new Set(platformRows.flatMap(r => Array.isArray(r.post_locations) ? r.post_locations : []))];
     const allKeywords  = [...new Set(platformRows.flatMap(r => Array.isArray(r.matched_keywords) ? r.matched_keywords : []))];
-    const platforms    = platformRows.map(r => (r.platform||r.raw_platform||'').toLowerCase());
+    const platforms    = uniqueRows.map(r => (r.platform||r.raw_platform||'').toLowerCase());
     return {
       handle:          primary.handle,
       full_name:       primary.full_name || '',
@@ -5809,7 +5817,7 @@ function bdrMergeByHandle(rows) {
       matched_keywords: allKeywords,
       fetched_at:      platformRows.map(r=>r.fetched_at||'').sort().reverse()[0],
       profile_url:     primary.profile_url,
-      _rows:           platformRows,
+      _rows:           uniqueRows,
     };
   });
 }
