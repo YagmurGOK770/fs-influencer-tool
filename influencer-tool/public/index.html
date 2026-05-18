@@ -4491,8 +4491,12 @@ function bdEvaluateRule(p, rule) {
   // postContent / postLocation: count per-post matches so minPosts threshold works
   if (field === 'postContent' || field === 'postLocation') {
     const posts = field === 'postContent' ? (p.postCaptions || []) : (p.postLocations || []);
-    // YouTube and X don't provide post captions/locations — rule can't be applied, pass through
-    if (!posts.length && (plat === 'youtube' || plat === 'x')) return true;
+    if (!posts.length && (plat === 'youtube' || plat === 'x')) {
+      // No post data available for YouTube/X:
+      // 'contains'  → false: can't verify a positive match, so don't count as matched
+      // 'does not contain' → true: can't find a violation, so don't exclude
+      return op === 'does not contain';
+    }
     const minPosts = Number(rule.minPosts) || 1;
     if (op === 'contains')         return needles.some(n => posts.filter(post => post.toLowerCase().includes(n)).length >= minPosts);
     if (op === 'does not contain') return needles.every(n => posts.filter(post => post.toLowerCase().includes(n)).length === 0);
