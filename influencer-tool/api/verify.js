@@ -913,6 +913,69 @@ function extractBalancedJson(html, startPos) {
   throw new Error('Unterminated JSON object');
 }
 
+// Shared helper: fetch one YouTube channel page and return enrichment fields.
+// Uses direct fetch — YouTube channel pages are public and don't need proxy.
+async function ytEnrichOne(handle, profileUrl) {
+  const url = profileUrl || `https://www.youtube.com/@${handle}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 15000);
+  let html;
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'en-US,en;q=0.9',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+      signal: ctrl.signal,
+    });
+    clearTimeout(t);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    html = await resp.text();
+  } catch (e) {
+    clearTimeout(t);
+    throw e;
+  }
+
+  const MARKERS = ['var ytInitialData = ', 'window["ytInitialData"] = ', 'ytInitialData = '];
+  let data = null;
+  for (const marker of MARKERS) {
+    const idx = html.indexOf(marker);
+    if (idx === -1) continue;
+    try { data = JSON.parse(extractBalancedJson(html, idx + marker.length)); break; } catch (_) {}
+  }
+  if (!data) throw new Error('no ytInitialData');
+
+  function deepFind(node, key) {
+    if (!node || typeof node !== 'object') return undefined;
+    if (key in node) return node[key];
+    for (const v of Object.values(node)) {
+      const r = Array.isArray(v)
+        ? v.reduce((a, x) => a !== undefined ? a : deepFind(x, key), undefined)
+        : deepFind(v, key);
+      if (r !== undefined) return r;
+    }
+    return undefined;
+  }
+
+  const videosCountText = deepFind(data, 'videosCountText');
+  const videoRaw = videosCountText?.runs?.map(r => r.text).join('') || videosCountText?.simpleText || '';
+  const videoCount = videoRaw.replace(/\s*videos?/i, '').replace(/,/g, '').trim();
+
+  const microformat = deepFind(data, 'microformatDataRenderer');
+  const totalViews  = String(microformat?.viewCount || '').replace(/,/g, '').trim();
+
+  const headerSubText = deepFind(data, 'subscriberCountText');
+  const subRaw = headerSubText?.simpleText || headerSubText?.runs?.map(r => r.text).join('') || '';
+  const subscribers = subRaw.replace(/\s*subscribers?/i, '').trim();
+
+  const channelMeta = deepFind(data, 'channelMetadataRenderer');
+  const country     = channelMeta?.country || '';
+  const description = microformat?.description?.simpleText || channelMeta?.description || '';
+
+  return { videoCount, totalViews, subscribers, country, description };
+}
+
 async function ytKeywordSearch(keyword) {
   // YouTube search page embeds ytInitialData server-side — parse it directly.
   // Use direct fetch (no BrightData proxy) — YouTube is public and proxy adds latency.
@@ -1063,7 +1126,26 @@ async function ytKeywordSearch(keyword) {
     }
   }
 
-  console.log(`[yt-search] "${keyword}" → ${profiles.length} channels`);
+  console.log(`[yt-search] "${keyword}" → ${profiles.length} channels — enriching in parallel…`);
+
+  // Enrich all found channels in parallel batches of 5 while the caller moves to the next keyword
+  const BATCH = 5;
+  for (let i = 0; i < profiles.length; i += BATCH) {
+    await Promise.all(profiles.slice(i, i + BATCH).map(async p => {
+      try {
+        const e = await ytEnrichOne(p.handle, p.profileUrl);
+        if (e.videoCount)   p.postCount  = e.videoCount;
+        if (e.totalViews)   p.totalViews = e.totalViews;
+        if (e.country)      p.location   = e.country;
+        if (e.description)  p.bio        = e.description;
+        if (/^\d/.test(e.subscribers)) p.followers = e.subscribers;
+      } catch (err) {
+        console.warn(`[yt-enrich] ${p.handle}: ${err.message}`);
+      }
+    }));
+  }
+
+  console.log(`[yt-search] "${keyword}" enrichment complete`);
   return profiles;
 }
 
@@ -1626,9 +1708,7 @@ async function handleBrightData(req, res) {
   return res.status(200).json({ results });
 }
 
-// ── YouTube channel enrichment ────────────────────────────────────────────────
-// Fetches each channel page and extracts video count, total views, location, full bio.
-// Much more relaxed than Instagram — no session cookies needed, BrightData rotates IPs.
+// ── YouTube channel enrichment (manual button — reuses ytEnrichOne) ──────────
 async function handleYtEnrich(req, res) {
   const { profiles } = req.body || {};
   if (!Array.isArray(profiles) || !profiles.length)
@@ -1639,92 +1719,26 @@ async function handleYtEnrich(req, res) {
   res.status(200).json({ scanId });
 
   (async () => {
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
-    const proxyDispatcher = proxyUrl ? new ProxyAgent({
-      uri: proxyUrl,
-      requestTls: { rejectUnauthorized: false },
-      proxyTls:   { rejectUnauthorized: false },
-    }) : null;
-
-    const ytGet = url => (proxyDispatcher ? undiciFetch : fetch)(url, {
-      headers: {
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'accept-language': 'en-US,en;q=0.9',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      },
-      ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
-    });
-
-    function extractYtInitialData(html) {
-      const MARKERS = ['var ytInitialData = ', 'window["ytInitialData"] = ', 'ytInitialData = '];
-      for (const marker of MARKERS) {
-        const idx = html.indexOf(marker);
-        if (idx === -1) continue;
-        try { return JSON.parse(extractBalancedJson(html, idx + marker.length)); } catch (_) {}
-      }
-      return null;
-    }
-
-    function deepFind(node, key) {
-      if (!node || typeof node !== 'object') return undefined;
-      if (key in node) return node[key];
-      for (const v of Object.values(node)) {
-        const r = Array.isArray(v) ? v.reduce((a, x) => a !== undefined ? a : deepFind(x, key), undefined) : deepFind(v, key);
-        if (r !== undefined) return r;
-      }
-      return undefined;
-    }
-
     const results = [];
     for (let i = 0; i < profiles.length; i++) {
       const { handle, profileUrl } = profiles[i];
       updateProgress(scanId, { phase: 'enriching', current: i, total: profiles.length });
       try {
-        const url = profileUrl || `https://www.youtube.com/@${handle}`;
-        const resp = await ytGet(url);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const html = await resp.text();
-        const data = extractYtInitialData(html);
-        if (!data) throw new Error('no ytInitialData');
-
-        // Video count — c4TabbedHeaderRenderer.videosCountText
-        const videosCountText = deepFind(data, 'videosCountText');
-        const videoRaw = videosCountText?.runs?.map(r => r.text).join('') || videosCountText?.simpleText || '';
-        const videoCount = videoRaw.replace(/\s*videos?/i, '').replace(/,/g, '').trim();
-
-        // Total views — microformatDataRenderer.viewCount
-        const microformat = deepFind(data, 'microformatDataRenderer');
-        const totalViews = String(microformat?.viewCount || '').replace(/,/g, '').trim();
-
-        // Subscriber count from header (more accurate than search snippet)
-        const headerSubText = deepFind(data, 'subscriberCountText');
-        const subRaw = headerSubText?.simpleText || headerSubText?.runs?.map(r => r.text).join('') || '';
-        const subscribers = subRaw.replace(/\s*subscribers?/i, '').trim();
-
-        // Location — channelMetadataRenderer.country
-        const channelMeta = deepFind(data, 'channelMetadataRenderer');
-        const country = channelMeta?.country || '';
-
-        // Full description
-        const description = microformat?.description?.simpleText || channelMeta?.description || '';
-
-        console.log(`[yt-enrich] ${handle}: videos=${videoCount} views=${totalViews} country=${country}`);
+        const e = await ytEnrichOne(handle, profileUrl);
+        console.log(`[yt-enrich] ${handle}: videos=${e.videoCount} views=${e.totalViews} country=${e.country}`);
         results.push({
           handle, enriched: true,
-          postCount:  videoCount,
-          totalViews,
-          followers:  /^\d/.test(subscribers) ? subscribers : '',
-          location:   country,
-          bio:        description || undefined,
+          postCount:  e.videoCount,
+          totalViews: e.totalViews,
+          followers:  /^\d/.test(e.subscribers) ? e.subscribers : '',
+          location:   e.country,
+          bio:        e.description || undefined,
         });
       } catch (e) {
         console.warn(`[yt-enrich] ${handle}: ${e.message}`);
         results.push({ handle, enriched: false });
       }
-      if (i < profiles.length - 1) await sleep(300 + Math.random() * 400);
     }
-
     updateProgress(scanId, { phase: 'complete', results });
   })().catch(e => updateProgress(scanId, { phase: 'error', error: e.message }));
 }

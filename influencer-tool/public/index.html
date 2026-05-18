@@ -5194,7 +5194,7 @@ async function runBdSearch() {
       setBdStatus(
         keywords.length > 1
           ? `Searching ${i + 1}/${keywords.length}: "${kw}"…${acctLabel}`
-          : `Searching ${bdPlatform} for "${kw}"… paginating + enriching profiles`,
+          : `Searching ${bdPlatform} for "${kw}"…${bdPlatform === 'youtube' ? ' (will auto-enrich channels)' : ' paginating + enriching profiles'}`,
         '',
       );
       bdRenderProgress({ phase: 'starting', current: 0, total: 0 }, Date.now(), ctx);
