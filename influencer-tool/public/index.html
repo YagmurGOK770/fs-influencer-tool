@@ -84,6 +84,15 @@ mark.wd-add{background:rgba(45,138,78,.15);color:var(--green);border-radius:3px;
 .cov-table td{padding:9px 12px;border-bottom:1px solid var(--bg);vertical-align:middle}
 .cov-table tr:last-child td{border-bottom:none}
 .cov-table tr:hover td{background:var(--surface)}
+/* BD Results table — sticky header + sticky Handle column
+   overflow:visible on the table itself is required — without it the browser
+   treats the table as the sticky containing-block instead of the scrolling wrapper */
+#bdrTableWrap .cov-table{overflow:visible}
+#bdrTableWrap .cov-table thead th{position:sticky;top:0;z-index:2;background:var(--surface)}
+#bdrTableWrap .cov-table thead th:first-child{position:sticky;top:0;left:0;z-index:4;min-width:160px;white-space:nowrap;box-shadow:2px 0 5px rgba(0,0,0,.07)}
+#bdrTableWrap .cov-table tbody td:first-child{position:sticky;left:0;z-index:1;min-width:160px;white-space:nowrap;background:var(--white);box-shadow:2px 0 5px rgba(0,0,0,.05)}
+#bdrTableWrap .cov-table tbody tr:hover td:first-child{background:var(--surface)}
+
 .cov-badge{display:inline-block;font-size:10px;font-weight:700;border-radius:100px;padding:2px 9px;white-space:nowrap}
 .cov-badge.found{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)}
 .cov-badge.missing{background:#fff5f0;color:var(--orange);border:1px solid var(--orange-border)}
@@ -347,6 +356,7 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
       <button class="nav-tab" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
       <button class="nav-tab" id="tabHistoryBtn" onclick="switchMainTab('history')">Search History</button>
       <button class="nav-tab" id="tabEnrichBtn" onclick="switchMainTab('enrich')">BrightData Enrich</button>
+      <button class="nav-tab" id="tabBdResultsBtn" onclick="switchMainTab('bdresults')">BD Results</button>
     </div>
   </div>
   <div class="nav-right">
@@ -554,12 +564,12 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
 const EXISTING_DATA = [];
 const PAGE_SIZE = 50;
 
-// Auth header builder — prompts for password once per session if APP_PASSWORD is set on the server
+// Auth header builder — prompts for password once and persists in localStorage
 function getApiHeaders() {
-  let pw = sessionStorage.getItem('appPassword');
+  let pw = localStorage.getItem('appPassword');
   if (pw === null) {
     pw = prompt('Enter team password (leave blank if none set):') || '';
-    sessionStorage.setItem('appPassword', pw);
+    localStorage.setItem('appPassword', pw);
   }
   const h = { 'Content-Type': 'application/json' };
   if (pw) h['X-App-Password'] = pw;
@@ -2219,7 +2229,7 @@ async function runLiveSearch() {
         const err = await resp.json().catch(() => ({}));
         if (resp.status === 401) {
           clearInterval(tick);
-          sessionStorage.removeItem('appPassword');
+          localStorage.removeItem('appPassword');
           alert('Unauthorized. Please refresh and re-enter the password.');
           return;
         }
@@ -2463,16 +2473,19 @@ function switchMainTab(tab) {
   document.getElementById('mainChanges').style.display = tab === 'changes'  ? '' : 'none';
   document.getElementById('mainCoverage').style.display= tab === 'coverage' ? '' : 'none';
   document.getElementById('mainHistory').style.display = tab === 'history'  ? '' : 'none';
-  document.getElementById('mainEnrich').style.display  = tab === 'enrich'   ? '' : 'none';
-  document.getElementById('tabDashBtn').classList.toggle('active',     tab === 'dash');
-  document.getElementById('tabChangesBtn').classList.toggle('active',  tab === 'changes');
-  document.getElementById('tabCoverageBtn').classList.toggle('active', tab === 'coverage');
-  document.getElementById('tabHistoryBtn').classList.toggle('active',  tab === 'history');
-  document.getElementById('tabEnrichBtn').classList.toggle('active',   tab === 'enrich');
-  if (tab === 'changes')  loadChanges();
-  if (tab === 'coverage') loadCoverage();
-  if (tab === 'history')  loadSearchHistory();
-  if (tab === 'enrich')   loadEnrichTab();
+  document.getElementById('mainEnrich').style.display     = tab === 'enrich'    ? '' : 'none';
+  document.getElementById('mainBdResults').style.display  = tab === 'bdresults' ? '' : 'none';
+  document.getElementById('tabDashBtn').classList.toggle('active',      tab === 'dash');
+  document.getElementById('tabChangesBtn').classList.toggle('active',   tab === 'changes');
+  document.getElementById('tabCoverageBtn').classList.toggle('active',  tab === 'coverage');
+  document.getElementById('tabHistoryBtn').classList.toggle('active',   tab === 'history');
+  document.getElementById('tabEnrichBtn').classList.toggle('active',    tab === 'enrich');
+  document.getElementById('tabBdResultsBtn').classList.toggle('active', tab === 'bdresults');
+  if (tab === 'changes')   loadChanges();
+  if (tab === 'coverage')  loadCoverage();
+  if (tab === 'history')   loadSearchHistory();
+  if (tab === 'enrich')    loadEnrichTab();
+  if (tab === 'bdresults') loadBdResults();
 }
 
 async function loadChanges() {
@@ -2877,7 +2890,7 @@ async function enrichOne(inf) {
     });
 
     if (resp.status === 401) {
-      sessionStorage.removeItem('appPassword');
+      localStorage.removeItem('appPassword');
       throw new Error('Unauthorized — refresh and re-enter password');
     }
     if (!resp.ok) {
@@ -3599,7 +3612,7 @@ function closeProfileCard() {
     <div class="cl-toolbar" style="margin-bottom:20px">
       <div>
         <div class="cl-toolbar-title">BrightData Search</div>
-        <div class="cl-toolbar-sub">Search platforms directly via BrightData Web Unlocker — real data, no blocks</div>
+        <div class="cl-toolbar-sub">Search Instagram hashtags directly — routes via BrightData residential proxy to avoid IP blocks</div>
       </div>
     </div>
 
@@ -3608,7 +3621,8 @@ function closeProfileCard() {
       <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
         <div>
           <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Platform</label>
-          <select id="bdPlatformSel" style="width:160px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--white)">
+          <select id="bdPlatformSel" style="width:160px;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--white)"
+            onchange="bdOnPlatformChange(this.value)">
             <option value="instagram">Instagram</option>
             <option value="tiktok">TikTok</option>
             <option value="youtube">YouTube</option>
@@ -3632,24 +3646,30 @@ function closeProfileCard() {
             onkeydown="if(event.key==='Enter') runBdSearch()">
         </div>
         <button class="btn-green" id="bdRunBtn" onclick="runBdSearch()" style="white-space:nowrap">▶ Search</button>
+        <select id="bdStartSlotSel" style="display:none;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);cursor:pointer" title="Which account to start the rotation from"
+          onchange="bdSearchStartSlot = Number(this.value)"></select>
         <button class="btn-sm" onclick="bdClear()" style="white-space:nowrap">✕ Clear</button>
       </div>
-      <!-- Session cookie row — Instagram/TikTok need auth for hashtag feeds -->
-      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
-        <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Session Cookie</label>
-        <input type="password" id="bdSessionCookie" placeholder="Paste full cookie string from DevTools → Network → instagram.com request → Cookie header"
-          style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace"
-          oninput="localStorage.setItem('bd_session_cookie', this.value)">
-        <span style="font-size:11px;color:var(--muted)">Required for Instagram · DevTools (F12) → Network → any instagram.com request → Headers → Cookie</span>
+      <!-- Instagram session cookie pool — rotate between accounts to spread API load -->
+      <div id="bdIgCookieSection" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Session Cookies</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:11px;color:var(--muted)">Keywords rotate between accounts · DevTools (F12) → Network → instagram.com → Cookie header</span>
+            <button class="btn-sm" id="bdAddCookieBtn" onclick="bdAddCookieSlot()">+ Add account</button>
+          </div>
+        </div>
+        <div id="bdCookiePool" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
-      <!-- Recent-feed scan toggle: opt in to richer post-content filtering -->
-      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
-        <input type="checkbox" id="bdScanRecentFeed"
-          onchange="localStorage.setItem('bd_scan_recent_feed', this.checked ? '1' : '0')">
-        <label for="bdScanRecentFeed" style="font-size:12px;cursor:pointer">
-          Also scan last 12 recent posts per creator
-          <span style="color:var(--muted)">— richer content filtering · adds ~1-2 min per 100 profiles</span>
-        </label>
+      <!-- TikTok session cookie (single — used via BrightData Web Unlocker custom headers) -->
+      <div id="bdTtCookieSection" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">TikTok Session Cookie</label>
+          <span style="font-size:11px;color:var(--muted)">DevTools (F12) → Network → tiktok.com → Cookie header · Enables logged-in scraping via BrightData</span>
+        </div>
+        <textarea id="bdTtCookie" rows="2" placeholder="Paste your TikTok cookie string here (sessionid=...; tt_csrf_token=...; ...)"
+          style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;resize:vertical"
+          oninput="localStorage.setItem('tt_session_cookie', this.value.trim())"></textarea>
       </div>
     </div>
 
@@ -3669,7 +3689,7 @@ function closeProfileCard() {
           <button class="btn-sm" id="bdDeletePresetBtn" onclick="bdDeletePreset()" title="Delete the selected preset" style="display:none">🗑</button>
           <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
           <label style="font-size:11px;color:var(--muted)">Between groups:</label>
-          <select id="bdFltTopMode" onchange="bdSaveFilterState(); bdRenderFilterGroups(); bdApplyFilters()"
+          <select id="bdFltTopMode" onchange="bdSetTopMode(this.value); bdSaveFilterState(); bdRenderFilterGroups(); bdApplyFilters()"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="AND">ALL (and)</option>
             <option value="OR">ANY (or)</option>
@@ -3700,6 +3720,12 @@ function closeProfileCard() {
       </div>
     </div>
 
+    <!-- Warning: shown when Instagram blocks profile enrichment -->
+    <div id="bdEnrichBlockedWarn" style="display:none;margin-bottom:10px;padding:10px 14px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;font-size:12.5px;color:#991b1b">
+      ⚠️ <strong>Instagram blocked profile enrichment</strong> — followers and bio are unavailable for this batch.
+      Profiles are shown with hashtag engagement data only. <strong>Wait 1–2 hours</strong> then run the search again with a fresh session cookie to get full data.
+    </div>
+
     <!-- Results table -->
     <div id="bdTableWrap" style="display:none">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap">
@@ -3713,7 +3739,17 @@ function closeProfileCard() {
             ✕ Filtered out <span id="bdViewExclCount" style="font-weight:500;opacity:.8">0</span>
           </button>
         </div>
-        <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px">💾 Save filtered results to DB</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="bdReenrichBtn" onclick="bdReenrichMissing()" type="button"
+            style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
+            🔄 Re-enrich missing
+          </button>
+          <button id="bdScanPostsBtn" onclick="bdScanPosts()" type="button"
+            style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
+            📝 Scan recent posts
+          </button>
+          <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px">💾 Save filtered results to DB</button>
+        </div>
       </div>
       <div id="bdExclHint" style="display:none;padding:8px 12px;margin-bottom:8px;background:#fef8ec;border:1px solid #f5c9a8;border-radius:6px;font-size:11.5px;color:#92400e">
         Reviewing profiles that did <strong>not</strong> match your filters. Use <strong>Save to review table</strong> to keep them for later analysis (they're stored separately from your main results).
@@ -3750,20 +3786,327 @@ function closeProfileCard() {
   </div>
 </div>
 
+<!-- ── BrightData Results tab ─────────────────────────────────────────── -->
+<div id="mainBdResults" style="display:none">
+  <div class="cov-page">
+
+    <div class="cl-toolbar" style="margin-bottom:20px">
+      <div>
+        <div class="cl-toolbar-title">BD Results</div>
+        <div class="cl-toolbar-sub">Review profiles saved from your BrightData searches — both matching and filtered-out</div>
+      </div>
+      <button class="btn-sm" onclick="loadBdResults(true)">🔄 Refresh</button>
+    </div>
+
+    <!-- Filter panel (mirrors BrightData Enrich tab — same bdFilterGroups state) -->
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div onclick="bdrToggleFilters()" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+          <span id="bdrFltChevron" style="font-size:10px;color:var(--muted);transition:transform .15s">▼</span>
+          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Filters</span>
+        </div>
+        <div id="bdrFilterControls" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <select id="bdrPresetSel" onchange="bdLoadPreset(this.value)"
+            style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px"></select>
+          <button class="btn-sm" onclick="bdSavePreset()" title="Save current filters as a named preset">💾 Save preset</button>
+          <button class="btn-sm" id="bdrDeletePresetBtn" onclick="bdDeletePreset()" title="Delete the selected preset" style="display:none">🗑</button>
+          <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
+          <label style="font-size:11px;color:var(--muted)">Between groups:</label>
+          <select id="bdrFltTopMode" onchange="bdSetTopMode(this.value); bdSaveFilterState(); bdRenderFilterGroups(); bdApplyFilters()"
+            style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="AND">ALL (and)</option>
+            <option value="OR">ANY (or)</option>
+          </select>
+        </div>
+      </div>
+      <div id="bdrFilterContent">
+        <div id="bdrFilterGroups"></div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <button class="btn-sm" onclick="bdAddGroup()">+ Add group</button>
+          <button class="btn-sm" onclick="bdResetFilters()">Reset</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reclassification banner (shown when filters produce changes vs saved DB state) -->
+    <div id="bdrReclassifyBanner" style="display:none;background:#fffbe6;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;margin-bottom:14px;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <span id="bdrReclassifyMsg" style="font-size:13px;color:#7a6000"></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn-sm" onclick="bdrSaveReclassify()" id="bdrSaveReclassifyBtn"
+          style="background:var(--green);color:#fff;border-color:var(--green)">💾 Save to DB</button>
+        <button class="btn-sm" onclick="bdrDiscardReclassify()">Discard</button>
+      </div>
+    </div>
+
+    <!-- Stats row -->
+    <div class="cov-stats" style="margin-bottom:16px">
+      <div class="cov-stat found">
+        <div class="cov-stat-num" id="bdrTotMatch">—</div>
+        <div class="cov-stat-label">Matching saved</div>
+      </div>
+      <div class="cov-stat missing">
+        <div class="cov-stat-num" id="bdrTotExcl">—</div>
+        <div class="cov-stat-label">Filtered out</div>
+      </div>
+      <div class="cov-stat">
+        <div class="cov-stat-num" id="bdrTotIg" style="color:#e1306c">—</div>
+        <div class="cov-stat-label">Instagram</div>
+      </div>
+      <div class="cov-stat">
+        <div class="cov-stat-num" id="bdrTotTt" style="color:#010101">—</div>
+        <div class="cov-stat-label">TikTok</div>
+      </div>
+      <div class="cov-stat">
+        <div class="cov-stat-num" id="bdrTotYt" style="color:#ff0000">—</div>
+        <div class="cov-stat-label">YouTube</div>
+      </div>
+      <div class="cov-stat">
+        <div class="cov-stat-num" id="bdrTotX">—</div>
+        <div class="cov-stat-label">X</div>
+      </div>
+    </div>
+
+    <!-- Toolbar: view toggle + platform pills + search -->
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)">
+        <button id="bdrViewMatchBtn" onclick="bdrSetView('matching')" type="button"
+          style="padding:6px 12px;border:none;background:var(--green-bg);color:var(--green);font-size:12px;font-weight:700;cursor:pointer">
+          ✓ Matching <span id="bdrMatchCount" style="font-weight:500;opacity:.8">0</span>
+        </button>
+        <button id="bdrViewExclBtn" onclick="bdrSetView('excluded')" type="button"
+          style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)">
+          ✕ Filtered out <span id="bdrExclCount" style="font-weight:500;opacity:.8">0</span>
+        </button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button class="pfill active" id="bdrPfAll" onclick="bdrSetPlatform('all',this)">All <span class="fcount" id="bdrPcAll">0</span></button>
+        <button class="pfill pfig" id="bdrPfIg" onclick="bdrSetPlatform('instagram',this)">Instagram <span class="fcount" id="bdrPcIg">0</span></button>
+        <button class="pfill pftt" id="bdrPfTt" onclick="bdrSetPlatform('tiktok',this)">TikTok <span class="fcount" id="bdrPcTt">0</span></button>
+        <button class="pfill pfyt" id="bdrPfYt" onclick="bdrSetPlatform('youtube',this)">YouTube <span class="fcount" id="bdrPcYt">0</span></button>
+        <button class="pfill pfx" id="bdrPfX" onclick="bdrSetPlatform('x',this)">X <span class="fcount" id="bdrPcX">0</span></button>
+      </div>
+      <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrApplyFilter()" style="width:210px">
+    </div>
+
+    <!-- Loading state -->
+    <div id="bdrLoading" style="padding:3rem;text-align:center;color:var(--muted)">
+      <div style="font-size:2rem;margin-bottom:10px">⏳</div>
+      <div style="font-weight:600;font-size:14px">Loading saved results…</div>
+    </div>
+
+    <!-- Empty state -->
+    <div id="bdrEmpty" style="display:none;padding:3rem;text-align:center;color:var(--muted)">
+      <div style="font-size:2rem;margin-bottom:10px">📭</div>
+      <div style="font-weight:600;font-size:14px;margin-bottom:6px">No saved results yet</div>
+      <div style="font-size:12.5px">Run a search in the <strong>BrightData Enrich</strong> tab and click <strong>Save filtered results to DB</strong>.</div>
+    </div>
+
+    <!-- Results table -->
+    <div id="bdrTableWrap" style="display:none">
+      <div class="table-wrap" style="max-height:70vh">
+        <table class="cov-table">
+          <thead>
+            <tr>
+              <th onclick="bdrSetSort('handle')" style="cursor:pointer;user-select:none">Handle <span id="bdrSrt-handle" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('full_name')" style="cursor:pointer;user-select:none">Full Name <span id="bdrSrt-full_name" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('platform')" style="cursor:pointer;user-select:none">Platform <span id="bdrSrt-platform" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('followers')" style="cursor:pointer;user-select:none">Followers <span id="bdrSrt-followers" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('engagement_rate')" style="cursor:pointer;user-select:none" title="Engagement rate">ER% <span id="bdrSrt-engagement_rate" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('is_verified')" style="cursor:pointer;user-select:none" title="Sort by verified">✓ <span id="bdrSrt-is_verified" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th>Keywords matched</th>
+              <th title="Recent post captions — click to expand">Posts</th>
+              <th>Bio</th>
+              <th onclick="bdrSetSort('location')" style="cursor:pointer;user-select:none">Location <span id="bdrSrt-location" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('type')" style="cursor:pointer;user-select:none" title="Label the influencer type — saved in your browser">Type <span id="bdrSrt-type" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('fetched_at')" style="cursor:pointer;user-select:none">Saved <span id="bdrSrt-fetched_at" style="font-size:10px;opacity:1;color:var(--accent)">↓</span></th>
+            </tr>
+          </thead>
+          <tbody id="bdrTbody"></tbody>
+        </table>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-top:1px solid var(--border);font-size:12px;color:var(--muted)" id="bdrFooter">
+        <span id="bdrFooterInfo">—</span>
+        <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
+      </div>
+    </div>
+
+    <!-- datalist for type autocomplete -->
+    <datalist id="bdrTypeList">
+      <option value="Food Creator">
+      <option value="Restaurant">
+      <option value="Chef">
+      <option value="Food Photographer">
+      <option value="Lifestyle">
+      <option value="Travel + Food">
+      <option value="Vegan / Plant-based">
+      <option value="Baker / Pastry">
+      <option value="Drinks / Cocktails">
+      <option value="Fitness + Food">
+      <option value="Family Food">
+      <option value="Food Reviewer">
+    </datalist>
+
+  </div>
+</div>
+
 <script>
 // ── BrightData Search tab ─────────────────────────────────────────────────
 
 let bdAllResults  = []; // all raw results from API
 let bdPlatform    = 'instagram';
+let bdSearchStartSlot  = 0; // which cookie slot index the next search starts from
+let bdLastUsedSlotIdx  = 0; // last slot used by search — re-enrich picks up from next
 let bdViewMode    = 'matching'; // 'matching' | 'excluded'
 
+// ── Cookie pool management ─────────────────────────────────────────────────
+
+function bdMakeCookieSlot(idx, value) {
+  const div = document.createElement('div');
+  div.className = 'bd-cookie-slot';
+  div.style.cssText = 'display:flex;gap:8px;align-items:center';
+  div.innerHTML = `
+    <span class="bd-slot-label" style="font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap;min-width:62px">Account ${idx + 1}</span>
+    <input type="password" class="bd-cookie-input"
+      placeholder="Paste full cookie string…"
+      style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace"
+      oninput="bdSaveCookies()">
+    <span class="bd-slot-dot" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;flex-shrink:0;cursor:default" title="Ready"></span>
+    <button class="btn-sm bd-slot-remove" onclick="bdRemoveCookieSlot(this)" style="flex-shrink:0;padding:3px 7px;font-size:11px">✕</button>
+  `;
+  div.querySelector('.bd-cookie-input').value = value || '';
+  return div;
+}
+
+function bdRenderCookiePool(values) {
+  const pool = document.getElementById('bdCookiePool');
+  pool.innerHTML = '';
+  (values.length ? values : ['']).forEach((v, i) => pool.appendChild(bdMakeCookieSlot(i, v)));
+  bdUpdateCookieSlotUI();
+}
+
+function bdUpdateCookieSlotUI() {
+  const slots = document.querySelectorAll('#bdCookiePool .bd-cookie-slot');
+  slots.forEach((slot, i) => {
+    slot.querySelector('.bd-slot-label').textContent = `Account ${i + 1}`;
+    const rm = slot.querySelector('.bd-slot-remove');
+    if (rm) rm.style.display = slots.length > 1 ? '' : 'none';
+  });
+  const btn = document.getElementById('bdAddCookieBtn');
+  if (btn) btn.disabled = slots.length >= 5;
+  bdRefreshStartSlotDropdown();
+}
+
+function bdAddCookieSlot() {
+  const pool = document.getElementById('bdCookiePool');
+  const slots = pool.querySelectorAll('.bd-cookie-slot');
+  if (slots.length >= 5) return;
+  pool.appendChild(bdMakeCookieSlot(slots.length, ''));
+  bdUpdateCookieSlotUI();
+  bdSaveCookies();
+}
+
+function bdRemoveCookieSlot(btn) {
+  btn.closest('.bd-cookie-slot').remove();
+  bdUpdateCookieSlotUI();
+  bdSaveCookies();
+}
+
+function bdSaveCookies() {
+  const vals = Array.from(document.querySelectorAll('#bdCookiePool .bd-cookie-input')).map(i => i.value);
+  localStorage.setItem('bd_cookie_pool', JSON.stringify(vals));
+  bdRefreshStartSlotDropdown();
+}
+
+// Returns [{cookie, slotIdx}] for all non-empty slots
+function bdGetCookiePoolAll() {
+  return Array.from(document.querySelectorAll('#bdCookiePool .bd-cookie-input'))
+    .map((inp, idx) => ({ cookie: inp.value.trim(), slotIdx: idx }))
+    .filter(x => x.cookie);
+}
+
+// Returns first non-cooling/failed cookie string, or '' if none available
+function bdGetFirstReadyCookie() {
+  return bdGetCookiePoolAll().find(x => {
+    const dot = document.querySelectorAll('#bdCookiePool .bd-cookie-slot')[x.slotIdx]?.querySelector('.bd-slot-dot');
+    return !dot || dot.title === 'Ready' || dot.title === 'Active — searching now';
+  })?.cookie || bdGetCookiePoolAll()[0]?.cookie || '';
+}
+
+// Returns the next ready cookie after bdLastUsedSlotIdx (round-robin continuation from search)
+function bdGetNextReadyCookie() {
+  const pool = bdGetCookiePoolAll();
+  if (!pool.length) return '';
+  const lastPos = pool.findIndex(p => p.slotIdx === bdLastUsedSlotIdx);
+  const startPos = lastPos < 0 ? 0 : (lastPos + 1) % pool.length;
+  for (let i = 0; i < pool.length; i++) {
+    const entry = pool[(startPos + i) % pool.length];
+    const dot = document.querySelectorAll('#bdCookiePool .bd-cookie-slot')[entry.slotIdx]?.querySelector('.bd-slot-dot');
+    if (!dot || dot.title === 'Ready' || dot.title === 'Active — searching now') return entry.cookie;
+  }
+  return pool[startPos]?.cookie || pool[0]?.cookie || '';
+}
+
+// Refresh the "Start from account" dropdown — shown only when 2+ slots are filled
+function bdRefreshStartSlotDropdown() {
+  const pool = bdGetCookiePoolAll();
+  const sel  = document.getElementById('bdStartSlotSel');
+  if (!sel) return;
+  if (pool.length <= 1) { sel.style.display = 'none'; return; }
+  const curVal = bdSearchStartSlot;
+  sel.innerHTML = pool.map(p =>
+    `<option value="${p.slotIdx}"${p.slotIdx === curVal ? ' selected' : ''}>Start: Account ${p.slotIdx + 1}</option>`
+  ).join('');
+  sel.style.display = '';
+}
+
+function bdMarkCookieSlot(slotIdx, status) {
+  const dot = document.querySelectorAll('#bdCookiePool .bd-cookie-slot')[slotIdx]?.querySelector('.bd-slot-dot');
+  if (!dot) return;
+  const colors = { ready: '#d1d5db', active: '#3b82f6', cooling: '#f59e0b', failed: '#ef4444' };
+  const titles = { ready: 'Ready', active: 'Active — searching now', cooling: 'Cooling — rate limited', failed: 'Failed — cookie may be expired' };
+  dot.style.background = colors[status] || '#d1d5db';
+  dot.title = titles[status] || 'Ready';
+}
+
+function bdResetAllSlots() {
+  document.querySelectorAll('#bdCookiePool .bd-cookie-slot').forEach((_, i) => bdMarkCookieSlot(i, 'ready'));
+}
+
+async function bdCountdown(seconds, msg) {
+  for (let s = seconds; s > 0; s--) {
+    setBdStatus(`${msg} — ${s}s`, '');
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+function bdOnPlatformChange(platform) {
+  const igSection = document.getElementById('bdIgCookieSection');
+  const ttSection = document.getElementById('bdTtCookieSection');
+  const startSel  = document.getElementById('bdStartSlotSel');
+  if (igSection) igSection.style.display = platform === 'instagram' ? '' : 'none';
+  if (ttSection) ttSection.style.display = platform === 'tiktok'    ? '' : 'none';
+  if (startSel)  startSel.style.display  = platform === 'instagram' ? '' : 'none';
+}
+
 function loadEnrichTab() {
-  // Restore saved session cookie
-  const saved = localStorage.getItem('bd_session_cookie');
-  if (saved) document.getElementById('bdSessionCookie').value = saved;
-  // Restore scan-recent-feed toggle
-  const scanFeedEl = document.getElementById('bdScanRecentFeed');
-  if (scanFeedEl) scanFeedEl.checked = localStorage.getItem('bd_scan_recent_feed') === '1';
+  // Restore cookie pool (with legacy single-cookie migration)
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem('bd_cookie_pool') || '[]'); } catch (_) {}
+  if (!saved.length) {
+    const legacy = localStorage.getItem('bd_session_cookie');
+    if (legacy) saved = [legacy];
+  }
+  bdRenderCookiePool(saved);
+
+  // Restore TikTok cookie
+  const ttCookieEl = document.getElementById('bdTtCookie');
+  if (ttCookieEl) ttCookieEl.value = localStorage.getItem('tt_session_cookie') || '';
+
+  // Apply correct section visibility for current platform
+  const ptEl = document.getElementById('bdPlatformSel');
+  if (ptEl) bdOnPlatformChange(ptEl.value);
 
   // Restore saved filter state. Two formats may exist:
   //   New: { topMode, groups: [{ mode, rules }, ...] }
@@ -3774,18 +4117,16 @@ function loadEnrichTab() {
       // New format
       bdFilterGroups = f.groups.map(g => bdNewGroup({
         mode: g.mode || 'AND',
-        rules: (g.rules || []).map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '' })),
+        rules: (g.rules || []).map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '', ...(r.minPosts ? { minPosts: r.minPosts } : {}) })),
       }));
-      const top = document.getElementById('bdFltTopMode');
-      if (top && f.topMode) top.value = f.topMode;
+      if (f.topMode) bdSetTopMode(f.topMode);
     } else if (f && Array.isArray(f.rules) && f.rules.length) {
       // Legacy format — wrap as one group
       bdFilterGroups = [bdNewGroup({
         mode: f.mode || 'AND',
         rules: f.rules.map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '' })),
       })];
-      const top = document.getElementById('bdFltTopMode');
-      if (top) top.value = 'AND';
+      bdSetTopMode('AND');
     }
   } catch (_) { /* ignore corrupt state */ }
   if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
@@ -3821,7 +4162,7 @@ function bdSaveFilterState() {
     const topMode = document.getElementById('bdFltTopMode')?.value || 'AND';
     const groups = bdFilterGroups.map(g => ({
       mode: g.mode,
-      rules: g.rules.map(({ field, op, value }) => ({ field, op, value })),
+      rules: g.rules.map(({ field, op, value, minPosts }) => ({ field, op, value, ...(minPosts ? { minPosts } : {}) })),
     }));
     localStorage.setItem('bd_filter_state', JSON.stringify({ topMode, groups }));
   } catch (_) { /* quota exceeded — ignore */ }
@@ -3846,6 +4187,7 @@ function bdClear() {
   bdClearCachedResults();
   document.getElementById('bdTbody').innerHTML = '';
   document.getElementById('bdTableWrap').style.display = 'none';
+  document.getElementById('bdEnrichBlockedWarn').style.display = 'none';
   document.getElementById('bdEmpty').style.display = '';
   document.getElementById('bdStatusBar').style.display = 'none';
   document.getElementById('bdProgressWrap').style.display = 'none';
@@ -3865,10 +4207,15 @@ function setBdStatus(msg, color) {
 
 function bdParseFollowers(val) {
   if (!val) return 0;
-  const s = String(val).replace(/,/g, '').trim().toUpperCase();
-  if (s.endsWith('M')) return parseFloat(s) * 1_000_000;
-  if (s.endsWith('K')) return parseFloat(s) * 1_000;
-  return parseFloat(s) || 0;
+  // Extract leading number + optional K/M/B suffix, ignoring trailing words like "subscribers"
+  const m = String(val).replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*([KkMmBb])?/);
+  if (!m) return 0;
+  const num = parseFloat(m[1]);
+  const unit = (m[2] || '').toUpperCase();
+  if (unit === 'B') return num * 1_000_000_000;
+  if (unit === 'M') return num * 1_000_000;
+  if (unit === 'K') return num * 1_000;
+  return num || 0;
 }
 
 // ── Dynamic filter builder with nested groups ─────────────────────────
@@ -3985,9 +4332,15 @@ function bdUpdateRule(groupId, ruleId, key, val) {
   bdApplyFilters();
 }
 
+function bdSetTopMode(val) {
+  ['bdFltTopMode', 'bdrFltTopMode'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = val;
+  });
+}
+
 function bdRenderFilterGroups() {
-  const host = document.getElementById('bdFilterGroups');
-  host.innerHTML = bdFilterGroups.map((group, idx) => {
+  const html = bdFilterGroups.map((group, idx) => {
     const groupHeader = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div style="display:flex;gap:8px;align-items:center;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">
@@ -4042,12 +4395,23 @@ function bdRenderFilterGroups() {
           style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
       }
 
-      return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      // "in ≥ N posts" threshold — only shown for postContent/postLocation + contains
+      const showMinPosts = (rule.field === 'postContent' || rule.field === 'postLocation') && rule.op === 'contains';
+      const minPostsInput = showMinPosts ? `
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">in ≥</span>
+        <input type="number" min="1" value="${rule.minPosts || 1}"
+          oninput="bdUpdateRule(${group.id}, ${rule.id}, 'minPosts', Math.max(1, Number(this.value)||1))"
+          style="width:50px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:center"
+          title="Minimum number of posts that must contain this keyword">
+        <span style="font-size:11px;color:var(--muted);white-space:nowrap">posts</span>` : '';
+
+      return `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
         <select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'field', this.value)"
           style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:120px">${fieldOptions}</select>
         <select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'op', this.value)"
           style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px">${opOptions}</select>
         ${valueInput}
+        ${minPostsInput}
         <button onclick="bdRemoveFilterRow(${group.id}, ${rule.id})"
           style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;font-size:14px;color:var(--muted)"
           title="Remove filter">✕</button>
@@ -4068,15 +4432,24 @@ function bdRenderFilterGroups() {
       <div style="margin-top:4px">${addBtn}</div>
     </div>${sep}`;
   }).join('');
+
+  ['bdFilterGroups', 'bdrFilterGroups'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  });
 }
 
 function bdEvaluateRule(p, rule) {
   const { field, op, value } = rule;
   if (field !== 'verified' && (value == null || value === '')) return true;
 
+  const plat = (p.rawPlatform || '').toLowerCase();
+
   // Numeric fields share comparison logic
   const NUMERIC = { followers: 1, engagementRate: 1, avgLikes: 1, avgComments: 1, hashtagPosts: 1 };
   if (NUMERIC[field]) {
+    const raw = p[field];
+    if (raw === '' || raw == null) return true; // no data (enrichment skipped) — don't filter out
     const num = field === 'followers' ? bdParseFollowers(p.followers) : Number(p[field] || 0);
     const target = field === 'followers' || field === 'avgLikes' || field === 'avgComments'
       ? bdParseFollowers(value)   // accept 10k / 1M shorthand for follower-like counts
@@ -4090,13 +4463,26 @@ function bdEvaluateRule(p, rule) {
     return op === 'is' ? !!p.isVerified === want : !!p.isVerified !== want;
   }
   // Text fields
+  // postContent / postLocation: count per-post matches so minPosts threshold works
+  if (field === 'postContent' || field === 'postLocation') {
+    const posts  = field === 'postContent' ? (p.postCaptions || []) : (p.postLocations || []);
+    // YouTube and X don't provide post captions/locations — rule can't be applied, pass through
+    if (!posts.length && (plat === 'youtube' || plat === 'x')) return true;
+    const needle = String(value).toLowerCase().trim();
+    if (!needle) return true;
+    const minPosts   = Number(rule.minPosts) || 1;
+    const matchCount = posts.filter(post => post.toLowerCase().includes(needle)).length;
+    if (op === 'contains')         return matchCount >= minPosts;
+    if (op === 'does not contain') return matchCount === 0;
+    return true;
+  }
   let haystack = '';
   if (field === 'bio')            haystack = p.bio || '';
   if (field === 'name')           haystack = p.fullName || '';
   if (field === 'location')       haystack = `${p.location || ''} ${p.bio || ''}`;
   if (field === 'matchedKeyword') haystack = (p.matchedKeywords || []).join(' ');
-  if (field === 'postContent')    haystack = (p.postCaptions  || []).join(' ');
-  if (field === 'postLocation')   haystack = (p.postLocations || []).join(' ');
+  // YouTube is a keyword search — all results already match the keyword by definition
+  if (field === 'matchedKeyword' && plat === 'youtube') return true;
   haystack = haystack.toLowerCase();
   const needle = String(value).toLowerCase().trim();
   if (op === 'contains')         return haystack.includes(needle);
@@ -4112,6 +4498,10 @@ function bdEvaluateGroup(profile, group) {
 }
 
 function bdPassesFilters(profile) {
+  // Instagram stub profiles (pre-enrichment) have no follower count — exclude until enriched.
+  // YouTube, TikTok and X return whatever data the search found directly; don't gate on followers.
+  const plat = (profile.rawPlatform || '').toLowerCase();
+  if (plat === 'instagram' && !profile.followers) return false;
   if (!bdFilterGroups.length) return true;
   const topMode = document.getElementById('bdFltTopMode')?.value || 'AND';
   const groupResults = bdFilterGroups.map(g => bdEvaluateGroup(profile, g));
@@ -4122,20 +4512,20 @@ function bdPassesFilters(profile) {
 function bdPassesFilter(profile) { return bdPassesFilters(profile); }
 
 function bdApplyFilters() {
-  if (!bdAllResults.length) {
+  if (bdAllResults.length) {
+    const matching = bdAllResults.filter(bdPassesFilters);
+    const excluded = bdAllResults.filter(r => !bdPassesFilters(r));
+    document.getElementById('bdFltCount').textContent = `${matching.length} of ${bdAllResults.length} match filters`;
+    const matchCntEl = document.getElementById('bdViewMatchCount');
+    const exclCntEl  = document.getElementById('bdViewExclCount');
+    if (matchCntEl) matchCntEl.textContent = matching.length;
+    if (exclCntEl)  exclCntEl.textContent  = excluded.length;
+    renderBdTable(bdViewMode === 'excluded' ? excluded : matching);
+  } else {
     document.getElementById('bdFltCount').textContent = '';
-    return;
   }
-  const matching = bdAllResults.filter(bdPassesFilters);
-  const excluded = bdAllResults.filter(r => !bdPassesFilters(r));
-  document.getElementById('bdFltCount').textContent = `${matching.length} of ${bdAllResults.length} match filters`;
-  // Update the toggle counts
-  const matchCntEl = document.getElementById('bdViewMatchCount');
-  const exclCntEl  = document.getElementById('bdViewExclCount');
-  if (matchCntEl) matchCntEl.textContent = matching.length;
-  if (exclCntEl)  exclCntEl.textContent  = excluded.length;
-  // Render whichever view is active
-  renderBdTable(bdViewMode === 'excluded' ? excluded : matching);
+  // Always update BD Results tab if loaded — runs even when no Enrich search is active
+  if (typeof bdrLoaded !== 'undefined' && bdrLoaded) bdrAutoApply();
 }
 
 function bdSetView(mode) {
@@ -4177,20 +4567,32 @@ function bdSetView(mode) {
 
 function bdResetFilters() {
   bdFilterGroups = [bdNewGroup()];
-  const top = document.getElementById('bdFltTopMode');
-  if (top) top.value = 'AND';
-  // Reset clears active preset selection too
-  const sel = document.getElementById('bdPresetSel');
-  if (sel) sel.value = '';
-  const delBtn = document.getElementById('bdDeletePresetBtn');
-  if (delBtn) delBtn.style.display = 'none';
+  bdSetTopMode('AND');
+  // Reset clears active preset selection in both tabs
+  ['bdPresetSel', 'bdrPresetSel'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
   bdSaveFilterState();
   bdRenderFilterGroups();
   bdApplyFilters();
   bdUpdateFilterSummary();
 }
 
-// ── Collapse / expand the filter panel ─────────────────────────────────
+// ── Collapse / expand filter panels ────────────────────────────────────
+function bdrToggleFilters() {
+  const content  = document.getElementById('bdrFilterContent');
+  const controls = document.getElementById('bdrFilterControls');
+  const chevron  = document.getElementById('bdrFltChevron');
+  const collapsed = content.style.display !== 'none';
+  content.style.display   = collapsed ? 'none' : '';
+  controls.style.display  = collapsed ? 'none' : '';
+  chevron.textContent     = collapsed ? '▶' : '▼';
+  try { localStorage.setItem('bdr_filter_panel_collapsed', collapsed ? '1' : '0'); } catch (_) {}
+}
+
 function bdToggleFilters(force) {
   const content  = document.getElementById('bdFilterContent');
   const chevron  = document.getElementById('bdFltChevron');
@@ -4246,12 +4648,17 @@ async function bdFetchPresets(selected) {
 }
 
 function bdRenderPresets(selected) {
-  const sel = document.getElementById('bdPresetSel');
-  if (!sel) return;
-  sel.innerHTML = `<option value="">${bdPresets.length ? 'Load preset…' : '(no saved presets)'}</option>` +
+  const opts = `<option value="">${bdPresets.length ? 'Load preset…' : '(no saved presets)'}</option>` +
     bdPresets.map(p => `<option value="${p.name.replace(/"/g,'&quot;')}" ${p.name === selected ? 'selected' : ''}>${p.name}</option>`).join('');
-  const delBtn = document.getElementById('bdDeletePresetBtn');
-  if (delBtn) delBtn.style.display = selected ? '' : 'none';
+  ['bdPresetSel', 'bdrPresetSel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = opts;
+  });
+  const show = selected ? '' : 'none';
+  ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show;
+  });
 }
 
 async function bdSavePreset() {
@@ -4274,8 +4681,9 @@ async function bdSavePreset() {
 
 function bdLoadPreset(name) {
   if (!name) {
-    const delBtn = document.getElementById('bdDeletePresetBtn');
-    if (delBtn) delBtn.style.display = 'none';
+    ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.style.display = 'none';
+    });
     return;
   }
   const preset = bdPresets.find(p => p.name === name);
@@ -4283,22 +4691,26 @@ function bdLoadPreset(name) {
   const s = preset.state || {};
   bdFilterGroups = (s.groups || []).map(g => bdNewGroup({
     mode: g.mode || 'AND',
-    rules: (g.rules || []).map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '' })),
+    rules: (g.rules || []).map(r => ({ field: r.field || 'bio', op: r.op || 'contains', value: r.value ?? '', ...(r.minPosts ? { minPosts: r.minPosts } : {}) })),
   }));
   if (!bdFilterGroups.length) bdFilterGroups.push(bdNewGroup());
-  const top = document.getElementById('bdFltTopMode');
-  if (top) top.value = s.topMode || 'AND';
+  bdSetTopMode(s.topMode || 'AND');
+  // Sync both selects to the chosen preset name
+  ['bdPresetSel', 'bdrPresetSel'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = name;
+  });
+  ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = '';
+  });
   bdSaveFilterState();
   bdRenderFilterGroups();
   bdApplyFilters();
   bdUpdateFilterSummary();
-  const delBtn = document.getElementById('bdDeletePresetBtn');
-  if (delBtn) delBtn.style.display = '';
 }
 
 async function bdDeletePreset() {
-  const sel = document.getElementById('bdPresetSel');
-  const name = sel?.value;
+  const sel = document.getElementById('bdPresetSel') || document.getElementById('bdrPresetSel');
+  const name = document.getElementById('bdPresetSel')?.value || document.getElementById('bdrPresetSel')?.value;
   if (!name) return;
   if (!confirm(`Delete preset "${name}"?`)) return;
   try {
@@ -4505,14 +4917,13 @@ function bdRenderProgress(status, startedAt, ctx = {}) {
   let inner = '';
   if (phase === 'starting' || phase === 'fetching-page' || phase === 'paginating') {
     const pageNum = page || 1;
-    const maxPages = 5;
+    const maxPages = 15;
     innerFrac = 0.25 * Math.min(pageNum / maxPages, 1);
     inner = `finding posts · page ${pageNum}/${maxPages} · ${current} authors`;
   } else if (phase === 'enriching' || phase === 'enriching+feed') {
     const enrichFrac = total > 0 ? current / total : 0;
     innerFrac = 0.25 + 0.75 * enrichFrac;
-    const tail = phase === 'enriching+feed' ? ' + scanning feed' : '';
-    inner = `enriching profiles${tail} · ${current}/${total}`;
+    inner = `enriching profiles · ${current}/${total}`;
   } else if (phase === 'searching') {
     innerFrac = 0.5;
     inner = `searching ${bdPlatform}…`;
@@ -4545,11 +4956,12 @@ function bdRenderProgress(status, startedAt, ctx = {}) {
 
 // Run a single keyword search to completion. Returns array of profiles or
 // throws on backend error. Updates progress bar via the supplied context.
-async function bdRunOneSearch(keyword, sessionCookie, ctx) {
-  const scanRecentFeed = !!document.getElementById('bdScanRecentFeed')?.checked;
+// slotMap: array mapping cookie array index → DOM slot index (for live indicator updates)
+async function bdRunOneSearch(keyword, sessionCookies, ctx, slotMap) {
   const startResp = await fetch('/api/verify', {
     method: 'POST', headers: getApiHeaders(),
-    body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookie, scanRecentFeed }),
+    body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookies,
+      tiktokCookie: bdPlatform === 'tiktok' ? (document.getElementById('bdTtCookie')?.value.trim() || '') : undefined }),
   });
   const startData = await startResp.json();
   if (!startResp.ok || startData.error || !startData.searchId) {
@@ -4557,6 +4969,7 @@ async function bdRunOneSearch(keyword, sessionCookie, ctx) {
   }
   const searchId  = startData.searchId;
   const startedAt = Date.now();
+  let lastCookieIdx = -1;
   while (true) {
     await new Promise(r => setTimeout(r, 1000));
     const sResp = await fetch('/api/verify', {
@@ -4566,8 +4979,13 @@ async function bdRunOneSearch(keyword, sessionCookie, ctx) {
     if (!sResp.ok) throw new Error(`Status poll failed: ${sResp.statusText}`);
     const status = await sResp.json();
     bdRenderProgress(status, startedAt, ctx);
+    // Update cookie slot indicators when the active account changes
+    if (slotMap && slotMap.length > 1 && typeof status.cookieIdx === 'number' && status.cookieIdx !== lastCookieIdx) {
+      lastCookieIdx = status.cookieIdx;
+      slotMap.forEach((domSlot, i) => bdMarkCookieSlot(domSlot, i === status.cookieIdx ? 'active' : 'ready'));
+    }
     if (status.phase === 'error')    throw new Error(status.error);
-    if (status.phase === 'complete') return status.profiles || [];
+    if (status.phase === 'complete') return { profiles: status.profiles || [], enrichmentBlocked: !!status.enrichmentBlocked };
   }
 }
 
@@ -4596,9 +5014,11 @@ async function runBdSearch() {
   bdClearCachedResults();
   document.getElementById('bdTableWrap').style.display = 'none';
   document.getElementById('bdEmpty').style.display = 'none';
+  document.getElementById('bdEnrichBlockedWarn').style.display = 'none';
   bdShowProgress(true);
 
-  const cookie = document.getElementById('bdSessionCookie')?.value?.trim() || '';
+  const cookiePool = bdGetCookiePoolAll();
+  bdResetAllSlots();
   const batchStartedAt = Date.now();
   const profileMap = new Map(); // handle (lowercased) → merged profile with matchedKeywords
   const failedKeywords = [];
@@ -4606,22 +5026,50 @@ async function runBdSearch() {
   try {
     for (let i = 0; i < keywords.length; i++) {
       const kw = keywords[i];
+      const startOffset = cookiePool.length > 0 ? Math.max(0, cookiePool.findIndex(p => p.slotIdx === bdSearchStartSlot)) : 0;
+      // Rotate the pool so the preferred start account is first for this keyword
+      const kwOffset = cookiePool.length > 0 ? (startOffset + i) % cookiePool.length : 0;
+      const reorderedPool = cookiePool.length > 0
+        ? [...cookiePool.slice(kwOffset), ...cookiePool.slice(0, kwOffset)]
+        : [];
+      const sessionCookies = reorderedPool.map(p => p.cookie);
+      // slotMap[i] = DOM slot index for cookie array index i — lets the polling loop update indicators
+      const slotMap = reorderedPool.map(p => p.slotIdx);
+      // Track primary slot for this keyword (used by re-enrich to pick the next slot)
+      const poolEntry = reorderedPool[0] || { cookie: '', slotIdx: 0 };
+      bdLastUsedSlotIdx = poolEntry.slotIdx;
+      const acctLabel = cookiePool.length > 1 ? ` · Account ${poolEntry.slotIdx + 1}` : '';
+      bdMarkCookieSlot(poolEntry.slotIdx, 'active');
+
       const ctx = { kwIdx: i, kwTotal: keywords.length, kwLabel: kw, batchStartedAt };
       setBdStatus(
         keywords.length > 1
-          ? `Searching ${i + 1}/${keywords.length}: "${kw}"… (running keywords sequentially to avoid rate limits)`
+          ? `Searching ${i + 1}/${keywords.length}: "${kw}"…${acctLabel}`
           : `Searching ${bdPlatform} for "${kw}"… paginating + enriching profiles`,
         '',
       );
       bdRenderProgress({ phase: 'starting', current: 0, total: 0 }, Date.now(), ctx);
 
-      let profiles;
+      let profiles, enrichmentBlocked = false;
       try {
-        profiles = await bdRunOneSearch(kw, cookie, ctx);
+        ({ profiles, enrichmentBlocked } = await bdRunOneSearch(kw, sessionCookies, ctx, slotMap));
       } catch (e) {
         console.error(`Keyword "${kw}" failed:`, e.message);
         failedKeywords.push({ keyword: kw, error: e.message });
+        bdMarkCookieSlot(poolEntry.slotIdx, 'failed');
         continue; // skip this one, try the next
+      }
+
+      if (enrichmentBlocked) {
+        bdMarkCookieSlot(poolEntry.slotIdx, 'cooling');
+        document.getElementById('bdEnrichBlockedWarn').style.display = '';
+      } else {
+        bdMarkCookieSlot(poolEntry.slotIdx, 'ready');
+      }
+
+      // Inter-keyword pause only when using a single account — with a pool, rotation is enough
+      if (cookiePool.length <= 1 && i < keywords.length - 1) {
+        await bdCountdown(45, 'Pausing before next keyword to protect session (add more accounts to skip this)');
       }
 
       // Merge into the running map — dedupe by lowercase handle, accumulate matchedKeywords
@@ -4648,12 +5096,21 @@ async function runBdSearch() {
 
     bdAllResults = Array.from(profileMap.values());
     if (!bdAllResults.length) {
-      setBdStatus(
-        failedKeywords.length
-          ? `No profiles found. Failed keywords: ${failedKeywords.map(f => `"${f.keyword}"`).join(', ')}.`
-          : 'No profiles found. Try a different keyword or hashtag.',
-        'red',
-      );
+      const igBlocked = failedKeywords.some(f => f.error?.includes('blocking requests'));
+      if (igBlocked) {
+        document.getElementById('bdEnrichBlockedWarn').style.display = '';
+        document.getElementById('bdEnrichBlockedWarn').innerHTML =
+          '🚫 <strong>Instagram has blocked this session entirely</strong> — even hashtag search is returning HTML. ' +
+          'Wait 1–2 hours, get a fresh session cookie from your browser, and try again.';
+        setBdStatus('Instagram session blocked. See warning above.', 'red');
+      } else {
+        setBdStatus(
+          failedKeywords.length
+            ? `No profiles found. Failed keywords: ${failedKeywords.map(f => `"${f.keyword}": ${f.error}`).join(' | ')}`
+            : 'No profiles found. Try a different keyword or hashtag.',
+          'red',
+        );
+      }
       bdShowProgress(false);
       document.getElementById('bdEmpty').style.display = '';
       return;
@@ -4704,6 +5161,150 @@ async function bdSaveFiltered() {
   } finally {
     btn.disabled = false;
     btn.textContent = originalText;
+  }
+}
+
+async function bdReenrichMissing() {
+  const missing = bdAllResults.filter(p => !p.followers || p.followers === '');
+  if (!missing.length) { setBdStatus('All profiles already have follower data.', 'green'); return; }
+
+  const sessionCookies = bdGetCookiePoolAll().map(p => p.cookie);
+  if (!sessionCookies.length) { setBdStatus('Add at least one Instagram session cookie first.', 'red'); return; }
+
+  const btn = document.getElementById('bdReenrichBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Enriching…';
+  setBdStatus(`Re-enriching ${missing.length} profiles with missing data…`, '');
+
+  try {
+    const startResp = await fetch('/api/verify', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'bd-reenrich', profiles: missing.map(p => ({ handle: p.handle, pk: p.pk })), sessionCookies }),
+    });
+    const startData = await startResp.json();
+    if (!startResp.ok || startData.error) throw new Error(startData.error || startResp.statusText);
+    const { scanId } = startData;
+
+    while (true) {
+      await new Promise(r => setTimeout(r, 1000));
+      const sResp = await fetch('/api/verify', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'bd-search-status', searchId: scanId }),
+      });
+      const status = await sResp.json();
+      if (status.phase === 'enriching') {
+        btn.textContent = `⏳ ${status.current}/${status.total}`;
+        setBdStatus(`Re-enriching… ${status.current}/${status.total} done`, '');
+      }
+      if (status.phase === 'error') throw new Error(status.error);
+      if (status.phase === 'complete') {
+        if (status.blocked) {
+          document.getElementById('bdEnrichBlockedWarn').style.display = '';
+          setBdStatus('Session blocked during re-enrich — wait 1–2 hours and try again with a fresh cookie.', 'red');
+          break;
+        }
+        const byHandle = new Map(status.results.map(r => [r.handle.toLowerCase(), r]));
+        let enrichedCount = 0;
+        bdAllResults = bdAllResults.map(p => {
+          const r = byHandle.get((p.handle || '').toLowerCase());
+          if (!r || !r.enriched) return p;
+          enrichedCount++;
+          // Recalculate engagement rate with the now-known follower count
+          const followers = Number(r.followers) || 0;
+          const engagementRate = followers > 0
+            ? Math.round(((p.avgLikes + p.avgComments) / followers) * 10000) / 100
+            : p.engagementRate || 0;
+          return { ...p, ...r, engagementRate };
+        });
+        document.getElementById('bdEnrichBlockedWarn').style.display = 'none';
+        setBdStatus(`Re-enriched ${enrichedCount}/${missing.length} profiles. ${missing.length - enrichedCount} still missing (try again later).`, enrichedCount > 0 ? 'green' : 'red');
+        bdApplyFilters();
+        bdSaveCachedResults(null, bdPlatform);
+        break;
+      }
+    }
+  } catch (e) {
+    setBdStatus(`Re-enrich error: ${e.message}`, 'red');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 Re-enrich missing';
+  }
+}
+
+async function bdScanPosts() {
+  if (!bdAllResults.length) return;
+
+  const isTikTok = bdAllResults.every(p => p.rawPlatform === 'tiktok');
+  const sessionCookies = bdGetCookiePoolAll().map(p => p.cookie);
+  if (!isTikTok && !sessionCookies.length) {
+    setBdStatus('Add at least one Instagram session cookie first.', 'red'); return;
+  }
+
+  const btn = document.getElementById('bdScanPostsBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Scanning…';
+
+  // For TikTok: include handle + rawPlatform (no pk needed — Apify uses handle)
+  // For Instagram: include handle + pk, filter out profiles missing pk
+  const toScan = isTikTok
+    ? bdAllResults.map(p => ({ handle: p.handle, rawPlatform: 'tiktok' }))
+    : bdAllResults.map(p => ({ handle: p.handle, pk: p.pk })).filter(p => p.pk);
+
+  if (!toScan.length) {
+    setBdStatus('No profiles with Instagram user IDs found — run a fresh search first.', 'red');
+    btn.disabled = false; btn.textContent = '📝 Scan recent posts'; return;
+  }
+
+  try {
+    const startResp = await fetch('/api/verify', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'bd-scan-posts', profiles: toScan, sessionCookies }),
+    });
+    const startData = await startResp.json();
+    if (!startResp.ok || startData.error) throw new Error(startData.error || startResp.statusText);
+    const { scanId } = startData;
+
+    // Poll for completion
+    while (true) {
+      await new Promise(r => setTimeout(r, 1000));
+      const sResp = await fetch('/api/verify', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'bd-search-status', searchId: scanId }),
+      });
+      const status = await sResp.json();
+      if (status.phase === 'scanning') {
+        btn.textContent = `⏳ ${status.current}/${status.total}`;
+        setBdStatus(`Scanning recent posts… ${status.current}/${status.total} done`, '');
+      }
+      if (status.phase === 'error') throw new Error(status.error);
+      if (status.phase === 'complete') {
+        // Merge returned post data back into bdAllResults
+        const byHandle = new Map(status.results.map(r => [r.handle.toLowerCase(), r]));
+        bdAllResults = bdAllResults.map(p => {
+          const scan = byHandle.get((p.handle || '').toLowerCase());
+          if (!scan) return p;
+          // Merge: combine hashtag captions already on the profile with newly scanned feed captions
+          const combined = [...new Set([...(p.postCaptions || []), ...(scan.postCaptions || [])])];
+          const locs     = [...new Set([...(p.postLocations || []), ...(scan.postLocations || [])])];
+          const merged   = { ...p, postCaptions: combined, postLocations: locs };
+          // For TikTok: update engagement stats from freshly scanned videos
+          if (scan.avgLikes    != null) merged.avgLikes    = scan.avgLikes;
+          if (scan.avgComments != null) merged.avgComments = scan.avgComments;
+          if (scan.avgViews    != null) merged.avgViews    = scan.avgViews;
+          return merged;
+        });
+        const enriched = status.results.filter(r => r.postCaptions.length).length;
+        setBdStatus(`Post scan complete — ${enriched}/${toScan.length} profiles have recent post captions.`, 'green');
+        bdApplyFilters();
+        bdSaveCachedResults(null, bdPlatform);
+        break;
+      }
+    }
+  } catch (e) {
+    setBdStatus(`Scan error: ${e.message}`, 'red');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📝 Scan recent posts';
   }
 }
 </script>
@@ -4871,6 +5472,534 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [], byKeywo
       <tbody>${logRows}</tbody>
     </table>
     </div>`;
+}
+</script>
+
+<script>
+// ── BD Results tab ────────────────────────────────────────────────────────
+
+let bdrMatchingData = [];
+let bdrExcludedData = [];
+let bdrViewMode = 'matching';
+let bdrPlatform = 'all';
+let bdrLoaded = false;
+let bdrSortCol = 'fetched_at';
+let bdrSortDir = 'desc';
+
+const BDR_TYPE_KEY = 'bd_type_labels';
+
+function bdrGetTypes() {
+  try { return JSON.parse(localStorage.getItem(BDR_TYPE_KEY) || '{}'); } catch (_) { return {}; }
+}
+
+function bdrSetType(handle, platform, value) {
+  const types = bdrGetTypes();
+  const key = `${platform}:${handle}`;
+  if (value.trim()) types[key] = value.trim();
+  else delete types[key];
+  localStorage.setItem(BDR_TYPE_KEY, JSON.stringify(types));
+}
+
+function bdrGetType(handle, platform) {
+  return bdrGetTypes()[`${platform}:${handle}`] || '';
+}
+
+// ── BD Results: re-apply current filter rules ──────────────────────────
+
+function bdrMergeByHandle(rows) {
+  const byHandle = new Map();
+  for (const r of rows) {
+    const key = (r.handle || '').toLowerCase();
+    if (!byHandle.has(key)) byHandle.set(key, []);
+    byHandle.get(key).push(r);
+  }
+  return Array.from(byHandle.values()).map(platformRows => {
+    const sorted  = [...platformRows].sort((a,b) => (Number(b.followers)||0) - (Number(a.followers)||0));
+    const primary = sorted[0];
+    const findPlat = p => platformRows.find(r => (r.platform||r.raw_platform||'').toLowerCase().includes(p));
+    const ig = findPlat('instagram'), tt = findPlat('tiktok'),
+          yt = findPlat('youtube'),   xr = platformRows.find(r => { const p=(r.platform||r.raw_platform||'').toLowerCase(); return p==='x'||p.includes('twitter'); });
+    const totalFollowers = platformRows.reduce((s,r) => s + (Number(r.followers)||0), 0);
+    const allCaptions  = [...new Set(platformRows.flatMap(r => Array.isArray(r.post_captions)  ? r.post_captions  : []))];
+    const allLocations = [...new Set(platformRows.flatMap(r => Array.isArray(r.post_locations) ? r.post_locations : []))];
+    const allKeywords  = [...new Set(platformRows.flatMap(r => Array.isArray(r.matched_keywords) ? r.matched_keywords : []))];
+    const platforms    = platformRows.map(r => (r.platform||r.raw_platform||'').toLowerCase());
+    return {
+      handle:          primary.handle,
+      full_name:       primary.full_name || '',
+      bio:             primary.bio || '',
+      location:        primary.location || primary.country || '',
+      is_verified:     platformRows.some(r => r.is_verified),
+      engagement_rate: primary.engagement_rate,
+      avg_likes:       primary.avg_likes,
+      avg_comments:    primary.avg_comments,
+      followers:       String(totalFollowers),
+      ig_followers:    ig ? ig.followers : null,
+      tt_followers:    tt ? tt.followers : null,
+      yt_followers:    yt ? yt.followers : null,
+      x_followers:     xr ? xr.followers : null,
+      ig_row: ig, tt_row: tt, yt_row: yt, x_row: xr,
+      platforms,
+      post_captions:   allCaptions,
+      post_locations:  allLocations,
+      matched_keywords: allKeywords,
+      fetched_at:      platformRows.map(r=>r.fetched_at||'').sort().reverse()[0],
+      profile_url:     primary.profile_url,
+      _rows:           platformRows,
+    };
+  });
+}
+
+// Converts a DB snake_case row to the shape bdPassesFilters() expects
+function bdrToFilterShape(row) {
+  return {
+    handle:          row.handle          || '',
+    followers:       row.followers       || '',
+    bio:             row.bio             || '',
+    fullName:        row.full_name       || '',
+    location:        row.location        || (row.country||''),
+    isVerified:      row.is_verified     || false,
+    engagementRate:  Number(row.engagement_rate) || 0,
+    avgLikes:        row.avg_likes       ?? 0,
+    avgComments:     row.avg_comments    ?? 0,
+    postCaptions:    Array.isArray(row.post_captions)    ? row.post_captions    : [],
+    postLocations:   Array.isArray(row.post_locations)   ? row.post_locations   : [],
+    matchedKeywords: Array.isArray(row.matched_keywords) ? row.matched_keywords : [],
+    rawPlatform:     Array.isArray(row.platforms) ? row.platforms.join(',') : (row.raw_platform||row.platform||''),
+  };
+}
+
+let bdrPendingMatching = null;
+let bdrPendingExcluded = null;
+
+function bdrAutoApply() {
+  const allRawRows = [...bdrMatchingData, ...bdrExcludedData];
+  if (!allRawRows.length) return;
+
+  const hasActiveRules = bdFilterGroups.some(g =>
+    g.rules.some(r => r.field === 'verified' || (r.value != null && r.value !== ''))
+  );
+  if (!hasActiveRules) {
+    document.getElementById('bdrReclassifyBanner').style.display = 'none';
+    return;
+  }
+
+  const mergedAll      = bdrMergeByHandle(allRawRows);
+  const passedMerged   = mergedAll.filter(m => bdPassesFilters(bdrToFilterShape(m)));
+  const failedMerged   = mergedAll.filter(m => !bdPassesFilters(bdrToFilterShape(m)));
+
+  const newMatching = passedMerged.flatMap(m => m._rows);
+  const newExcluded = failedMerged.flatMap(m => m._rows);
+
+  const prevMatchHandles = new Set(bdrMatchingData.map(r => r.handle));
+  const prevExclHandles  = new Set(bdrExcludedData.map(r => r.handle));
+  const toMatch = passedMerged.filter(m => prevExclHandles.has(m.handle)).length;
+  const toExcl  = failedMerged.filter(m => prevMatchHandles.has(m.handle)).length;
+
+  bdrPendingMatching = newMatching;
+  bdrPendingExcluded = newExcluded;
+  bdrMatchingData    = newMatching;
+  bdrExcludedData    = newExcluded;
+  bdrUpdateStats();
+  bdrApplyFilter();
+
+  const parts = [];
+  if (toMatch > 0) parts.push(`${toMatch} moved → Matching`);
+  if (toExcl  > 0) parts.push(`${toExcl} moved → Filtered out`);
+  const msg = parts.length
+    ? `${parts.join(', ')} (${passedMerged.length} matching, ${failedMerged.length} filtered out) — unsaved`
+    : `${passedMerged.length} matching, ${failedMerged.length} filtered out`;
+  document.getElementById('bdrReclassifyMsg').textContent = msg;
+  document.getElementById('bdrReclassifyBanner').style.display = 'flex';
+  document.getElementById('bdrSaveReclassifyBtn').style.display = parts.length ? '' : 'none';
+}
+
+async function bdrSaveReclassify() {
+  if (!bdrPendingMatching || !bdrPendingExcluded) return;
+  const btn = document.getElementById('bdrSaveReclassifyBtn');
+  btn.disabled = true; btn.textContent = '⏳ Saving…';
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'brightdata-reclassify', matching: bdrPendingMatching, excluded: bdrPendingExcluded }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    document.getElementById('bdrReclassifyMsg').textContent =
+      `Saved — ${data.matching} matching, ${data.excluded} filtered out`;
+    document.getElementById('bdrSaveReclassifyBtn').style.display = 'none';
+    bdrPendingMatching = null;
+    bdrPendingExcluded = null;
+  } catch (e) {
+    document.getElementById('bdrReclassifyMsg').textContent = `Save failed: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = '💾 Save to DB';
+  }
+}
+
+function bdrDiscardReclassify() {
+  bdrPendingMatching = null;
+  bdrPendingExcluded = null;
+  document.getElementById('bdrReclassifyBanner').style.display = 'none';
+  loadBdResults(true); // reload from DB to restore original state
+}
+
+async function loadBdResults(forceRefresh) {
+  if (bdrLoaded && !forceRefresh) { bdrApplyFilter(); return; }
+  document.getElementById('bdrLoading').style.display = '';
+  document.getElementById('bdrEmpty').style.display = 'none';
+  document.getElementById('bdrTableWrap').style.display = 'none';
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'brightdata-load' }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    bdrMatchingData = data.matching || [];
+    bdrExcludedData = data.excluded || [];
+    bdrLoaded = true;
+    if (bdPresets.length) bdRenderPresets('');  // already loaded — just populate the dropdown
+    else bdFetchPresets('');                    // not loaded yet — fetch and then populate
+    bdRenderFilterGroups();  // populate bdrFilterGroups container
+    // Restore collapse state
+    if (localStorage.getItem('bdr_filter_panel_collapsed') === '1') bdrToggleFilters();
+    bdrUpdateStats();        // show DB state as-is on load
+    bdrApplyFilter();
+  } catch (e) {
+    document.getElementById('bdrLoading').innerHTML =
+      `<div style="color:var(--red);font-size:13px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+function bdrUpdateStats() {
+  const uniqMatch = new Set(bdrMatchingData.map(r => r.handle)).size;
+  const uniqExcl  = new Set(bdrExcludedData.map(r => r.handle)).size;
+  document.getElementById('bdrTotMatch').textContent = uniqMatch;
+  document.getElementById('bdrTotExcl').textContent  = uniqExcl;
+
+  const platHandles = (src, plat) => new Set(
+    src.filter(r => (r.platform||r.raw_platform||'').toLowerCase().includes(plat)).map(r => r.handle)
+  ).size;
+  document.getElementById('bdrTotIg').textContent = platHandles(bdrMatchingData, 'instagram');
+  document.getElementById('bdrTotTt').textContent = platHandles(bdrMatchingData, 'tiktok');
+  document.getElementById('bdrTotYt').textContent = platHandles(bdrMatchingData, 'youtube');
+  document.getElementById('bdrTotX').textContent  = bdrMatchingData.filter(r => {
+    const p = (r.platform||r.raw_platform||'').toLowerCase();
+    return p === 'x' || p === 'twitter' || p.includes('x / twitter');
+  }).reduce((s,r,_,a) => { s.add(r.handle); return s; }, new Set()).size;
+
+  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const pc = plat => plat === 'all'
+    ? new Set(src.map(r => r.handle)).size
+    : platHandles(src, plat);
+  document.getElementById('bdrPcAll').textContent = pc('all');
+  document.getElementById('bdrPcIg').textContent  = pc('instagram');
+  document.getElementById('bdrPcTt').textContent  = pc('tiktok');
+  document.getElementById('bdrPcYt').textContent  = pc('youtube');
+  document.getElementById('bdrPcX').textContent   = pc('x');
+  document.getElementById('bdrMatchCount').textContent = uniqMatch;
+  document.getElementById('bdrExclCount').textContent  = uniqExcl;
+}
+
+function bdrSetView(mode) {
+  bdrViewMode = mode;
+  const matchBtn = document.getElementById('bdrViewMatchBtn');
+  const exclBtn  = document.getElementById('bdrViewExclBtn');
+  matchBtn.style.background = mode === 'matching' ? 'var(--green-bg)' : 'var(--white)';
+  matchBtn.style.color      = mode === 'matching' ? 'var(--green)'    : 'var(--muted)';
+  exclBtn.style.background  = mode === 'excluded' ? '#fff5f0'         : 'var(--white)';
+  exclBtn.style.color       = mode === 'excluded' ? 'var(--orange)'   : 'var(--muted)';
+  bdrUpdateStats();
+  bdrApplyFilter();
+}
+
+function bdrSetPlatform(plat, el) {
+  bdrPlatform = plat;
+  document.querySelectorAll('#mainBdResults .pfill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  bdrApplyFilter();
+}
+
+function bdrSetSort(col) {
+  if (bdrSortCol === col) {
+    bdrSortDir = bdrSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    bdrSortCol = col;
+    bdrSortDir = (col === 'followers' || col === 'engagement_rate' || col === 'fetched_at' || col === 'is_verified') ? 'desc' : 'asc';
+  }
+  bdrApplyFilter();
+}
+
+function bdrUpdateSortIndicators() {
+  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','location','type','fetched_at'];
+  for (const c of sortable) {
+    const el = document.getElementById('bdrSrt-' + c);
+    if (!el) continue;
+    if (c === bdrSortCol) {
+      el.textContent = bdrSortDir === 'asc' ? '↑' : '↓';
+      el.style.opacity = '1';
+      el.style.color = 'var(--accent)';
+    } else {
+      el.textContent = '⇅';
+      el.style.opacity = '0.3';
+      el.style.color = '';
+    }
+  }
+}
+
+function bdrApplyFilter() {
+  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const q   = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
+
+  let merged = bdrMergeByHandle(src);
+
+  if (bdrPlatform !== 'all') {
+    merged = merged.filter(m => m.platforms.some(p => p.includes(bdrPlatform)));
+  }
+  if (q) {
+    merged = merged.filter(m =>
+      (m.handle    || '').toLowerCase().includes(q) ||
+      (m.full_name || '').toLowerCase().includes(q) ||
+      (m.bio       || '').toLowerCase().includes(q) ||
+      (m.location  || '').toLowerCase().includes(q) ||
+      (Array.isArray(m.matched_keywords) ? m.matched_keywords.join(' ').toLowerCase() : '').includes(q)
+    );
+  }
+
+  if (bdrSortCol) {
+    merged = [...merged].sort((a, b) => {
+      let av, bv;
+      switch (bdrSortCol) {
+        case 'handle':          av=(a.handle||'').toLowerCase();    bv=(b.handle||'').toLowerCase();    break;
+        case 'full_name':       av=(a.full_name||'').toLowerCase(); bv=(b.full_name||'').toLowerCase(); break;
+        case 'platform':        av=a.platforms.join(',');           bv=b.platforms.join(',');           break;
+        case 'is_verified':     av=a.is_verified?1:0;              bv=b.is_verified?1:0;              break;
+        case 'followers':       av=Number(a.followers)||0;         bv=Number(b.followers)||0;         break;
+        case 'engagement_rate': av=Number(a.engagement_rate)||0;   bv=Number(b.engagement_rate)||0;   break;
+        case 'location':        av=(a.location||'').toLowerCase(); bv=(b.location||'').toLowerCase(); break;
+        case 'type':            av=bdrGetType(a.handle,'').toLowerCase(); bv=bdrGetType(b.handle,'').toLowerCase(); break;
+        case 'fetched_at':      av=a.fetched_at||'';               bv=b.fetched_at||'';               break;
+        default:                av=''; bv='';
+      }
+      if (av < bv) return bdrSortDir === 'asc' ? -1 : 1;
+      if (av > bv) return bdrSortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
+
+  bdrUpdateSortIndicators();
+  document.getElementById('bdrLoading').style.display = 'none';
+
+  if (!merged.length) {
+    document.getElementById('bdrEmpty').style.display = '';
+    document.getElementById('bdrTableWrap').style.display = 'none';
+    const hasAny = bdrMatchingData.length || bdrExcludedData.length;
+    document.getElementById('bdrEmpty').innerHTML = hasAny
+      ? '<div style="font-size:2rem;margin-bottom:10px">🔍</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No profiles match</div><div style="font-size:12.5px">Try a different platform or clear the search.</div>'
+      : '<div style="font-size:2rem;margin-bottom:10px">📭</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No saved results yet</div><div style="font-size:12.5px">Run a search in the <strong>BrightData Enrich</strong> tab and click <strong>Save filtered results to DB</strong>.</div>';
+    return;
+  }
+
+  document.getElementById('bdrEmpty').style.display    = 'none';
+  document.getElementById('bdrTableWrap').style.display = '';
+  document.getElementById('bdrFooterInfo').textContent  = `Showing ${merged.length} creator${merged.length !== 1 ? 's' : ''}`;
+  bdrRenderTable(merged);
+}
+
+// Extract best available location from DB fields or bio text
+function bdrExtractLocation(r) {
+  if (r.location && r.location.trim()) return r.location.trim();
+  if (r.country  && r.country.trim())  return r.country.trim();
+  const bio = r.bio || '';
+
+  // 📍 emoji → grab following text
+  let m = bio.match(/📍\s*([^\n|•·]{2,35})/);
+  if (m) return m[1].trim().replace(/[.,\s]+$/, '').slice(0, 30);
+
+  // "based in X"
+  m = bio.match(/\bbased\s+in\s+([A-Za-z][a-zA-Z\s]{1,25}?)(?=[,|•·\n]|$)/i);
+  if (m) return m[1].trim();
+
+  // "X based" — take the 1-2 words immediately before "based"
+  m = bio.match(/\b(\w+(?:\s+\w+)?)\s+based\b/i);
+  if (m) {
+    const words = m[1].trim().split(/\s+/);
+    return words.slice(-2).join(' ');
+  }
+
+  // City name adjacent to a UK postcode: "London WC2H", "Manchester M1"
+  m = bio.match(/\b([A-Za-z][a-zA-Z\s]{1,20}),?\s+([A-Z]{1,2}[0-9][0-9A-Z]?)\b/);
+  if (m) return m[1].trim().split(/\s+/).slice(-2).join(' ') + ' ' + m[2];
+
+  return null;
+}
+
+function bdrTogglePosts(id) {
+  const row = document.getElementById(id);
+  if (!row) return;
+  const isHidden = row.style.display === 'none' || row.style.display === '';
+  row.style.display = isHidden ? 'table-row' : 'none';
+  const btn = document.getElementById(id + '-btn');
+  if (btn) btn.textContent = btn.textContent.replace(isHidden ? '▾' : '▴', isHidden ? '▴' : '▾');
+}
+
+function bdrRenderTable(rows) {
+  const PLAT_COLORS = { instagram: '#e1306c', tiktok: '#010101', youtube: '#ff0000', x: '#1da1f2' };
+  const PLAT_LABEL  = { instagram: 'IG', tiktok: 'TT', youtube: 'YT', x: 'X' };
+
+  const tbody = document.getElementById('bdrTbody');
+  tbody.innerHTML = rows.map(m => {
+    const url = m.profile_url || (() => {
+      const h = (m.handle||'').replace(/^@/,'');
+      const p = m.platforms[0] || '';
+      if (p.includes('instagram')) return `https://www.instagram.com/${h}/`;
+      if (p.includes('tiktok'))    return `https://www.tiktok.com/@${h}`;
+      if (p.includes('youtube'))   return `https://www.youtube.com/@${h}`;
+      if (p.includes('x'))         return `https://x.com/${h}`;
+      return '';
+    })();
+
+    const handleHtml = url
+      ? `<a href="${url}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600;font-size:12px">@${m.handle||'—'} ↗</a>`
+      : `<span style="font-weight:600;font-size:12px">@${m.handle||'—'}</span>`;
+
+    // Platform pills with per-platform follower counts
+    const platPills = m.platforms.map(p => {
+      const row = m._rows.find(r => (r.platform||r.raw_platform||'').toLowerCase().includes(p));
+      const flw = row?.followers ? bdFormatCompact(Number(row.followers)) : '?';
+      const color = PLAT_COLORS[p] || 'var(--muted)';
+      const lbl   = PLAT_LABEL[p]  || p.toUpperCase().slice(0,2);
+      return `<span style="display:inline-flex;align-items:center;gap:3px;background:${color}18;color:${color};border:1px solid ${color}40;border-radius:100px;padding:2px 7px;font-size:10px;font-weight:700;white-space:nowrap;margin:1px 2px 1px 0">${lbl} <span style="font-weight:500">${flw}</span></span>`;
+    }).join('');
+
+    // Total followers
+    const total = Number(m.followers) || 0;
+    const totalHtml = total > 0
+      ? `<div style="font-family:var(--mono);font-size:12px;font-weight:700">${bdFormatCompact(total)}</div>`
+      : '<span style="color:var(--muted2)">—</span>';
+
+    const er = m.engagement_rate != null ? Number(m.engagement_rate).toFixed(2) + '%' : '—';
+    const erColor = Number(m.engagement_rate) >= 3 ? 'var(--green)' : Number(m.engagement_rate) >= 1 ? 'var(--amber)' : 'var(--muted)';
+
+    const kws = m.matched_keywords.length
+      ? m.matched_keywords.map(k => `<span style="display:inline-block;background:var(--green-bg);color:var(--green);padding:1px 6px;border-radius:8px;margin:1px 2px 0 0;font-size:10px">${k}</span>`).join('')
+      : '<span style="color:var(--muted2)">—</span>';
+
+    const bioSafe  = (m.bio||'').replace(/"/g,"'");
+    const bioShort = m.bio ? m.bio.slice(0,70)+(m.bio.length>70?'…':'') : '—';
+    const bioHtml  = m.bio ? `<span title="${bioSafe.slice(0,300)}" style="cursor:help;font-size:11px;color:var(--muted)">${bioShort}</span>` : '—';
+
+    const locText = m.location || '';
+    const locHtml = locText ? `<span style="font-size:11px;color:var(--muted)">${locText}</span>` : '<span style="color:var(--muted2)">—</span>';
+
+    const savedAt = m.fetched_at
+      ? new Date(m.fetched_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'2-digit'})
+      : '—';
+
+    const safeHandle = (m.handle||'').replace(/"/g,'&quot;');
+    const typeVal    = bdrGetType(m.handle, m.platforms[0]||'').replace(/"/g,'&quot;');
+
+    // Expandable posts row — combined captions from all platforms
+    const captions   = m.post_captions;
+    const postLocs   = m.post_locations;
+    const postsRowId = `bdrp-${(m.handle||'').replace(/[^a-z0-9]/gi,'_')}`;
+    const postsBtnId = postsRowId + '-btn';
+
+    const postsCell = captions.length
+      ? `<button id="${postsBtnId}" onclick="bdrTogglePosts('${postsRowId}')" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:100px;background:var(--white);cursor:pointer;color:var(--text);white-space:nowrap">📝 ${captions.length} ▾</button>`
+      : '<span style="color:var(--muted2)">—</span>';
+
+    const postsExpandHtml = captions.length ? `
+    <tr id="${postsRowId}" style="display:none">
+      <td colspan="12" style="padding:0;background:var(--surface);border-bottom:2px solid var(--border)">
+        <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto">
+          ${captions.map((cap,i) => {
+            const loc  = postLocs[i] ? `<span style="display:inline-block;font-size:10px;font-weight:600;background:var(--blue-bg);color:var(--blue);border-radius:100px;padding:1px 7px;margin-right:6px;flex-shrink:0">📍 ${postLocs[i]}</span>` : '';
+            const text = (cap||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            return `<div style="font-size:11.5px;line-height:1.5;color:var(--text);display:flex;align-items:flex-start;gap:4px;padding:5px 8px;background:var(--white);border-radius:6px;border:1px solid var(--border)">
+              <span style="color:var(--muted2);font-size:10px;min-width:18px;padding-top:2px">${i+1}.</span>
+              <div>${loc}<span>${text.slice(0,220)}${text.length>220?'<span style="color:var(--muted2)">…</span>':''}</span></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </td>
+    </tr>` : '';
+
+    return `
+    <tr>
+      <td>${handleHtml}</td>
+      <td style="font-size:12px">${m.full_name||'—'}</td>
+      <td style="white-space:nowrap">${platPills}</td>
+      <td>${totalHtml}</td>
+      <td style="font-family:var(--mono);font-size:12px;font-weight:600;color:${erColor}">${er}</td>
+      <td style="text-align:center">${m.is_verified?'<span style="color:var(--blue);font-weight:700">✓</span>':'<span style="color:var(--muted2)">—</span>'}</td>
+      <td style="max-width:160px">${kws}</td>
+      <td style="white-space:nowrap">${postsCell}</td>
+      <td style="max-width:200px">${bioHtml}</td>
+      <td>${locHtml}</td>
+      <td>
+        <input class="bucket-input" type="text" list="bdrTypeList" placeholder="+ add type"
+          value="${typeVal}" data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}"
+          onblur="bdrSaveType(this)" onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault()}"/>
+      </td>
+      <td style="font-size:11px;color:var(--muted2);white-space:nowrap">${savedAt}</td>
+    </tr>${postsExpandHtml}`;
+  }).join('');
+}
+
+function bdrSaveType(input) {
+  bdrSetType(input.dataset.handle, input.dataset.platform, input.value);
+}
+
+function bdrProfileUrl(r) {
+  if (!r?.handle) return '';
+  const h    = r.handle.replace(/^@/, '');
+  const plat = (r.platform || r.raw_platform || '').toLowerCase();
+  if (plat.includes('instagram')) return `https://www.instagram.com/${h}/`;
+  if (plat.includes('tiktok'))   return `https://www.tiktok.com/@${h}`;
+  if (plat.includes('youtube'))  return `https://www.youtube.com/@${h}`;
+  if (plat.includes('x'))        return `https://x.com/${h}`;
+  return '';
+}
+
+function bdrExportCsv() {
+  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const q   = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
+  let merged = bdrMergeByHandle(src);
+  if (bdrPlatform !== 'all') merged = merged.filter(m => m.platforms.some(p => p.includes(bdrPlatform)));
+  if (q) merged = merged.filter(m =>
+    (m.handle||'').toLowerCase().includes(q) ||
+    (m.full_name||'').toLowerCase().includes(q) ||
+    (m.bio||'').toLowerCase().includes(q)
+  );
+  // Flatten back to individual rows for CSV export (one row per platform)
+  const rows = merged.flatMap(m => m._rows);
+
+  const cols = ['handle','full_name','platform','followers','engagement_rate','is_verified',
+                'matched_keywords','post_captions','post_locations','bio','location','country',
+                'post_count','avg_likes','avg_comments','hashtag_posts','profile_url','fetched_at','type'];
+  const esc  = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const csv  = [
+    cols.join(','),
+    ...rows.map(r => {
+      const rawPlat = (r.platform || r.raw_platform || '').toLowerCase();
+      const type    = bdrGetType(r.handle, rawPlat);
+      const loc     = bdrExtractLocation(r) || '';
+      return cols.map(c =>
+        c === 'type'             ? esc(type) :
+        c === 'location'         ? esc(loc) :
+        (c === 'matched_keywords' || c === 'post_captions' || c === 'post_locations')
+          ? esc(Array.isArray(r[c]) ? r[c].join(' | ') : (r[c] || '')) :
+        esc(r[c])
+      ).join(',');
+    }),
+  ].join('\n');
+
+  const a       = document.createElement('a');
+  a.href        = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download    = `bd_results_${bdrViewMode}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
 }
 </script>
 

@@ -7,20 +7,20 @@
 
 import { checkAuth } from './_auth.js';
 import { createClient } from '@supabase/supabase-js';
+import { ProxyAgent, fetch as undiciFetch } from 'undici';
 
 // ── BrightData Web Unlocker ────────────────────────────────────────────────
 // Routes a request through BrightData Web Unlocker and returns the response text.
 // Falls back to direct fetch if BRIGHTDATA_API_TOKEN / BRIGHTDATA_ZONE not set.
-async function bdFetch(targetUrl, reqHeaders = {}, ms = 20000) {
+async function bdFetch(targetUrl, reqHeaders = {}, ms = 20000, method = 'GET', body = undefined) {
   const token = process.env.BRIGHTDATA_API_TOKEN;
   const zone  = process.env.BRIGHTDATA_ZONE || 'influencer_proxy1';
 
   if (!token) {
-    // Fallback: direct fetch (may get 429 on Vercel)
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), ms);
     try {
-      return await fetch(targetUrl, { headers: reqHeaders, signal: ctrl.signal });
+      return await fetch(targetUrl, { method, headers: reqHeaders, body, signal: ctrl.signal });
     } finally { clearTimeout(t); }
   }
 
@@ -36,11 +36,37 @@ async function bdFetch(targetUrl, reqHeaders = {}, ms = 20000) {
       body: JSON.stringify({
         zone,
         url: targetUrl,
+        method,
         format: 'raw',
         headers: reqHeaders,
+        ...(body != null ? { body } : {}),
       }),
       signal: ctrl.signal,
     });
+  } finally { clearTimeout(t); }
+}
+
+// ── Residential proxy fetch ────────────────────────────────────────────────
+// Routes through BRIGHTDATA_PROXY_URL (raw TCP tunnel) without stripping headers.
+// Used for TikTok profile pages — the Web Unlocker strips session management and
+// returns empty bodies for TikTok, whereas the residential proxy passes through intact.
+async function proxyFetch(url, reqHeaders = {}, ms = 30000) {
+  const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const opts = {
+      headers: reqHeaders,
+      signal: ctrl.signal,
+    };
+    if (proxyUrl) {
+      opts.dispatcher = new ProxyAgent({
+        uri: proxyUrl,
+        requestTls: { rejectUnauthorized: false },
+        proxyTls:   { rejectUnauthorized: false },
+      });
+    }
+    return await undiciFetch(url, opts);
   } finally { clearTimeout(t); }
 }
 
@@ -81,32 +107,96 @@ async function verifyInstagram(username) {
 }
 
 // ── TikTok ─────────────────────────────────────────────────────────────────
-async function verifyTikTok(username) {
+// TikTok's internal /api/user/detail/ requires signed requests BrightData can't
+// produce (empty body returned). Scrape the profile page HTML instead — TikTok
+// embeds full user data in __UNIVERSAL_DATA_FOR_REHYDRATION__ or __NEXT_DATA__.
+// cookieRaw: optional TikTok session cookie string (sent via BrightData Web Unlocker
+// with "Custom headers & cookies" enabled — allows TikTok to see a logged-in session
+// instead of an anonymous bot request, which results in proper HTML being served).
+async function verifyTikTok(username, cookieRaw) {
+  const ttHeaders = {
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'accept-language': 'en-US,en;q=0.9',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-site': 'none',
+    'upgrade-insecure-requests': '1',
+    ...(cookieRaw ? { 'cookie': cookieRaw } : {}),
+  };
+
+  // Use Web Unlocker (bdFetch) with cookie forwarded — requires "Custom headers & cookies"
+  // to be enabled in the BrightData influencer_proxy1 zone Advanced settings.
+  let resp = null;
   try {
-    const resp = await bdFetch(
-      `https://www.tiktok.com/api/user/detail/?uniqueId=${encodeURIComponent(username)}&aid=1988&app_language=en&app_name=tiktok_web`,
-      {
-        'accept': 'application/json, text/plain, */*',
-        'referer': 'https://www.tiktok.com/',
-      }
-    );
-    if (resp.status === 401 || resp.status === 403) return { ok: false, reason: 'cookie_expired' };
+    resp = await bdFetch(`https://www.tiktok.com/@${encodeURIComponent(username)}`, ttHeaders, 30000);
+    const ct = resp.headers?.get?.('content-type') || 'none';
+    console.log(`[tt-verify] @${username} status=${resp.status} ct=${ct} cookie=${cookieRaw ? 'yes' : 'no'}`);
+  } catch (bdErr) {
+    const cause = bdErr.cause?.message || bdErr.cause?.code || '';
+    console.log(`[tt-verify] @${username} error: ${bdErr.message}${cause ? ' cause=' + cause : ''}`);
+    return { ok: false, reason: bdErr.message };
+  }
+
+  try {
     if (resp.status === 404) return { ok: false, reason: 'not_found' };
     if (!resp.ok) return { ok: false, reason: `http_${resp.status}` };
-    const json = await resp.json();
-    const user  = json?.userInfo?.user;
-    const stats = json?.userInfo?.stats;
-    if (!user) return { ok: false, reason: 'no_user_data' };
+
+    const html = await resp.text();
+    if (!html || html.length < 200) {
+      console.log(`[tt-verify] @${username} empty body (${html?.length || 0}b)`);
+      return { ok: false, reason: 'empty_response' };
+    }
+    console.log(`[tt-verify] @${username} body=${html.length}b starts=${html.slice(0, 120).replace(/\s+/g, ' ')}`);
+
+
+    let user = null, stats = null;
+
+    // Newer TikTok: __UNIVERSAL_DATA_FOR_REHYDRATION__
+    const udrM = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+    if (udrM) {
+      try {
+        const udr = JSON.parse(udrM[1]);
+        const scope = udr?.['__DEFAULT_SCOPE__'] || {};
+        const detail = scope['webapp.user-detail'] || scope['user-detail'] || {};
+        const info = detail?.userInfo || detail;
+        user  = info?.user  || null;
+        stats = info?.stats || null;
+      } catch {}
+    }
+
+    // Older TikTok: __NEXT_DATA__
+    if (!user) {
+      const nextM = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      if (nextM) {
+        try {
+          const next = JSON.parse(nextM[1]);
+          const info = next?.props?.pageProps?.userInfo;
+          user  = info?.user  || null;
+          stats = info?.stats || null;
+        } catch {}
+      }
+    }
+
+    if (!user) {
+      // Log a snippet to aid future debugging without spamming
+      const snippet = html.slice(0, 300).replace(/\s+/g, ' ');
+      console.log(`[tt-verify] @${username} no user data (${html.length}b). snippet: ${snippet}`);
+      return { ok: false, reason: 'no_user_data' };
+    }
+
     return {
-      ok: true,
-      followers:  String(stats?.followerCount ?? ''),
+      ok:         true,
+      followers:  String(stats?.followerCount ?? stats?.fans ?? ''),
       bio:        user.signature || '',
-      fullName:   user.nickname || '',
+      fullName:   user.nickname  || '',
       isPrivate:  !!user.privateAccount,
       isVerified: !!user.verified,
       postCount:  String(stats?.videoCount ?? ''),
     };
   } catch (e) {
+    const cause = e.cause?.message || e.cause?.code || e.cause?.toString() || '';
+    console.log(`[tt-verify] @${username} error: ${e.message}${cause ? ' cause=' + cause : ''}`);
     return { ok: false, reason: e.name === 'AbortError' ? 'timeout' : e.message };
   }
 }
@@ -217,6 +307,12 @@ export default async function handler(req, res) {
   if ((req.body || {}).action === 'bd-search-status') {
     return handleBdSearchStatus(req, res);
   }
+  if ((req.body || {}).action === 'bd-scan-posts') {
+    return handleBdScanPosts(req, res);
+  }
+  if ((req.body || {}).action === 'bd-reenrich') {
+    return handleBdReenrich(req, res);
+  }
 
   const { platform, handles } = req.body || {};
   const PLATFORMS = ['instagram', 'tiktok', 'youtube', 'x'];
@@ -284,43 +380,85 @@ function updateProgress(searchId, patch) {
   searchProgress.set(searchId, { ...prev, ...patch, lastUpdate: Date.now() });
 }
 
-async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}, scanRecentFeed = false) {
+async function igHashtagSearch(keyword, sessionCookies, onProgress = () => {}) {
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
 
-  if (!sessionCookie) {
+  // Accept a single cookie string or an array; filter empties
+  const cookies = (Array.isArray(sessionCookies) ? sessionCookies : [sessionCookies]).filter(Boolean);
+  if (!cookies.length) {
     throw new Error('Instagram session cookie required. Paste your sessionid= cookie in the search panel.');
   }
 
-  const cookieHeader = sessionCookie.includes('sessionid=') ? sessionCookie : `sessionid=${sessionCookie}`;
-  const csrfMatch = cookieHeader.match(/csrftoken=([^;]+)/);
-  const csrfToken = csrfMatch ? csrfMatch[1].trim() : '';
+  const PAGES_PER_COOKIE = 3; // rotate to next account every N pagination pages
+  const MAX_PAGES        = 15;
+
+  function buildCookieHeader(raw) {
+    return raw.includes('sessionid=') ? raw : `sessionid=${raw}`;
+  }
+  function csrfFor(raw) {
+    const m = buildCookieHeader(raw).match(/csrftoken=([^;]+)/);
+    return m ? m[1].trim() : '';
+  }
+  // Which cookie to use for a given pagination page (1-based)
+  function cookieForPage(pageNum) {
+    return cookies[Math.floor((pageNum - 1) / PAGES_PER_COOKIE) % cookies.length];
+  }
+  // Which cookie to use for the i-th profile enrichment (0-based)
+  function cookieForEnrich(i) {
+    return cookies[i % cookies.length];
+  }
 
   // Human-like jittered delay: returns a Promise that resolves after random ms in [minMs, maxMs]
   const sleep = (minMs, maxMs) => new Promise(r => setTimeout(r, minMs + Math.random() * (maxMs - minMs)));
 
-  // Direct fetch (not BrightData) — BrightData strips cookies; home/office IPs not blocked
+  // Routing priority for cookie-authenticated calls:
+  //   1. BrightData residential proxy (BRIGHTDATA_PROXY_URL set) — raw TCP tunnel, cookies pass through intact
+  //   2. Direct fetch from local IP (fallback)
+  // NOTE: Web Unlocker is intentionally skipped here — it manages its own sessions and strips/overrides
+  // our cookie header, causing Instagram to see an unauthenticated request and return HTML.
+  const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
+  const proxyDispatcher = proxyUrl ? new ProxyAgent({
+    uri: proxyUrl,
+    requestTls: { rejectUnauthorized: false },
+    proxyTls:   { rejectUnauthorized: false },
+  }) : null;
+
+  if (proxyDispatcher) console.log('[ig-search] routing via BrightData residential proxy');
+  else                 console.log('[ig-search] routing direct (no proxy configured)');
+
+  let callCount = 0;
+
+  // Build request headers for a specific raw cookie string
+  const igHeaders = (cookieRaw, extraHeaders = {}) => ({
+    'x-ig-app-id': '936619743392459',
+    'x-csrftoken': csrfFor(cookieRaw),
+    'x-requested-with': 'XMLHttpRequest',
+    'accept': 'application/json',
+    'accept-language': 'en-US,en;q=0.9',
+    'referer': 'https://www.instagram.com/explore/tags/' + tag + '/',
+    'origin': 'https://www.instagram.com',
+    'sec-fetch-site': 'same-origin',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-dest': 'empty',
+    'cookie': buildCookieHeader(cookieRaw),
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    ...extraHeaders,
+  });
+
+  // opts.cookieRaw overrides which account's cookie is used for this call
   async function igDirect(url, opts = {}) {
+    callCount++;
+    const cookieRaw = opts.cookieRaw || cookies[0];
+    const headers = igHeaders(cookieRaw, opts.headers || {});
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 20000);
+    const t = setTimeout(() => ctrl.abort(), 30000);
+    const fetcher = proxyDispatcher ? undiciFetch : fetch;
     try {
-      return await fetch(url, {
+      return await fetcher(url, {
         method: opts.method || 'GET',
         body: opts.body,
-        headers: {
-          'x-ig-app-id': '936619743392459',
-          'x-csrftoken': csrfToken,
-          'x-requested-with': 'XMLHttpRequest',
-          'accept': 'application/json',
-          'accept-language': 'en-US,en;q=0.9',
-          'referer': 'https://www.instagram.com/explore/tags/' + tag + '/',
-          'origin': 'https://www.instagram.com',
-          'sec-fetch-site': 'same-origin',
-          'sec-fetch-mode': 'cors',
-          'sec-fetch-dest': 'empty',
-          'cookie': cookieHeader,
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          ...(opts.headers || {}),
-        },
+        headers,
+        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
         signal: ctrl.signal,
       });
     } finally { clearTimeout(t); }
@@ -329,8 +467,8 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}, sc
   // Step 1: fetch hashtag top posts via web_info
   // Verified working: returns data.top.sections[].layout_content.medias[].media.user
   // user fields: pk, username, full_name, is_verified (no follower_count here)
-  onProgress({ phase: 'fetching-page', page: 1, current: 0, total: 0 });
-  const infoResp = await igDirect(`https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`);
+  onProgress({ phase: 'fetching-page', page: 1, current: 0, total: 0, cookieIdx: 0 });
+  const infoResp = await igDirect(`https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`, { cookieRaw: cookieForPage(1) });
   const infoText = await infoResp.text();
   console.log(`[ig-search] web_info status=${infoResp.status} len=${infoText.length}`);
 
@@ -339,7 +477,8 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}, sc
 
   let infoJson;
   try { infoJson = JSON.parse(infoText); } catch (_) {
-    throw new Error(`Instagram returned non-JSON (${infoResp.status}): ${infoText.slice(0, 300)}`);
+    // Instagram serving HTML = IP/session blocked. Give a clear actionable message.
+    throw new Error(`Instagram is blocking requests from this session — wait 1–2 hours, refresh your session cookie, and try again`);
   }
 
   // Extract every media object (with user) from a section's layout_content.
@@ -393,97 +532,86 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}, sc
   onProgress({ phase: 'paginating', page: 1, current: userStubs.length, total: userStubs.length });
 
   // Pages 2+: paginate via /api/v1/tags/{tag}/sections/ POST
-  // Cap at 5 pages (~150 authors) with 2-4s human-like delays between pages
-  const MAX_PAGES = 5;
+  // Rotate cookie every PAGES_PER_COOKIE pages to spread session load across accounts
   let nextMaxId = topRoot.next_max_id;
   let nextPage = topRoot.next_page;
   let moreAvailable = !!topRoot.more_available;
 
+  let paginationStopReason = 'reached MAX_PAGES limit';
   for (let p = 2; p <= MAX_PAGES && moreAvailable && nextMaxId; p++) {
-    onProgress({ phase: 'fetching-page', page: p, current: userStubs.length, total: userStubs.length });
+    const baseCookieIdx = Math.floor((p - 1) / PAGES_PER_COOKIE) % cookies.length;
+    onProgress({ phase: 'fetching-page', page: p, current: userStubs.length, total: userStubs.length, cookieIdx: baseCookieIdx });
     await sleep(2000, 4000); // mimic scroll pause
-    try {
-      const body = new URLSearchParams({
-        include_persistent: 'true',
-        max_id: nextMaxId,
-        page: String(nextPage ?? p - 1),
-        surface: 'grid',
-        tab: 'top',
-      }).toString();
 
-      const r = await igDirect(`https://www.instagram.com/api/v1/tags/${encodeURIComponent(tag)}/sections/`, {
-        method: 'POST',
-        body,
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      });
-      if (!r.ok) { console.log(`[ig-search] page ${p} HTTP ${r.status}, stopping pagination`); break; }
-      const j = await r.json().catch(() => null);
-      if (!j) { console.log(`[ig-search] page ${p} non-JSON, stopping`); break; }
+    const body = new URLSearchParams({
+      include_persistent: 'true',
+      max_id: nextMaxId,
+      page: String(nextPage ?? p - 1),
+      surface: 'grid',
+      tab: 'top',
+    }).toString();
 
-      const added = harvestSections(j.sections);
-      moreAvailable = !!j.more_available;
-      nextMaxId = j.next_max_id;
-      nextPage = j.next_page;
-      console.log(`[ig-search] page ${p}: +${added} new authors (total ${userStubs.length})`);
-      onProgress({ phase: 'paginating', page: p, current: userStubs.length, total: userStubs.length });
-      if (added === 0) break; // no new uniques — stop early
-    } catch (e) {
-      console.log(`[ig-search] page ${p} error: ${e.message}, stopping`);
-      break;
+    // Try each cookie in round-robin order until one succeeds (handles 502/429 per account)
+    let r = null, pageCookieIdx = baseCookieIdx;
+    for (let attempt = 0; attempt < cookies.length; attempt++) {
+      pageCookieIdx = (baseCookieIdx + attempt) % cookies.length;
+      const acctTry = cookies.length > 1 ? ` [acct ${pageCookieIdx + 1}/${cookies.length}]` : '';
+      try {
+        r = await igDirect(`https://www.instagram.com/api/v1/tags/${encodeURIComponent(tag)}/sections/`, {
+          method: 'POST', body, cookieRaw: cookies[pageCookieIdx],
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        });
+        if (r.ok) break; // success — use this response
+        console.log(`[ig-search] page ${p}${acctTry} HTTP ${r.status}${attempt < cookies.length - 1 ? ', retrying with next account…' : ', no more accounts to try'}`);
+        r = null;
+        if (attempt < cookies.length - 1) await sleep(1000, 2000);
+      } catch (e) {
+        console.log(`[ig-search] page ${p}${acctTry} error: ${e.message}${attempt < cookies.length - 1 ? ', retrying…' : ''}`);
+        r = null;
+      }
     }
+
+    if (!r) { paginationStopReason = 'all accounts failed on page ' + p; break; }
+
+    const j = await r.json().catch(() => null);
+    if (!j) { console.log(`[ig-search] page ${p} non-JSON response, stopping`); paginationStopReason = 'non-JSON response'; break; }
+
+    const acctTag = cookies.length > 1 ? ` [acct ${pageCookieIdx + 1}/${cookies.length}]` : '';
+    const added = harvestSections(j.sections);
+    moreAvailable = !!j.more_available;
+    nextMaxId = j.next_max_id;
+    nextPage = j.next_page;
+    console.log(`[ig-search] page ${p}${acctTag}: +${added} new authors (total ${userStubs.length})`);
+    onProgress({ phase: 'paginating', page: p, current: userStubs.length, total: userStubs.length, cookieIdx: pageCookieIdx });
+    if (!moreAvailable) { paginationStopReason = 'Instagram more_available=false'; }
+    if (!nextMaxId)      { paginationStopReason = 'no next_max_id cursor'; }
+    if (added === 0)     { paginationStopReason = '0 new unique authors'; break; }
   }
+
+  console.log(`[ig-search] pagination done — ${paginationStopReason} · ${userStubs.length} unique authors collected`);
 
   if (userStubs.length === 0) return [];
 
   // Step 2: enrich each author with follower_count + biography via /api/v1/users/{pk}/info/
   // Sequential with 600-1400ms jittered delay (mimics human profile browsing)
-  // Slower than parallel but far safer for sustained use
-  async function fetchProfile(stub) {
+  // Rotates through cookie pool per profile to spread enrichment load across accounts
+  async function fetchProfile(stub, cookieRaw) {
     try {
-      const r = await igDirect(`https://www.instagram.com/api/v1/users/${stub.pk}/info/`);
+      const r = await igDirect(`https://www.instagram.com/api/v1/users/${stub.pk}/info/`, { cookieRaw });
       if (!r.ok) return null;
-      const j = await r.json().catch(() => null);
+      const bodyText = await r.text().catch(() => '');
+      let j;
+      try { j = JSON.parse(bodyText); } catch (_) {
+        // Instagram returned HTML — rate-limited or IP-blocked on this endpoint
+        return { __rateLimited: true };
+      }
       const u = j?.user;
       if (!u) return null;
 
-      // Optionally scan recent feed and merge new posts (dedup by pk).
-      if (scanRecentFeed) {
-        await sleep(600, 1400); // human-paced gap between profile and feed call
-        try {
-          const fr = await igDirect(`https://www.instagram.com/api/v1/feed/user/${stub.pk}/?count=12`);
-          if (fr.ok) {
-            const fj = await fr.json().catch(() => null);
-            const items = fj?.items || [];
-            const existing = userPosts.get(stub.username) || [];
-            const seenPks = new Set(existing.map(p => p.pk).filter(Boolean));
-            for (const m of items) {
-              const pk = m.pk || m.id;
-              if (pk && seenPks.has(pk)) continue;
-              if (pk) seenPks.add(pk);
-              existing.push({
-                pk,
-                likes:    Number(m.like_count    ?? 0),
-                comments: Number(m.comment_count ?? 0),
-                taken_at: m.taken_at,
-                caption:  (m.caption?.text || '').slice(0, 800),
-                location: m.location?.name || '',
-              });
-            }
-            userPosts.set(stub.username, existing);
-          }
-        } catch (_) { /* feed call failed — keep going with hashtag-only data */ }
-      }
-
-      // Engagement still measured against the hashtag-matching posts to keep
-      // the metric topical. (Recent feed posts inflate likes/comments with
-      // off-topic content and would skew the ER comparison.)
-      const allPosts      = userPosts.get(stub.username) || [];
-      const hashtagOnly   = allPosts.filter(p => p.pk == null || !p.fromFeed);  // all current entries qualify
-      // For now treat every captured post as hashtag-derived unless scanRecentFeed adds non-hashtag ones.
-      // (We approximate by counting captions captured during pagination phase.)
-      const postsCount    = hashtagOnly.length;
-      const totalLikes    = hashtagOnly.reduce((s, p) => s + (p.likes    || 0), 0);
-      const totalComments = hashtagOnly.reduce((s, p) => s + (p.comments || 0), 0);
+      const allPosts   = userPosts.get(stub.username) || [];
+      const postsCount = allPosts.length;
+      const totalLikes    = allPosts.reduce((s, p) => s + (p.likes    || 0), 0);
+      const totalComments = allPosts.reduce((s, p) => s + (p.comments || 0), 0);
       const avgLikes    = postsCount ? Math.round(totalLikes    / postsCount) : 0;
       const avgComments = postsCount ? Math.round(totalComments / postsCount) : 0;
       const followers   = Number(u.follower_count) || 0;
@@ -497,6 +625,7 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}, sc
 
       return {
         handle:         u.username || stub.username,
+        pk:             String(stub.pk),
         fullName:       u.full_name || stub.full_name,
         followers:      String(u.follower_count ?? ''),
         bio:            u.biography || '',
@@ -514,101 +643,357 @@ async function igHashtagSearch(keyword, sessionCookie, onProgress = () => {}, sc
     } catch (_) { return null; }
   }
 
-  const profiles = [];
-  const enrichPhase = scanRecentFeed ? 'enriching+feed' : 'enriching';
-  onProgress({ phase: enrichPhase, current: 0, total: userStubs.length });
-  for (let i = 0; i < userStubs.length; i++) {
-    const result = await fetchProfile(userStubs[i]);
-    if (result) profiles.push(result);
-    onProgress({ phase: enrichPhase, current: i + 1, total: userStubs.length });
-    if (i < userStubs.length - 1) await sleep(600, 1400);
-    if ((i + 1) % 20 === 0) console.log(`[ig-search] enriched ${i + 1}/${userStubs.length}${scanRecentFeed ? ' (with feed scan)' : ''}`);
+  function stubProfile(s) {
+    const ap = userPosts.get(s.username) || [];
+    const pc = ap.length;
+    const tl = ap.reduce((sum, p) => sum + (p.likes    || 0), 0);
+    const tc = ap.reduce((sum, p) => sum + (p.comments || 0), 0);
+    return {
+      handle: s.username, pk: String(s.pk), fullName: s.full_name || '',
+      followers: '', bio: '', isVerified: !!s.is_verified, postCount: '',
+      profileUrl: `https://www.instagram.com/${s.username}/`,
+      rawPlatform: 'instagram', hashtagPosts: pc,
+      avgLikes: pc ? Math.round(tl / pc) : 0, avgComments: pc ? Math.round(tc / pc) : 0,
+      engagementRate: 0,
+      postCaptions: ap.map(p => p.caption).filter(Boolean),
+      postLocations: [...new Set(ap.map(p => p.location).filter(Boolean))],
+    };
   }
 
-  console.log(`[ig-search] #${tag} → ${profiles.length} profiles with follower counts`);
+  const profiles = [];
+  let rateLimitedCount = 0;
+  onProgress({ phase: 'enriching', current: 0, total: userStubs.length, cookieIdx: 0 });
+  for (let i = 0; i < userStubs.length; i++) {
+    const stub = userStubs[i];
+    const enrichCookieIdx = i % cookies.length;
+    const result = await fetchProfile(stub, cookieForEnrich(i));
+    if (result && !result.__rateLimited) {
+      profiles.push(result);
+    } else {
+      if (result?.__rateLimited) rateLimitedCount++;
+      if (rateLimitedCount >= 3 && i < 5) {
+        console.log(`[ig-search] enrichment blocked (HTML responses) — returning stubs only`);
+        onProgress({ phase: 'enriching', current: userStubs.length, total: userStubs.length, enrichmentBlocked: true });
+        for (let j = i; j < userStubs.length; j++) profiles.push(stubProfile(userStubs[j]));
+        break;
+      }
+      profiles.push(stubProfile(stub));
+    }
+    onProgress({ phase: 'enriching', current: i + 1, total: userStubs.length, cookieIdx: enrichCookieIdx });
+    if (i < userStubs.length - 1) await sleep(600, 1400);
+    if ((i + 1) % 20 === 0) console.log(`[ig-search] enriched ${i + 1}/${userStubs.length}`);
+  }
+
+  console.log(`[ig-search] #${tag} → ${profiles.length} profiles (${profiles.filter(p => p.followers).length} fully enriched, ${callCount} API calls)`);
+  return { profiles, callCount };
+}
+
+// ── TikTok Research API ────────────────────────────────────────────────────
+// Requires TIKTOK_CLIENT_KEY + TIKTOK_CLIENT_SECRET from developers.tiktok.com
+// → My Apps → Add product → Research API
+async function ttResearchHashtagSearch(keyword, onProgress) {
+  const clientKey    = process.env.TIKTOK_CLIENT_KEY;
+  const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
+
+  // 1. Client-credentials token
+  const tokenResp = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Cache-Control': 'no-cache' },
+    body: new URLSearchParams({ client_key: clientKey, client_secret: clientSecret, grant_type: 'client_credentials' }),
+  });
+  const tokenData = await tokenResp.json();
+  if (!tokenData.access_token) throw new Error(`TikTok token error: ${JSON.stringify(tokenData)}`);
+  const token = tokenData.access_token;
+
+  // 2. Query videos by hashtag (last 90 days, up to 100 results)
+  const tag = keyword.replace(/^#/, '').trim();
+  const toDate   = new Date();
+  const fromDate = new Date(toDate - 90 * 24 * 60 * 60 * 1000);
+  const fmt = d => d.toISOString().slice(0, 10).replace(/-/g, '');
+
+  onProgress({ phase: 'searching', current: 0, total: 100 });
+  const fields = 'id,username,region_code,video_description,like_count,comment_count,share_count,view_count';
+  const queryResp = await fetch(`https://open.tiktokapis.com/v2/research/video/query/?fields=${fields}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: { and: [{ operation: 'IN', field_name: 'hashtag_name', field_values: [tag] }] },
+      start_date: fmt(fromDate),
+      end_date:   fmt(toDate),
+      max_count:  100,
+    }),
+  });
+  const queryData = await queryResp.json();
+  const videos = queryData?.data?.videos || [];
+  console.log(`[tt-research] hashtag="${tag}" → ${videos.length} videos`);
+
+  // 3. Deduplicate authors then fetch each user's profile
+  const handles = [...new Set(videos.map(v => v.username).filter(Boolean))];
+  onProgress({ phase: 'enriching', current: 0, total: handles.length });
+
+  const userFields = 'display_name,bio_description,is_verified,follower_count,following_count,likes_count,video_count';
+  const profiles = [];
+  for (let i = 0; i < handles.length; i++) {
+    const handle = handles[i];
+    try {
+      const uResp = await fetch(`https://open.tiktokapis.com/v2/research/user/info/?fields=${userFields}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: handle }),
+      });
+      const uData = await uResp.json();
+      const u = uData?.data?.user_info || uData?.data;
+      if (u) {
+        profiles.push({
+          handle,
+          fullName:   u.display_name  || '',
+          followers:  String(u.follower_count ?? ''),
+          bio:        u.bio_description || '',
+          isVerified: !!u.is_verified,
+          postCount:  String(u.video_count ?? ''),
+          profileUrl: `https://www.tiktok.com/@${handle}`,
+          rawPlatform: 'tiktok',
+        });
+      }
+    } catch (_) {}
+    onProgress({ phase: 'enriching', current: i + 1, total: handles.length });
+    if (i < handles.length - 1) await new Promise(r => setTimeout(r, 200));
+  }
+  console.log(`[tt-research] "${tag}" → ${profiles.length} creator profiles`);
   return profiles;
 }
 
-async function ttHashtagSearch(keyword) {
-  const base = keyword.replace(/^#/, '').toLowerCase().replace(/\s+/g, '').trim();
-  const candidates = [...new Set([
-    base,
-    `the${base}`,
-    `london${base}`,
-    `uk${base}`,
-    `real${base}`,
-    `${base}uk`,
-    `${base}london`,
-    `${base}ldn`,
-    `${base}blog`,
-    `${base}blogger`,
-    `${base}guide`,
-    `${base}diaries`,
-    `${base}diary`,
-    `${base}lover`,
-    `${base}gram`,
-    `${base}official`,
-    `${base}daily`,
-    `${base}collective`,
-  ])];
+// ── TikTok via Apify scraper ───────────────────────────────────────────────
+// Requires APIFY_API_TOKEN from console.apify.com
+// Uses the clockworks/tiktok-scraper actor — searches by hashtag and returns
+// video list with full author metadata (follower count, bio, etc.)
+async function ttApifyHashtagSearch(keyword, onProgress) {
+  const token  = process.env.APIFY_API_TOKEN;
+  const tag    = keyword.replace(/^#/, '').trim();
 
-  console.log(`[tt-search] probing ${candidates.length} handle candidates for "${keyword}"`);
+  // 1. Start actor run
+  const runResp = await fetch(
+    `https://api.apify.com/v2/acts/clockworks~tiktok-scraper/runs?token=${token}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hashtags:                [tag],
+        resultsPerPage:          100,
+        shouldDownloadVideos:    false,
+        shouldDownloadCovers:    false,
+        shouldDownloadSubtitles: false,
+        shouldDownloadSlideshowImages: false,
+      }),
+    }
+  );
+  const runData = await runResp.json();
+  const runId   = runData?.data?.id;
+  const datasetId = runData?.data?.defaultDatasetId;
+  if (!runId) throw new Error(`Apify run failed to start: ${JSON.stringify(runData)}`);
+  console.log(`[tt-apify] run started runId=${runId} hashtag="${tag}"`);
+
+  // 2. Poll until finished (SUCCEEDED / FAILED / ABORTED / TIMED-OUT)
+  const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT']);
+  let attempts = 0;
+  while (attempts++ < 60) {
+    await new Promise(r => setTimeout(r, 5000));
+    const sResp  = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
+    const sData  = await sResp.json();
+    const status = sData?.data?.status;
+    const itemCount = sData?.data?.stats?.itemCount ?? 0;
+    console.log(`[tt-apify] run=${runId} status=${status} items=${itemCount}`);
+    onProgress({ phase: 'searching', current: Math.min(itemCount, 100), total: 100 });
+    if (status === 'SUCCEEDED') break;
+    if (TERMINAL.has(status)) throw new Error(`Apify run ${status}`);
+  }
+
+  // 3. Fetch dataset items
+  const itemsResp = await fetch(
+    `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&clean=true`
+  );
+  const items = await itemsResp.json();
+  console.log(`[tt-apify] dataset=${datasetId} → ${items.length} video items`);
+
+  // 4. Group videos by author, aggregate engagement metrics in one pass
+  // Each Apify item already has full author metadata + per-video stats — no
+  // separate enrichment step needed (unlike Instagram which requires extra calls).
+  const authorVideos = new Map(); // handle → { meta, videos[] }
+  for (const item of items) {
+    const handle = item.authorMeta?.name || item.author?.uniqueId;
+    if (!handle) continue;
+    const key = handle.toLowerCase();
+    if (!authorVideos.has(key)) authorVideos.set(key, { meta: item.authorMeta || {}, videos: [] });
+    authorVideos.get(key).videos.push({
+      caption:  item.text || item.desc || '',
+      likes:    item.diggCount    ?? item.stats?.diggCount    ?? 0,
+      comments: item.commentCount ?? item.stats?.commentCount ?? 0,
+      shares:   item.shareCount   ?? item.stats?.shareCount   ?? 0,
+      views:    item.playCount    ?? item.stats?.playCount    ?? 0,
+      // Location tagging is rare on TikTok — capture when present
+      location: item.locationCreated?.city || item.locationCreated?.country || '',
+    });
+  }
 
   const profiles = [];
-  for (const handle of candidates) {
-    const r = await verifyTikTok(handle);
-    console.log(`[tt-search] @${handle} → ok=${r.ok} followers=${r.followers} reason=${r.reason||''}`);
-    if (r.ok) {
-      profiles.push({
-        handle,
-        fullName:   r.fullName || '',
-        followers:  r.followers || '',
-        bio:        r.bio || '',
-        isVerified: !!(r.isVerified),
-        postCount:  r.postCount || '',
-        profileUrl: `https://www.tiktok.com/@${handle}`,
-        rawPlatform: 'tiktok',
-      });
-    }
+  for (const [, { meta, videos }] of authorVideos) {
+    const handle = meta.name || meta.uniqueId;
+    if (!handle) continue;
+
+    const totalLikes    = videos.reduce((s, v) => s + v.likes,    0);
+    const totalComments = videos.reduce((s, v) => s + v.comments, 0);
+    const totalViews    = videos.reduce((s, v) => s + v.views,    0);
+    const avgLikes      = videos.length ? Math.round(totalLikes    / videos.length) : 0;
+    const avgComments   = videos.length ? Math.round(totalComments / videos.length) : 0;
+    const avgViews      = videos.length ? Math.round(totalViews    / videos.length) : 0;
+    const followers     = Number(meta.fans ?? meta.followerCount ?? 0);
+    const engagementRate = followers > 0
+      ? Math.round(((avgLikes + avgComments) / followers) * 10000) / 100
+      : 0;
+
+    profiles.push({
+      handle,
+      fullName:      meta.nickName  || meta.nickname || '',
+      followers:     String(followers || ''),
+      bio:           meta.signature || '',
+      isVerified:    !!(meta.verified),
+      postCount:     String(meta.video ?? meta.videoCount ?? ''),
+      profileUrl:    `https://www.tiktok.com/@${handle}`,
+      rawPlatform:   'tiktok',
+      hashtagPosts:  videos.length,
+      avgLikes,
+      avgComments,
+      avgViews,
+      engagementRate,
+      postCaptions:  videos.map(v => v.caption).filter(Boolean),
+      // postLocations: sparse on TikTok — video location tags are rarely set.
+      // creatorRegion is the reliable alternative (author's registered country).
+      postLocations:  [...new Set(videos.map(v => v.location).filter(Boolean))],
+      creatorRegion:  meta.region || meta.country || '',
+    });
   }
-  console.log(`[tt-search] "${keyword}" → ${profiles.length} real accounts found`);
+  console.log(`[tt-apify] "${tag}" → ${profiles.length} unique creators (with post data)`);
   return profiles;
+}
+
+// ── TikTok search router ───────────────────────────────────────────────────
+// Priority: Research API → Apify → nothing (BrightData KYC not completed)
+async function ttHashtagSearch(keyword, onProgress) {
+  const hasResearch = process.env.TIKTOK_CLIENT_KEY && process.env.TIKTOK_CLIENT_SECRET;
+  const hasApify    = !!process.env.APIFY_API_TOKEN;
+
+  if (hasResearch) {
+    console.log(`[tt-search] routing via TikTok Research API`);
+    return ttResearchHashtagSearch(keyword, onProgress);
+  }
+  if (hasApify) {
+    console.log(`[tt-search] routing via Apify`);
+    return ttApifyHashtagSearch(keyword, onProgress);
+  }
+  console.log(`[tt-search] no TikTok backend configured — set APIFY_API_TOKEN or TIKTOK_CLIENT_KEY+SECRET in .env.local`);
+  return [];
+}
+
+// Robustly extract a balanced JSON object starting at `startPos` in `html`.
+// Avoids regex which breaks when the JSON contains }; inside string values.
+function extractBalancedJson(html, startPos) {
+  let depth = 0, inString = false, escape = false;
+  for (let i = startPos; i < html.length; i++) {
+    const c = html[i];
+    if (escape)           { escape = false; continue; }
+    if (c === '\\' && inString) { escape = true;  continue; }
+    if (c === '"')        { inString = !inString; continue; }
+    if (inString)         continue;
+    if (c === '{')        depth++;
+    else if (c === '}') { if (--depth === 0) return html.slice(startPos, i + 1); }
+  }
+  throw new Error('Unterminated JSON object');
 }
 
 async function ytKeywordSearch(keyword) {
-  // YouTube search page embeds ytInitialData server-side — parse it directly
-  const resp = await bdFetch(
-    `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIQAg%3D%3D`,
-    {
-      'accept': 'text/html,application/xhtml+xml',
-      'accept-language': 'en-US,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-    30000
-  );
+  // YouTube search page embeds ytInitialData server-side — parse it directly.
+  // Use direct fetch (no BrightData proxy) — YouTube is public and proxy adds latency.
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30000);
+  let resp;
+  try {
+    resp = await fetch(
+      `https://www.youtube.com/results?search_query=${encodeURIComponent(keyword)}&sp=EgIQAg%3D%3D`,
+      {
+        headers: {
+          'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'accept-language': 'en-US,en;q=0.9',
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        signal: ctrl.signal,
+      }
+    );
+  } finally { clearTimeout(t); }
+
   if (!resp.ok) throw new Error(`YouTube search HTTP ${resp.status}`);
   const html = await resp.text();
-  const m = html.match(/var ytInitialData\s*=\s*(\{.+?\});\s*<\/script>/s);
-  if (!m) throw new Error('YouTube: could not find ytInitialData in page');
-  const data = JSON.parse(m[1]);
-  const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
-    ?.sectionListRenderer?.contents || [];
-  const profiles = [];
-  for (const section of contents) {
-    for (const item of (section?.itemSectionRenderer?.contents || [])) {
-      const ch = item?.channelRenderer;
-      if (!ch) continue;
-      profiles.push({
-        handle:     ch.channelId || '',
-        fullName:   ch.title?.simpleText || '',
-        followers:  (ch.subscriberCountText?.simpleText || '').replace(/\s*subscribers?/i, '').trim(),
-        bio:        ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
-        isVerified: !!(ch.ownerBadges?.some(b => b?.metadataBadgeRenderer?.style === 'BADGE_STYLE_TYPE_VERIFIED')),
-        postCount:  ch.videoCountText?.runs?.map(r => r.text).join('') || '',
-        profileUrl: `https://www.youtube.com/channel/${ch.channelId}`,
-        rawPlatform: 'youtube',
-      });
+  console.log(`[yt-search] page fetched (${html.length}b)`);
+
+  // Locate ytInitialData — try multiple markers YouTube has used over time
+  const MARKERS = ['var ytInitialData = ', 'window["ytInitialData"] = ', 'ytInitialData = '];
+  let data = null;
+  for (const marker of MARKERS) {
+    const idx = html.indexOf(marker);
+    if (idx === -1) continue;
+    try {
+      const jsonStr = extractBalancedJson(html, idx + marker.length);
+      data = JSON.parse(jsonStr);
+      break;
+    } catch (e) {
+      console.log(`[yt-search] marker "${marker.trim()}" parse failed: ${e.message}`);
     }
+  }
+  if (!data) throw new Error('YouTube: could not find/parse ytInitialData in page');
+
+  // Collect all channelRenderer objects anywhere in the page tree
+  const channels = [];
+  function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.channelRenderer) channels.push(node.channelRenderer);
+    for (const v of Object.values(node)) {
+      if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === 'object') walk(v);
+    }
+  }
+  walk(data);
+
+  const profiles = [];
+  const seen = new Set();
+  for (const ch of channels) {
+    const channelId = ch.channelId || ch.navigationEndpoint?.browseEndpoint?.browseId || '';
+    if (!channelId || seen.has(channelId)) continue;
+    seen.add(channelId);
+
+    // Prefer @handle from canonicalBaseUrl (e.g. "/@FoodChannel") over raw channel ID
+    const canonicalUrl = ch.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl || '';
+    const atMatch = canonicalUrl.match(/^\/@(.+)$/);
+    const handle = atMatch ? atMatch[1] : channelId;
+
+    const subText = ch.subscriberCountText?.simpleText
+      || ch.subscriberCountText?.runs?.map(r => r.text).join('')
+      || '';
+    const profileUrl = canonicalUrl
+      ? `https://www.youtube.com${canonicalUrl}`
+      : `https://www.youtube.com/channel/${channelId}`;
+
+    profiles.push({
+      handle,
+      fullName:    ch.title?.simpleText || ch.title?.runs?.map(r => r.text).join('') || '',
+      followers:   subText.replace(/\s*subscribers?/i, '').trim(),
+      bio:         ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
+      isVerified:  !!(ch.ownerBadges?.some(b =>
+        b?.metadataBadgeRenderer?.style?.includes('VERIFIED') ||
+        b?.metadataBadgeRenderer?.icon?.iconType === 'CHECK_CIRCLE_THICK'
+      )),
+      postCount:   ch.videoCountText?.runs?.map(r => r.text).join('') || ch.videoCountText?.simpleText || '',
+      profileUrl,
+      rawPlatform: 'youtube',
+    });
   }
   console.log(`[yt-search] "${keyword}" → ${profiles.length} channels`);
   return profiles;
@@ -660,15 +1045,18 @@ async function handleBdSearch(req, res) {
   const token = process.env.BRIGHTDATA_API_TOKEN;
   if (!token) return res.status(500).json({ error: 'BRIGHTDATA_API_TOKEN env var not set' });
 
-  const { platform, keyword, sessionCookie, scanRecentFeed } = req.body || {};
+  const { platform, keyword, sessionCookie, sessionCookies, tiktokCookie, scanRecentFeed } = req.body || {};
+  // sessionCookies (array) takes priority; fall back to legacy single-cookie string
+  const cookiePool = Array.isArray(sessionCookies) && sessionCookies.length
+    ? sessionCookies.filter(Boolean)
+    : sessionCookie ? [sessionCookie] : [];
   const PLATFORMS = ['instagram', 'tiktok', 'youtube', 'x'];
   if (!PLATFORMS.includes(platform)) return res.status(400).json({ error: `Unsupported platform: ${platform}` });
   if (!keyword || !keyword.trim()) return res.status(400).json({ error: 'keyword is required' });
 
   const kw = keyword.trim();
-  const scanFeed = !!scanRecentFeed;
   const searchId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-  console.log(`[bd-search:${platform}] keyword="${kw}" hasCookie=${!!(sessionCookie)} scanRecentFeed=${scanFeed} searchId=${searchId}`);
+  console.log(`[bd-search:${platform}] keyword="${kw}" cookies=${cookiePool.length} searchId=${searchId}`);
 
   updateProgress(searchId, {
     searchId, platform, keyword: kw,
@@ -686,10 +1074,10 @@ async function handleBdSearch(req, res) {
       const onProgress = (patch) => updateProgress(searchId, patch);
       let result;
       if (platform === 'instagram') {
-        result = await igHashtagSearch(kw, sessionCookie || '', onProgress, scanFeed);
+        result = await igHashtagSearch(kw, cookiePool, onProgress);
       } else if (platform === 'tiktok') {
-        onProgress({ phase: 'searching', current: 0, total: 1 });
-        result = await ttHashtagSearch(kw);
+        onProgress({ phase: 'searching', current: 0, total: 100 });
+        result = await ttHashtagSearch(kw, onProgress);
       } else if (platform === 'youtube') {
         onProgress({ phase: 'searching', current: 0, total: 1 });
         result = await ytKeywordSearch(kw);
@@ -699,16 +1087,20 @@ async function handleBdSearch(req, res) {
       }
 
       let profiles = Array.isArray(result) ? result : (result?.profiles || []);
+      const callCount = Array.isArray(result) ? null : result?.callCount;
       const seen = new Set();
       profiles = profiles.filter(p => {
         if (!p.handle || seen.has(p.handle.toLowerCase())) return false;
         seen.add(p.handle.toLowerCase());
         return true;
       });
-      console.log(`[bd-search:${platform}] → ${profiles.length} profiles (searchId=${searchId})`);
-      updateProgress(searchId, { phase: 'complete', profiles, current: profiles.length, total: profiles.length });
+      const currentProgress = searchProgress.get(searchId) || {};
+      const enrichmentBlocked = !!currentProgress.enrichmentBlocked;
+      const callNote = callCount != null ? `, ${callCount} API calls` : '';
+      console.log(`[bd-search:${platform}] → ${profiles.length} profiles${enrichmentBlocked ? ' (enrichment blocked)' : ''}${callNote} (searchId=${searchId})`);
+      updateProgress(searchId, { phase: 'complete', profiles, current: profiles.length, total: profiles.length, enrichmentBlocked, callCount });
     } catch (e) {
-      console.error(`[bd-search:${platform}] error:`, e.message);
+      console.error(`[bd-search:${platform}] error:`, e.message, e.cause?.message || '', e.cause?.code || '');
       updateProgress(searchId, { phase: 'error', error: e.message });
     }
   })();
@@ -720,6 +1112,292 @@ async function handleBdSearchStatus(req, res) {
   const p = searchProgress.get(searchId);
   if (!p) return res.status(404).json({ error: 'searchId not found (may have expired)' });
   return res.status(200).json(p);
+}
+
+// ── Re-enrichment: fetch profile info for stubs missing followers/bio ──────
+async function handleBdReenrich(req, res) {
+  const { profiles, sessionCookie, sessionCookies } = req.body || {};
+  if (!Array.isArray(profiles) || !profiles.length)
+    return res.status(400).json({ error: 'profiles[] required' });
+  const cookies = Array.isArray(sessionCookies) && sessionCookies.length
+    ? sessionCookies.filter(Boolean)
+    : sessionCookie ? [sessionCookie] : [];
+  if (!cookies.length)
+    return res.status(400).json({ error: 'sessionCookie required' });
+
+  const scanId = `reenrich-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  updateProgress(scanId, { phase: 'enriching', current: 0, total: profiles.length });
+  res.status(200).json({ scanId });
+
+  (async () => {
+    const sleep = (min, max) => new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
+    const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
+    const proxyDispatcher = proxyUrl ? new ProxyAgent({
+      uri: proxyUrl,
+      requestTls: { rejectUnauthorized: false },
+      proxyTls:   { rejectUnauthorized: false },
+    }) : null;
+
+    const igGet = (url, cookieRaw) => {
+      const cookieHeader = cookieRaw.includes('sessionid=') ? cookieRaw : `sessionid=${cookieRaw}`;
+      const csrfToken = (cookieHeader.match(/csrftoken=([^;]+)/) || [])[1]?.trim() || '';
+      return (proxyDispatcher ? undiciFetch : fetch)(url, {
+        headers: {
+          'x-ig-app-id': '936619743392459',
+          'x-csrftoken': csrfToken,
+          'x-requested-with': 'XMLHttpRequest',
+          'accept': 'application/json',
+          'accept-language': 'en-US,en;q=0.9',
+          'origin': 'https://www.instagram.com',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-dest': 'empty',
+          'cookie': cookieHeader,
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
+      });
+    };
+
+    const results = [];
+    let htmlCount = 0;
+    for (let i = 0; i < profiles.length; i++) {
+      const { handle, pk } = profiles[i];
+      const cookieRaw = cookies[i % cookies.length];
+      const acctTag = cookies.length > 1 ? ` [acct ${(i % cookies.length) + 1}/${cookies.length}]` : '';
+      try {
+        if (!pk) throw new Error('no pk');
+        const r = await igGet(`https://www.instagram.com/api/v1/users/${pk}/info/`, cookieRaw);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const bodyText = await r.text().catch(() => '');
+        let j;
+        try { j = JSON.parse(bodyText); } catch (_) {
+          htmlCount++;
+          if (htmlCount >= 3) {
+            console.log(`[ig-reenrich] session blocked (HTML responses) — stopping early`);
+            results.push({ handle, enriched: false });
+            updateProgress(scanId, { phase: 'complete', results, blocked: true, current: profiles.length, total: profiles.length });
+            return;
+          }
+          throw new Error('non-JSON (rate-limited)');
+        }
+        const u = j?.user;
+        if (!u) throw new Error('no user object');
+        const followers = Number(u.follower_count) || 0;
+        results.push({
+          handle,
+          followers:      String(u.follower_count ?? ''),
+          fullName:       u.full_name || '',
+          bio:            u.biography || '',
+          isVerified:     !!u.is_verified,
+          postCount:      String(u.media_count ?? ''),
+          enriched:       true,
+        });
+        console.log(`[ig-reenrich] ${handle}${acctTag} → ${followers} followers`);
+      } catch (e) {
+        if (i === 0) console.log(`[ig-reenrich] ${handle}${acctTag} failed: ${e.message}`);
+        results.push({ handle, enriched: false });
+      }
+      updateProgress(scanId, { phase: 'enriching', current: i + 1, total: profiles.length });
+      if (i < profiles.length - 1) await sleep(600, 1400);
+    }
+
+    const enriched = results.filter(r => r.enriched).length;
+    console.log(`[ig-reenrich] done — ${enriched}/${profiles.length} enriched`);
+    updateProgress(scanId, { phase: 'complete', results, current: profiles.length, total: profiles.length });
+  })();
+}
+
+// ── TikTok post scanner via Apify ─────────────────────────────────────────
+async function ttApifyScanPosts(profiles, onProgress) {
+  const token = process.env.APIFY_API_TOKEN;
+  if (!token) throw new Error('APIFY_API_TOKEN not configured');
+
+  const usernames = profiles.map(p => p.handle.replace(/^@/, ''));
+
+  const apifyJson = async (url, opts = {}) => {
+    const r = await fetch(url, opts);
+    const text = await r.text();
+    try { return JSON.parse(text); }
+    catch (_) { throw new Error(`Apify HTTP ${r.status}: ${text.slice(0, 200)}`); }
+  };
+
+  const runData = await apifyJson(
+    `https://api.apify.com/v2/acts/clockworks~tiktok-scraper/runs?token=${token}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        profiles: usernames,
+        resultsPerPage: 20,
+        shouldDownloadVideos: false,
+        shouldDownloadCovers: false,
+        shouldDownloadSubtitles: false,
+        shouldDownloadSlideshowImages: false,
+      }),
+    }
+  );
+  const runId = runData?.data?.id;
+  const datasetId = runData?.data?.defaultDatasetId;
+  if (!runId) throw new Error(`Apify start failed: ${JSON.stringify(runData)}`);
+  console.log(`[tt-scan-posts] Apify run ${runId} started for ${usernames.length} profiles`);
+
+  const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT']);
+  for (let attempt = 0; attempt < 120; attempt++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const sData = await apifyJson(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
+    const status = sData?.data?.status;
+    const itemCount = sData?.data?.stats?.itemCount ?? 0;
+    onProgress({ phase: 'scanning', current: Math.min(itemCount, profiles.length), total: profiles.length });
+    if (status === 'SUCCEEDED') break;
+    if (TERMINAL.has(status)) throw new Error(`Apify run ${status}: ${JSON.stringify(sData?.data?.statusMessage ?? '')}`);
+  }
+
+  const items = await apifyJson(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&clean=true`);
+  console.log(`[tt-scan-posts] dataset has ${items.length} videos`);
+
+  // Group videos by author handle
+  const byAuthor = new Map();
+  for (const item of items) {
+    const handle = (item.authorMeta?.name || item.author?.uniqueId || '').toLowerCase();
+    if (!handle) continue;
+    if (!byAuthor.has(handle)) byAuthor.set(handle, { meta: item.authorMeta || {}, videos: [] });
+    byAuthor.get(handle).videos.push({
+      caption:  item.text || item.desc || '',
+      likes:    item.diggCount   ?? item.stats?.diggCount   ?? 0,
+      comments: item.commentCount ?? item.stats?.commentCount ?? 0,
+      shares:   item.shareCount  ?? item.stats?.shareCount  ?? 0,
+      views:    item.playCount   ?? item.stats?.playCount   ?? 0,
+      location: item.locationCreated?.city || item.locationCreated?.country || '',
+    });
+  }
+
+  const results = [];
+  for (const profile of profiles) {
+    const key = profile.handle.replace(/^@/, '').toLowerCase();
+    const entry = byAuthor.get(key);
+    if (!entry) {
+      console.log(`[tt-scan-posts] ${profile.handle} — no videos in dataset`);
+      results.push({ handle: profile.handle, postCaptions: [], postLocations: [], avgLikes: 0, avgComments: 0, avgViews: 0 });
+      continue;
+    }
+    const { videos } = entry;
+    const avgLikes    = videos.length ? Math.round(videos.reduce((s,v) => s + v.likes, 0)    / videos.length) : 0;
+    const avgComments = videos.length ? Math.round(videos.reduce((s,v) => s + v.comments, 0) / videos.length) : 0;
+    const avgViews    = videos.length ? Math.round(videos.reduce((s,v) => s + v.views, 0)    / videos.length) : 0;
+    console.log(`[tt-scan-posts] ${profile.handle} → ${videos.length} videos`);
+    results.push({
+      handle:        profile.handle,
+      postCaptions:  videos.map(v => v.caption).filter(Boolean),
+      postLocations: [...new Set(videos.map(v => v.location).filter(Boolean))],
+      avgLikes, avgComments, avgViews,
+    });
+  }
+  return results;
+}
+
+// ── Post scanner: fetches recent feed per profile (separate step, not part of search) ──
+async function handleBdScanPosts(req, res) {
+  const { profiles, sessionCookie, sessionCookies } = req.body || {};
+  if (!Array.isArray(profiles) || !profiles.length)
+    return res.status(400).json({ error: 'profiles[] required' });
+
+  // TikTok profiles use Apify — no session cookie required
+  const isTikTok = profiles.every(p => p.rawPlatform === 'tiktok');
+  const cookies = Array.isArray(sessionCookies) && sessionCookies.length
+    ? sessionCookies.filter(Boolean)
+    : sessionCookie ? [sessionCookie] : [];
+  if (!isTikTok && !cookies.length)
+    return res.status(400).json({ error: 'sessionCookie required' });
+
+  const scanId = `pscan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  updateProgress(scanId, { phase: 'scanning', current: 0, total: profiles.length });
+  res.status(200).json({ scanId });
+
+  (async () => {
+    // TikTok: delegate entirely to Apify
+    if (isTikTok) {
+      try {
+        const results = await ttApifyScanPosts(profiles, prog =>
+          updateProgress(scanId, { ...prog, total: profiles.length })
+        );
+        console.log(`[tt-scan-posts] done — ${results.filter(r => r.postCaptions.length).length}/${profiles.length} had captions`);
+        updateProgress(scanId, { phase: 'complete', results, current: profiles.length, total: profiles.length });
+      } catch (e) {
+        console.log(`[tt-scan-posts] fatal: ${e.message}`);
+        updateProgress(scanId, { phase: 'complete', results: profiles.map(p => ({ handle: p.handle, postCaptions: [], postLocations: [] })), current: profiles.length, total: profiles.length, error: e.message });
+      }
+      return;
+    }
+
+    const sleep = (min, max) => new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
+    const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
+    const proxyDispatcher = proxyUrl ? new ProxyAgent({
+      uri: proxyUrl,
+      requestTls: { rejectUnauthorized: false },
+      proxyTls:   { rejectUnauthorized: false },
+    }) : null;
+    const igGet = (url, cookieRaw) => {
+      const cookieHeader = cookieRaw.includes('sessionid=') ? cookieRaw : `sessionid=${cookieRaw}`;
+      const csrfToken = (cookieHeader.match(/csrftoken=([^;]+)/) || [])[1]?.trim() || '';
+      return (proxyDispatcher ? undiciFetch : fetch)(url, {
+        headers: {
+          'x-ig-app-id': '936619743392459',
+          'x-csrftoken': csrfToken,
+          'x-requested-with': 'XMLHttpRequest',
+          'accept': 'application/json',
+          'accept-language': 'en-US,en;q=0.9',
+          'origin': 'https://www.instagram.com',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-mode': 'cors',
+          'sec-fetch-dest': 'empty',
+          'cookie': cookieHeader,
+          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        },
+        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
+      });
+    };
+
+    const results = [];
+    let htmlCount = 0;
+    for (let i = 0; i < profiles.length; i++) {
+      const { handle, pk } = profiles[i];
+      const cookieRaw = cookies[i % cookies.length];
+      const acctTag = cookies.length > 1 ? ` [acct ${(i % cookies.length) + 1}/${cookies.length}]` : '';
+      try {
+        if (!pk) throw new Error('no pk');
+        const r = await igGet(`https://www.instagram.com/api/v1/feed/user/${pk}/?count=12`, cookieRaw);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const bodyText = await r.text().catch(() => '');
+        let j;
+        try { j = JSON.parse(bodyText); } catch (_) {
+          htmlCount++;
+          if (htmlCount >= 3) {
+            console.log(`[ig-scan-posts] session blocked (HTML responses) — stopping early`);
+            results.push({ handle, postCaptions: [], postLocations: [] });
+            updateProgress(scanId, { phase: 'complete', results, blocked: true, current: profiles.length, total: profiles.length });
+            return;
+          }
+          throw new Error('non-JSON response (rate-limited)');
+        }
+        const items = j?.items || [];
+        results.push({
+          handle,
+          postCaptions:  items.map(m => (m.caption?.text || '').slice(0, 800)).filter(Boolean),
+          postLocations: [...new Set(items.map(m => m.location?.name || '').filter(Boolean))],
+        });
+        console.log(`[ig-scan-posts] ${handle}${acctTag} → ${items.length} posts`);
+      } catch (e) {
+        console.log(`[ig-scan-posts] ${handle}${acctTag} failed: ${e.message}`);
+        results.push({ handle, postCaptions: [], postLocations: [] });
+      }
+      updateProgress(scanId, { phase: 'scanning', current: i + 1, total: profiles.length });
+      if (i < profiles.length - 1) await sleep(600, 1400);
+    }
+
+    console.log(`[ig-scan-posts] done — ${results.filter(r => r.postCaptions.length).length}/${profiles.length} had captions`);
+    updateProgress(scanId, { phase: 'complete', results, current: profiles.length, total: profiles.length });
+  })();
 }
 
 // ── BrightData Web Scraper API ─────────────────────────────────────────────

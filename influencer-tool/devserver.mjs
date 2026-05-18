@@ -30,7 +30,6 @@ const MIME = {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
-  console.log(`[devserver] ${req.method} ${url.pathname}`);
 
   if (url.pathname.startsWith('/api/')) {
     const name = url.pathname.replace('/api/', '').replace(/\/$/, '');
@@ -42,6 +41,9 @@ const server = http.createServer(async (req, res) => {
       let body = '';
       await new Promise(r => { req.on('data', c => body += c); req.on('end', r); });
       req.body = body ? JSON.parse(body) : {};
+      console.log(`[devserver] ${req.method} ${url.pathname}`);
+      const action = req.body?.action;
+      if (action) console.log(`[devserver]   action=${action}${req.body.keyword ? ` keyword="${req.body.keyword}"` : ''}${req.body.platform ? ` platform=${req.body.platform}` : ''}${req.body.searchId ? ` searchId=${req.body.searchId}` : ''}`);
 
       let statusCode = 200;
       const headers = {};
@@ -67,6 +69,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  console.log(`[devserver] ${req.method} ${url.pathname}`);
   let filePath = path.join(PUBLIC, url.pathname === '/' ? 'index.html' : url.pathname);
   if (!fs.existsSync(filePath)) filePath = path.join(PUBLIC, 'index.html');
   const ext = path.extname(filePath);
