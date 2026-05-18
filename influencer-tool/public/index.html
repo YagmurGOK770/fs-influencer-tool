@@ -6136,7 +6136,19 @@ function bdrRenderTable(rows) {
     const avatarHtml = m.avatar_url
       ? `<img src="${m.avatar_url}" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:6px;object-fit:cover">`
       : '';
-    // Per-platform clickable icon links
+    // Per-platform clickable icon links with brand SVG logos
+    const PLAT_SVG = {
+      instagram: `<svg viewBox="0 0 20 20" width="13" height="13" xmlns="http://www.w3.org/2000/svg"><rect x="2.5" y="2.5" width="15" height="15" rx="4.5" fill="none" stroke="white" stroke-width="1.8"/><circle cx="10" cy="10" r="3.8" fill="none" stroke="white" stroke-width="1.8"/><circle cx="14.8" cy="5.2" r="1.1" fill="white"/></svg>`,
+      tiktok:    `<svg viewBox="0 0 20 20" width="12" height="12" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M13.4 2v1.6a3.3 3.3 0 0 0 3.3 2.8v2.2a5.6 5.6 0 0 1-3.3-1.1V13a4.4 4.4 0 1 1-2.2-3.8v2.4a2.1 2.1 0 1 0 1.1 1.9V2h1.1z"/></svg>`,
+      youtube:   `<svg viewBox="0 0 20 20" width="14" height="14" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M7.5 5.5l7 4.5-7 4.5z"/></svg>`,
+      x:         `<svg viewBox="0 0 20 20" width="12" height="12" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M13.8 3h2.4L11 8.8l5.9 8.2H13l-3.4-4.5-3.9 4.5H3.3l5.5-6.3L3 3h4l3.1 4.1L13.8 3zM13 15.6h1.3L7.1 4.4H5.7z"/></svg>`,
+    };
+    const PLAT_BG = {
+      instagram: 'linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%)',
+      tiktok:    '#010101',
+      youtube:   '#ff0000',
+      x:         '#000000',
+    };
     const platIconLinks = m.platforms.map(p => {
       const h = (m.handle || '').replace(/^@/, '');
       const row = m._rows.find(r => (r.platform || r.raw_platform || '').toLowerCase().includes(p));
@@ -6148,9 +6160,10 @@ function bdrRenderTable(rows) {
         else if (p.includes('x'))        platUrl = `https://x.com/${h}`;
       }
       if (!platUrl) return '';
-      const color = PLAT_COLORS[p] || '#888';
-      const lbl   = PLAT_LABEL[p]  || p.slice(0,2).toUpperCase();
-      return `<a href="${platUrl}" target="_blank" rel="noopener" title="Open ${p} profile" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:${color};color:#fff;font-size:9px;font-weight:700;text-decoration:none;flex-shrink:0;margin-left:4px">${lbl}</a>`;
+      const pKey = Object.keys(PLAT_BG).find(k => p.includes(k)) || '';
+      const bg  = pKey ? `background:${PLAT_BG[pKey]}` : 'background:#888';
+      const ico = PLAT_SVG[pKey] || `<span style="font-size:9px;font-weight:700;color:#fff">${p.slice(0,2).toUpperCase()}</span>`;
+      return `<a href="${platUrl}" target="_blank" rel="noopener" title="Open ${p} profile" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;${bg};text-decoration:none;flex-shrink:0;margin-left:4px">${ico}</a>`;
     }).filter(Boolean).join('');
     const handleHtml = `${avatarHtml}<span style="font-weight:600;font-size:12px">@${m.handle||'—'}</span>${platIconLinks}`;
 
