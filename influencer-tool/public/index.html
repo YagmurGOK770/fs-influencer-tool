@@ -3686,6 +3686,7 @@ function closeProfileCard() {
           <select id="bdPresetSel" onchange="bdLoadPreset(this.value)"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px"></select>
           <button class="btn-sm" onclick="bdSavePreset()" title="Save current filters as a named preset">💾 Save preset</button>
+          <button class="btn-sm" id="bdOverwritePresetBtn" onclick="bdOverwritePreset()" title="Overwrite selected preset with current filters" style="display:none">↻ Update</button>
           <button class="btn-sm" id="bdDeletePresetBtn" onclick="bdDeletePreset()" title="Delete the selected preset" style="display:none">🗑</button>
           <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
           <label style="font-size:11px;color:var(--muted)">Between groups:</label>
@@ -3810,6 +3811,7 @@ function closeProfileCard() {
           <select id="bdrPresetSel" onchange="bdLoadPreset(this.value)"
             style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px"></select>
           <button class="btn-sm" onclick="bdSavePreset()" title="Save current filters as a named preset">💾 Save preset</button>
+          <button class="btn-sm" id="bdrOverwritePresetBtn" onclick="bdOverwritePreset()" title="Overwrite selected preset with current filters" style="display:none">↻ Update</button>
           <button class="btn-sm" id="bdrDeletePresetBtn" onclick="bdDeletePreset()" title="Delete the selected preset" style="display:none">🗑</button>
           <span style="width:1px;height:20px;background:var(--border);margin:0 4px"></span>
           <label style="font-size:11px;color:var(--muted)">Between groups:</label>
@@ -4624,7 +4626,7 @@ function bdResetFilters() {
   ['bdPresetSel', 'bdrPresetSel'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
-  ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+  ['bdDeletePresetBtn', 'bdrDeletePresetBtn', 'bdOverwritePresetBtn', 'bdrOverwritePresetBtn'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = 'none';
   });
   bdSaveFilterState();
@@ -4707,7 +4709,7 @@ function bdRenderPresets(selected) {
     if (el) el.innerHTML = opts;
   });
   const show = selected ? '' : 'none';
-  ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+  ['bdDeletePresetBtn', 'bdrDeletePresetBtn', 'bdOverwritePresetBtn', 'bdrOverwritePresetBtn'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.style.display = show;
   });
@@ -4731,9 +4733,25 @@ async function bdSavePreset() {
   }
 }
 
+async function bdOverwritePreset() {
+  const name = document.getElementById('bdPresetSel')?.value || document.getElementById('bdrPresetSel')?.value;
+  if (!name) return;
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'preset-save', name, state: bdCurrentFilterState() }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    await bdFetchPresets(name);
+  } catch (e) {
+    alert(`Failed to update preset: ${e.message}`);
+  }
+}
+
 function bdLoadPreset(name) {
   if (!name) {
-    ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+    ['bdDeletePresetBtn', 'bdrDeletePresetBtn', 'bdOverwritePresetBtn', 'bdrOverwritePresetBtn'].forEach(id => {
       const el = document.getElementById(id); if (el) el.style.display = 'none';
     });
     return;
@@ -4751,7 +4769,7 @@ function bdLoadPreset(name) {
   ['bdPresetSel', 'bdrPresetSel'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = name;
   });
-  ['bdDeletePresetBtn', 'bdrDeletePresetBtn'].forEach(id => {
+  ['bdDeletePresetBtn', 'bdrDeletePresetBtn', 'bdOverwritePresetBtn', 'bdrOverwritePresetBtn'].forEach(id => {
     const el = document.getElementById(id); if (el) el.style.display = '';
   });
   bdSaveFilterState();
