@@ -958,22 +958,21 @@ async function ytEnrichOne(handle, profileUrl) {
     return undefined;
   }
 
-  const videosCountText = deepFind(data, 'videosCountText');
-  const videoRaw = videosCountText?.runs?.map(r => r.text).join('') || videosCountText?.simpleText || '';
+  // Key is 'videoCountText' (not 'videosCountText') in current YouTube structure
+  const videoCountText = deepFind(data, 'videoCountText');
+  const videoRaw = videoCountText?.runs?.map(r => r.text).join('') || videoCountText?.simpleText || '';
   const videoCount = videoRaw.replace(/\s*videos?/i, '').replace(/,/g, '').trim();
-
-  const microformat = deepFind(data, 'microformatDataRenderer');
-  const totalViews  = String(microformat?.viewCount || '').replace(/,/g, '').trim();
 
   const headerSubText = deepFind(data, 'subscriberCountText');
   const subRaw = headerSubText?.simpleText || headerSubText?.runs?.map(r => r.text).join('') || '';
   const subscribers = subRaw.replace(/\s*subscribers?/i, '').trim();
 
+  // channelMetadataRenderer.country is only set if the channel owner configured it
   const channelMeta = deepFind(data, 'channelMetadataRenderer');
   const country     = channelMeta?.country || '';
-  const description = microformat?.description?.simpleText || channelMeta?.description || '';
+  const description = channelMeta?.description || deepFind(data, 'microformatDataRenderer')?.description?.simpleText || '';
 
-  return { videoCount, totalViews, subscribers, country, description };
+  return { videoCount, totalViews: '', subscribers, country, description };
 }
 
 async function ytKeywordSearch(keyword) {
@@ -1722,7 +1721,6 @@ async function handleYtEnrich(req, res) {
     await Promise.all(profiles.slice(i, i + BATCH).map(async ({ handle, profileUrl }) => {
       try {
         const e = await ytEnrichOne(handle, profileUrl);
-        console.log(`[yt-enrich] ${handle}: videos=${e.videoCount} views=${e.totalViews} country=${e.country}`);
         results.push({
           handle, enriched: true,
           postCount:  e.videoCount,
