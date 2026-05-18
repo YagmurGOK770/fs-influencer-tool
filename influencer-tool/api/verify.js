@@ -964,8 +964,8 @@ async function ytKeywordSearch(keyword) {
 
   const profiles = [];
   const seen = new Set();
-  for (const ch of channels) {
-    const p = buildProfile(ch);
+  for (let i = 0; i < channels.length; i++) {
+    const p = buildProfile(channels[i], i === 0);
     if (p) profiles.push(p);
   }
   // Paginate via YouTube InnerTube continuation API (up to 2 extra pages ≈ 60 total)
@@ -980,10 +980,13 @@ async function ytKeywordSearch(keyword) {
     return null;
   }
 
-  function buildProfile(ch) {
+  function buildProfile(ch, logRaw) {
     const channelId   = ch.channelId || ch.navigationEndpoint?.browseEndpoint?.browseId || '';
     if (!channelId || seen.has(channelId)) return null;
     seen.add(channelId);
+    // Log raw keys of the first channel so we can discover all available fields
+    if (logRaw) console.log('[yt-channel-raw-keys]', JSON.stringify(Object.keys(ch)));
+    if (logRaw) console.log('[yt-channel-raw]', JSON.stringify(ch).slice(0, 2000));
     const canonicalUrl = ch.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl || '';
     const atMatch      = canonicalUrl.match(/^\/@(.+)$/);
     const handle       = atMatch ? atMatch[1] : channelId;
@@ -991,6 +994,9 @@ async function ytKeywordSearch(keyword) {
     const videoRaw     = ch.videoCountText?.runs?.map(r => r.text).join('') || ch.videoCountText?.simpleText || '';
     const subCleaned   = subRaw.replace(/\s*subscribers?/i, '').trim();
     const videoCleaned = videoRaw.replace(/\s*subscribers?/i, '').trim();
+    // viewCountText may appear for some channels (total channel views)
+    const viewRaw      = ch.viewCountText?.simpleText || ch.viewCountText?.runs?.map(r => r.text).join('') || '';
+    const totalViews   = viewRaw.replace(/\s*views?/i, '').replace(/,/g, '').trim();
     let followers, postCount;
     const cleanVideoCount = v => v.replace(/\s*videos?/i, '').trim();
     if (/^\d/.test(subCleaned))        { followers = subCleaned;   postCount = /subscriber/i.test(videoRaw) ? '' : cleanVideoCount(videoRaw); }
@@ -998,6 +1004,7 @@ async function ytKeywordSearch(keyword) {
     else                               { followers = '';            postCount = /subscriber/i.test(videoRaw) ? '' : cleanVideoCount(videoRaw); }
     return {
       handle, followers, postCount,
+      totalViews: /^\d/.test(totalViews) ? totalViews : '',
       fullName:   ch.title?.simpleText || ch.title?.runs?.map(r => r.text).join('') || '',
       bio:        ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
       isVerified: !!(ch.ownerBadges?.some(b => b?.metadataBadgeRenderer?.style?.includes('VERIFIED') || b?.metadataBadgeRenderer?.icon?.iconType === 'CHECK_CIRCLE_THICK')),

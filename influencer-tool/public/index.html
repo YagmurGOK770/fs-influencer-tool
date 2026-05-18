@@ -4962,7 +4962,8 @@ function renderBdTable(rows) {
       : r.engagementRate != null ? Number(r.engagementRate).toFixed(2) + '%' : '—';
     const tagPosts = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
       : r.hashtagPosts != null ? r.hashtagPosts : '—';
-    const avgLikes = isYT ? '<span style="color:var(--muted2);font-size:10px">n/a</span>'
+    const avgLikes = isYT
+      ? (r.totalViews ? `<span style="font-size:11px" title="Total channel views">${bdFormatCompact(Number(r.totalViews.replace(/,/g,'')) || 0)} views</span>` : '<span style="color:var(--muted2);font-size:10px">n/a</span>')
       : r.avgLikes != null ? bdFormatCompact(r.avgLikes) : '—';
     const postCount = r.postCount || (isYT ? '' : '—');
     const matchedChips = (r.matchedKeywords || []).length
