@@ -4494,6 +4494,14 @@ function bdEvaluateGroup(profile, group) {
   return group.mode === 'AND' ? results.every(Boolean) : results.some(Boolean);
 }
 
+const BD_GROUP_COLORS = [
+  { bg: '#eef2ff', fg: '#4f6ef7' },
+  { bg: '#ecfdf5', fg: '#059669' },
+  { bg: '#fff7ed', fg: '#ea580c' },
+  { bg: '#faf5ff', fg: '#7c3aed' },
+  { bg: '#fef2f2', fg: '#dc2626' },
+];
+
 function bdMatchedConditionLabels(profile) {
   const FIELD_LABEL = {
     bio: 'Bio', name: 'Full name', location: 'Location (bio)',
@@ -4503,33 +4511,33 @@ function bdMatchedConditionLabels(profile) {
   };
   const NUMERIC = { followers: 1, engagementRate: 1, avgLikes: 1, avgComments: 1, hashtagPosts: 1 };
   const matched = [];
-  for (const group of bdFilterGroups) {
+  for (let gi = 0; gi < bdFilterGroups.length; gi++) {
+    const group = bdFilterGroups[gi];
     const active = group.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
     for (const rule of active) {
       if (!bdEvaluateRule(profile, rule)) continue;
       const label = FIELD_LABEL[rule.field] || rule.field;
+      const push = text => matched.push({ label: text, groupIdx: gi });
       if (rule.field === 'verified') {
-        matched.push(rule.value === 'true' ? 'Verified ✓' : 'Not verified');
+        push(rule.value === 'true' ? 'Verified ✓' : 'Not verified');
       } else if (NUMERIC[rule.field]) {
-        // For numeric fields: show the actual profile value so the user can see the count.
-        // Skip entirely if no data (null bypass passed the filter but nothing to display).
         const raw = profile[rule.field];
         if (raw == null || raw === '') continue;
         const display = rule.field === 'followers' || rule.field === 'avgLikes' || rule.field === 'avgComments'
           ? String(raw)
           : Number(raw).toFixed(rule.field === 'engagementRate' ? 2 : 0);
-        matched.push(`${label}: ${display}`);
+        push(`${label}: ${display}`);
       } else if (rule.op === 'contains') {
         const needles = String(rule.value).split(',').map(v => v.trim()).filter(Boolean);
         if (rule.field === 'postContent' || rule.field === 'postLocation') {
           const posts = rule.field === 'postContent' ? (profile.postCaptions || []) : (profile.postLocations || []);
           const plat = (profile.rawPlatform || '').toLowerCase();
           if (!posts.length && (plat === 'youtube' || plat === 'x')) {
-            needles.forEach(n => matched.push(`${label}: ${n}`));
+            needles.forEach(n => push(`${label}: ${n}`));
           } else {
             const minPosts = Number(rule.minPosts) || 1;
             needles.filter(n => posts.filter(post => post.toLowerCase().includes(n.toLowerCase())).length >= minPosts)
-              .forEach(n => matched.push(`${label}: ${n}`));
+              .forEach(n => push(`${label}: ${n}`));
           }
         } else {
           let haystack = '';
@@ -4538,17 +4546,50 @@ function bdMatchedConditionLabels(profile) {
           if (rule.field === 'location')       haystack = `${profile.location || ''} ${profile.bio || ''}`;
           if (rule.field === 'matchedKeyword') haystack = (profile.matchedKeywords || []).join(' ');
           haystack = haystack.toLowerCase();
-          needles.filter(n => haystack.includes(n.toLowerCase()))
-            .forEach(n => matched.push(`${label}: ${n}`));
+          needles.filter(n => haystack.includes(n.toLowerCase())).forEach(n => push(`${label}: ${n}`));
         }
       } else if (rule.op === 'does not contain') {
-        matched.push(`${label} ≠ ${rule.value}`);
+        push(`${label} ≠ ${rule.value}`);
       } else {
-        matched.push(`${label} ${rule.op} ${rule.value}`);
+        push(`${label} ${rule.op} ${rule.value}`);
       }
     }
   }
   return matched;
+}
+
+function bdToggleBadges(uid) {
+  const s = document.getElementById('bdb-s-' + uid);
+  const d = document.getElementById('bdb-d-' + uid);
+  if (!s || !d) return;
+  const expand = d.style.display === 'none';
+  s.style.display = expand ? 'none' : '';
+  d.style.display = expand ? '' : 'none';
+}
+
+function bdRenderCondBadges(items, uid) {
+  if (!items.length) return '';
+  const byGroup = {};
+  for (const item of items) {
+    if (!byGroup[item.groupIdx]) byGroup[item.groupIdx] = [];
+    byGroup[item.groupIdx].push(item.label);
+  }
+  const groupEntries = Object.entries(byGroup);
+  const summaryChips = groupEntries.map(([gi, labels]) => {
+    const c = BD_GROUP_COLORS[gi % BD_GROUP_COLORS.length];
+    return `<span onclick="bdToggleBadges('${uid}')" style="cursor:pointer;display:inline-block;background:${c.bg};color:${c.fg};padding:1px 7px;border-radius:8px;margin-right:3px;margin-bottom:2px;font-size:10px;white-space:nowrap;font-weight:600">G${Number(gi)+1}: ${labels.length} ▾</span>`;
+  }).join('');
+  const detailContent = groupEntries.map(([gi, labels]) => {
+    const c = BD_GROUP_COLORS[gi % BD_GROUP_COLORS.length];
+    const chips = labels.map(l =>
+      `<div style="display:inline-block;background:${c.bg};color:${c.fg};padding:1px 6px;border-radius:8px;margin-bottom:2px;font-size:10px;white-space:nowrap">${l}</div>`
+    ).join('<br>');
+    return `<div style="margin-bottom:6px"><div style="font-size:9px;font-weight:700;color:${c.fg};text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Group ${Number(gi)+1}</div>${chips}</div>`;
+  }).join('');
+  return `<div style="margin-top:3px">
+    <div id="bdb-s-${uid}">${summaryChips}</div>
+    <div id="bdb-d-${uid}" style="display:none">${detailContent}<div onclick="bdToggleBadges('${uid}')" style="cursor:pointer;font-size:9px;color:var(--muted);margin-top:2px">▲ collapse</div></div>
+  </div>`;
 }
 
 function bdPassesFilters(profile) {
@@ -4917,11 +4958,8 @@ function renderBdTable(rows) {
           ${locations.length ? `<span title="${locTip}" style="display:inline-block;background:var(--surface);border:1px solid var(--border);padding:1px 6px;border-radius:8px;margin-right:3px;cursor:help">📍 ${locations.length}</span>` : ''}
         </div>`
       : '';
-    const condLabels = bdFilterGroups.length ? bdMatchedConditionLabels(r) : [];
-    const condBadges = condLabels.length
-      ? `<div style="font-size:10px;margin-top:3px">${condLabels.map(l =>
-          `<span style="display:inline-block;background:#eef2ff;color:#4f6ef7;padding:1px 6px;border-radius:8px;margin-right:3px;margin-bottom:2px;white-space:nowrap">${l}</span>`).join('')}</div>`
-      : '';
+    const condItems = bdFilterGroups.length ? bdMatchedConditionLabels(r) : [];
+    const condBadges = bdRenderCondBadges(condItems, (r.handle||'').replace(/\W/g,'_'));
     return `
     <tr>
       <td>${handleHtml}${matchedChips}${postBadges}${condBadges}</td>
@@ -6001,11 +6039,8 @@ function bdrRenderTable(rows) {
       </td>
     </tr>` : '';
 
-    const condLabels = bdFilterGroups.length ? bdMatchedConditionLabels(bdrToFilterShape(m)) : [];
-    const condBadges = condLabels.length
-      ? `<div style="margin-top:4px">${condLabels.map(l =>
-          `<div style="display:inline-block;background:#eef2ff;color:#4f6ef7;padding:1px 6px;border-radius:8px;margin-bottom:2px;font-size:10px;white-space:nowrap">${l}</div>`).join('<br>')}</div>`
-      : '';
+    const condItems = bdFilterGroups.length ? bdMatchedConditionLabels(bdrToFilterShape(m)) : [];
+    const condBadges = bdRenderCondBadges(condItems, 'bdr_' + (m.handle||'').replace(/\W/g,'_'));
 
     return `
     <tr>
