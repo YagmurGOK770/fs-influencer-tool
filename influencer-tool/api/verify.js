@@ -914,9 +914,11 @@ function extractBalancedJson(html, startPos) {
 }
 
 // Shared helper: fetch one YouTube channel page and return enrichment fields.
-// Uses direct fetch — YouTube channel pages are public and don't need proxy.
+// Fetches the /about tab which includes totalViews, country, and subscriber count
+// in the aboutChannelViewModel — not available on the main channel page.
 async function ytEnrichOne(handle, profileUrl) {
-  const url = profileUrl || `https://www.youtube.com/@${handle}`;
+  const base = (profileUrl || `https://www.youtube.com/@${handle}`).replace(/\/about\/?$/, '');
+  const url = `${base}/about`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 15000);
   let html;
@@ -958,13 +960,16 @@ async function ytEnrichOne(handle, profileUrl) {
     return undefined;
   }
 
-  // Old format: standalone subscriberCountText / videoCountText nodes
-  const videoCountText  = deepFind(data, 'videoCountText');
-  const headerSubText   = deepFind(data, 'subscriberCountText');
-  let videoCount  = (videoCountText?.runs?.map(r => r.text).join('') || videoCountText?.simpleText || '').replace(/\s*videos?/i, '').replace(/,/g, '').trim();
-  let subscribers = (headerSubText?.simpleText || headerSubText?.runs?.map(r => r.text).join('') || '').replace(/\s*subscribers?/i, '').trim();
+  // aboutChannelViewModel (on /about tab): has totalViews, country, subscriber count as plain strings
+  const aboutVM = deepFind(data, 'aboutChannelViewModel');
+  const totalViews = String(aboutVM?.viewCountText || '').replace(/\s*views?/i, '').replace(/,/g, '').trim();
+  let country     = aboutVM?.country || deepFind(data, 'channelMetadataRenderer')?.country || '';
+  let subscribers = String(aboutVM?.subscriberCountText || '').replace(/\s*subscribers?/i, '').trim();
 
-  // New pageHeaderViewModel format: subscriber+video count are plain text in metadataRows
+  // Video count: header nodes (old format) or pageHeaderViewModel metadataRows (new format)
+  const videoCountText = deepFind(data, 'videoCountText');
+  let videoCount = (videoCountText?.runs?.map(r => r.text).join('') || videoCountText?.simpleText || '').replace(/\s*videos?/i, '').replace(/,/g, '').trim();
+
   if (!videoCount || !subscribers) {
     const rows = data.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows || [];
     for (const row of rows) {
@@ -975,19 +980,17 @@ async function ytEnrichOne(handle, profileUrl) {
           if (m) subscribers = m[1];
         }
         if (!videoCount) {
-          const m = txt.match(/([\d,]+)\s+videos?/i);
+          const m = txt.match(/([\d,]+[KMBTkmbt]?)\s+videos?/i);
           if (m) videoCount = m[1].replace(/,/g, '');
         }
       }
     }
   }
 
-  // channelMetadataRenderer.country is only set if the channel owner configured it
   const channelMeta = deepFind(data, 'channelMetadataRenderer');
-  const country     = channelMeta?.country || '';
   const description = channelMeta?.description || deepFind(data, 'microformatDataRenderer')?.description?.simpleText || '';
 
-  return { videoCount, totalViews: '', subscribers, country, description };
+  return { videoCount, totalViews, subscribers, country, description };
 }
 
 async function ytKeywordSearch(keyword) {
