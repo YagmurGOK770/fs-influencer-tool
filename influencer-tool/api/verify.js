@@ -965,45 +965,92 @@ async function ytKeywordSearch(keyword) {
   const profiles = [];
   const seen = new Set();
   for (const ch of channels) {
-    const channelId = ch.channelId || ch.navigationEndpoint?.browseEndpoint?.browseId || '';
-    if (!channelId || seen.has(channelId)) continue;
-    seen.add(channelId);
-
-    // Prefer @handle from canonicalBaseUrl (e.g. "/@FoodChannel") over raw channel ID
-    const canonicalUrl = ch.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl || '';
-    const atMatch = canonicalUrl.match(/^\/@(.+)$/);
-    const handle = atMatch ? atMatch[1] : channelId;
-
-    // BrightData sometimes swaps subscriberCountText / videoCountText field values.
-    // Always validate: a subscriber count must contain at least one digit.
-    const subRaw = ch.subscriberCountText?.simpleText
-      || ch.subscriberCountText?.runs?.map(r => r.text).join('')
-      || '';
-    const subCleaned = subRaw.replace(/\s*subscribers?/i, '').trim();
-    const followers  = /\d/.test(subCleaned) ? subCleaned : '';
-
-    const videoRaw   = ch.videoCountText?.runs?.map(r => r.text).join('') || ch.videoCountText?.simpleText || '';
-    // Don't store subscriber-like text as post count
-    const postCount  = /subscriber/i.test(videoRaw) ? '' : videoRaw;
-
-    const profileUrl = canonicalUrl
-      ? `https://www.youtube.com${canonicalUrl}`
-      : `https://www.youtube.com/channel/${channelId}`;
-
-    profiles.push({
-      handle,
-      fullName:    ch.title?.simpleText || ch.title?.runs?.map(r => r.text).join('') || '',
-      followers,
-      bio:         ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
-      isVerified:  !!(ch.ownerBadges?.some(b =>
-        b?.metadataBadgeRenderer?.style?.includes('VERIFIED') ||
-        b?.metadataBadgeRenderer?.icon?.iconType === 'CHECK_CIRCLE_THICK'
-      )),
-      postCount,
-      profileUrl,
-      rawPlatform: 'youtube',
-    });
+    const p = buildProfile(ch);
+    if (p) profiles.push(p);
   }
+  // Paginate via YouTube InnerTube continuation API (up to 2 extra pages ≈ 60 total)
+  function extractContinuation(node) {
+    if (!node || typeof node !== 'object') return null;
+    if (node.continuationCommand?.token) return node.continuationCommand.token;
+    if (node.token && typeof node.token === 'string' && node.token.length > 20) return node.token;
+    for (const v of Object.values(node)) {
+      const r = Array.isArray(v) ? v.reduce((a, x) => a || extractContinuation(x), null) : extractContinuation(v);
+      if (r) return r;
+    }
+    return null;
+  }
+
+  function buildProfile(ch) {
+    const channelId   = ch.channelId || ch.navigationEndpoint?.browseEndpoint?.browseId || '';
+    if (!channelId || seen.has(channelId)) return null;
+    seen.add(channelId);
+    const canonicalUrl = ch.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl || '';
+    const atMatch      = canonicalUrl.match(/^\/@(.+)$/);
+    const handle       = atMatch ? atMatch[1] : channelId;
+    const subRaw       = ch.subscriberCountText?.simpleText || ch.subscriberCountText?.runs?.map(r => r.text).join('') || '';
+    const videoRaw     = ch.videoCountText?.runs?.map(r => r.text).join('') || ch.videoCountText?.simpleText || '';
+    const subCleaned   = subRaw.replace(/\s*subscribers?/i, '').trim();
+    const videoCleaned = videoRaw.replace(/\s*subscribers?/i, '').trim();
+    let followers, postCount;
+    if (/^\d/.test(subCleaned))        { followers = subCleaned;   postCount = /subscriber/i.test(videoRaw) ? '' : videoRaw; }
+    else if (/^\d/.test(videoCleaned)) { followers = videoCleaned; postCount = ''; }
+    else                               { followers = '';            postCount = /subscriber/i.test(videoRaw) ? '' : videoRaw; }
+    return {
+      handle, followers, postCount,
+      fullName:   ch.title?.simpleText || ch.title?.runs?.map(r => r.text).join('') || '',
+      bio:        ch.descriptionSnippet?.runs?.map(r => r.text).join('') || '',
+      isVerified: !!(ch.ownerBadges?.some(b => b?.metadataBadgeRenderer?.style?.includes('VERIFIED') || b?.metadataBadgeRenderer?.icon?.iconType === 'CHECK_CIRCLE_THICK')),
+      profileUrl: canonicalUrl ? `https://www.youtube.com${canonicalUrl}` : `https://www.youtube.com/channel/${channelId}`,
+      rawPlatform: 'youtube',
+    };
+  }
+
+  let token = extractContinuation(data);
+  for (let page = 2; page <= 3 && token; page++) {
+    try {
+      const ctrlP = new AbortController();
+      const tP = setTimeout(() => ctrlP.abort(), 20000);
+      let pageResp;
+      try {
+        pageResp = await fetch('https://www.youtube.com/youtubei/v1/search?prettyPrint=false', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'x-youtube-client-name': '1',
+            'x-youtube-client-version': '2.20241201.00.00',
+          },
+          body: JSON.stringify({
+            context: { client: { clientName: 'WEB', clientVersion: '2.20241201.00.00', hl: 'en', gl: 'US' } },
+            continuation: token,
+          }),
+          signal: ctrlP.signal,
+        });
+      } finally { clearTimeout(tP); }
+      if (!pageResp.ok) break;
+      const pageData = await pageResp.json();
+      const pageChannels = [];
+      function walkPage(node) {
+        if (!node || typeof node !== 'object') return;
+        if (node.channelRenderer) pageChannels.push(node.channelRenderer);
+        for (const v of Object.values(node)) {
+          if (Array.isArray(v)) v.forEach(walkPage);
+          else if (v && typeof v === 'object') walkPage(v);
+        }
+      }
+      walkPage(pageData);
+      for (const ch of pageChannels) {
+        const p = buildProfile(ch);
+        if (p) profiles.push(p);
+      }
+      token = extractContinuation(pageData);
+      console.log(`[yt-search] page ${page}: ${profiles.length} channels total`);
+    } catch (e) {
+      console.log(`[yt-search] pagination page ${page} failed: ${e.message}`);
+      break;
+    }
+  }
+
   console.log(`[yt-search] "${keyword}" → ${profiles.length} channels`);
   return profiles;
 }

@@ -4388,7 +4388,7 @@ function bdRenderFilterGroups() {
           oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
           style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
       } else {
-        const ph = rule.field === 'location' ? 'e.g. London' : rule.field === 'name' ? 'e.g. Carol' : 'e.g. food, chef';
+        const ph = rule.field === 'location' ? 'e.g. london, england, uk' : rule.field === 'name' ? 'e.g. Carol' : rule.field === 'bio' ? 'e.g. chef, cook, food' : rule.field === 'postContent' || rule.field === 'postLocation' ? 'e.g. london, england' : 'e.g. food, chef';
         valueInput = `<input type="text" value="${(rule.value || '').replace(/"/g,'&quot;')}"
           placeholder="${ph}"
           oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
@@ -4462,18 +4462,18 @@ function bdEvaluateRule(p, rule) {
     const want = value === 'true';
     return op === 'is' ? !!p.isVerified === want : !!p.isVerified !== want;
   }
-  // Text fields
+  // Text fields — value supports comma-separated alternatives (ANY match for contains)
+  const needles = String(value).split(',').map(v => v.toLowerCase().trim()).filter(Boolean);
+  if (!needles.length) return true;
+
   // postContent / postLocation: count per-post matches so minPosts threshold works
   if (field === 'postContent' || field === 'postLocation') {
-    const posts  = field === 'postContent' ? (p.postCaptions || []) : (p.postLocations || []);
+    const posts = field === 'postContent' ? (p.postCaptions || []) : (p.postLocations || []);
     // YouTube and X don't provide post captions/locations — rule can't be applied, pass through
     if (!posts.length && (plat === 'youtube' || plat === 'x')) return true;
-    const needle = String(value).toLowerCase().trim();
-    if (!needle) return true;
-    const minPosts   = Number(rule.minPosts) || 1;
-    const matchCount = posts.filter(post => post.toLowerCase().includes(needle)).length;
-    if (op === 'contains')         return matchCount >= minPosts;
-    if (op === 'does not contain') return matchCount === 0;
+    const minPosts = Number(rule.minPosts) || 1;
+    if (op === 'contains')         return needles.some(n => posts.filter(post => post.toLowerCase().includes(n)).length >= minPosts);
+    if (op === 'does not contain') return needles.every(n => posts.filter(post => post.toLowerCase().includes(n)).length === 0);
     return true;
   }
   let haystack = '';
@@ -4484,9 +4484,8 @@ function bdEvaluateRule(p, rule) {
   // YouTube is a keyword search — all results already match the keyword by definition
   if (field === 'matchedKeyword' && plat === 'youtube') return true;
   haystack = haystack.toLowerCase();
-  const needle = String(value).toLowerCase().trim();
-  if (op === 'contains')         return haystack.includes(needle);
-  if (op === 'does not contain') return !haystack.includes(needle);
+  if (op === 'contains')         return needles.some(n => haystack.includes(n));
+  if (op === 'does not contain') return needles.every(n => !haystack.includes(n));
   return true;
 }
 
@@ -4523,7 +4522,27 @@ function bdMatchedConditionLabels(profile) {
           : Number(raw).toFixed(rule.field === 'engagementRate' ? 2 : 0);
         matched.push(`${label}: ${display}`);
       } else if (rule.op === 'contains') {
-        matched.push(`${label}: ${rule.value}`);
+        const needles = String(rule.value).split(',').map(v => v.trim()).filter(Boolean);
+        if (rule.field === 'postContent' || rule.field === 'postLocation') {
+          const posts = rule.field === 'postContent' ? (profile.postCaptions || []) : (profile.postLocations || []);
+          const plat = (profile.rawPlatform || '').toLowerCase();
+          if (!posts.length && (plat === 'youtube' || plat === 'x')) {
+            needles.forEach(n => matched.push(`${label}: ${n}`));
+          } else {
+            const minPosts = Number(rule.minPosts) || 1;
+            needles.filter(n => posts.filter(post => post.toLowerCase().includes(n.toLowerCase())).length >= minPosts)
+              .forEach(n => matched.push(`${label}: ${n}`));
+          }
+        } else {
+          let haystack = '';
+          if (rule.field === 'bio')            haystack = profile.bio || '';
+          if (rule.field === 'name')           haystack = profile.fullName || '';
+          if (rule.field === 'location')       haystack = `${profile.location || ''} ${profile.bio || ''}`;
+          if (rule.field === 'matchedKeyword') haystack = (profile.matchedKeywords || []).join(' ');
+          haystack = haystack.toLowerCase();
+          needles.filter(n => haystack.includes(n.toLowerCase()))
+            .forEach(n => matched.push(`${label}: ${n}`));
+        }
       } else if (rule.op === 'does not contain') {
         matched.push(`${label} ≠ ${rule.value}`);
       } else {
