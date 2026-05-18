@@ -5200,8 +5200,9 @@ async function runBdSearch() {
         bdMarkCookieSlot(poolEntry.slotIdx, 'ready');
       }
 
-      // Inter-keyword pause only when using a single account — with a pool, rotation is enough
-      if (cookiePool.length <= 1 && i < keywords.length - 1) {
+      // Inter-keyword pause only for Instagram with a single account — YouTube/TikTok/X use
+      // BrightData proxy which handles sessions transparently, so no pause needed there.
+      if (bdPlatform === 'instagram' && cookiePool.length <= 1 && i < keywords.length - 1) {
         await bdCountdown(45, 'Pausing before next keyword to protect session (add more accounts to skip this)');
       }
 
