@@ -2486,6 +2486,7 @@ function switchMainTab(tab) {
   if (tab === 'history')   loadSearchHistory();
   if (tab === 'enrich')    loadEnrichTab();
   if (tab === 'bdresults') loadBdResults();
+  localStorage.setItem('activeMainTab', tab);
 }
 
 async function loadChanges() {
@@ -3065,7 +3066,11 @@ function eExportXlsx() {
   eLogLine('Downloaded enriched_profiles.xlsx', 'ok');
 }
 
-document.addEventListener('DOMContentLoaded', eInit);
+document.addEventListener('DOMContentLoaded', () => {
+  eInit();
+  const savedTab = localStorage.getItem('activeMainTab');
+  if (savedTab) switchMainTab(savedTab);
+});
 
 // ── Coverage tab ──────────────────────────────────────────────────────────
 
