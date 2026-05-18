@@ -958,14 +958,29 @@ async function ytEnrichOne(handle, profileUrl) {
     return undefined;
   }
 
-  // Key is 'videoCountText' (not 'videosCountText') in current YouTube structure
-  const videoCountText = deepFind(data, 'videoCountText');
-  const videoRaw = videoCountText?.runs?.map(r => r.text).join('') || videoCountText?.simpleText || '';
-  const videoCount = videoRaw.replace(/\s*videos?/i, '').replace(/,/g, '').trim();
+  // Old format: standalone subscriberCountText / videoCountText nodes
+  const videoCountText  = deepFind(data, 'videoCountText');
+  const headerSubText   = deepFind(data, 'subscriberCountText');
+  let videoCount  = (videoCountText?.runs?.map(r => r.text).join('') || videoCountText?.simpleText || '').replace(/\s*videos?/i, '').replace(/,/g, '').trim();
+  let subscribers = (headerSubText?.simpleText || headerSubText?.runs?.map(r => r.text).join('') || '').replace(/\s*subscribers?/i, '').trim();
 
-  const headerSubText = deepFind(data, 'subscriberCountText');
-  const subRaw = headerSubText?.simpleText || headerSubText?.runs?.map(r => r.text).join('') || '';
-  const subscribers = subRaw.replace(/\s*subscribers?/i, '').trim();
+  // New pageHeaderViewModel format: subscriber+video count are plain text in metadataRows
+  if (!videoCount || !subscribers) {
+    const rows = data.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows || [];
+    for (const row of rows) {
+      for (const part of (row.metadataParts || [])) {
+        const txt = part.text?.content || '';
+        if (!subscribers) {
+          const m = txt.match(/([\d.,]+[KMB]?)\s+subscribers?/i);
+          if (m) subscribers = m[1];
+        }
+        if (!videoCount) {
+          const m = txt.match(/([\d,]+)\s+videos?/i);
+          if (m) videoCount = m[1].replace(/,/g, '');
+        }
+      }
+    }
+  }
 
   // channelMetadataRenderer.country is only set if the channel owner configured it
   const channelMeta = deepFind(data, 'channelMetadataRenderer');
