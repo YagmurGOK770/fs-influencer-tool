@@ -4552,7 +4552,7 @@ function bdMatchedConditionLabels(profile) {
           const posts = rule.field === 'postContent' ? (profile.postCaptions || []) : (profile.postLocations || []);
           const plat = (profile.rawPlatform || '').toLowerCase();
           if (!posts.length && (plat === 'youtube' || plat === 'x')) {
-            needles.forEach(n => push(n));
+            // Pass-through — no post data available, can't show which keywords matched
           } else {
             const minPosts = Number(rule.minPosts) || 1;
             needles.filter(n => posts.filter(post => post.toLowerCase().includes(n.toLowerCase())).length >= minPosts)
@@ -4568,7 +4568,25 @@ function bdMatchedConditionLabels(profile) {
           needles.filter(n => haystack.includes(n.toLowerCase())).forEach(n => push(n));
         }
       } else if (rule.op === 'does not contain') {
-        push(`≠ ${rule.value}`);
+        const needles = String(rule.value).split(',').map(v => v.trim()).filter(Boolean);
+        if (rule.field === 'postContent' || rule.field === 'postLocation') {
+          const posts = rule.field === 'postContent' ? (profile.postCaptions || []) : (profile.postLocations || []);
+          const plat = (profile.rawPlatform || '').toLowerCase();
+          if (!posts.length && (plat === 'youtube' || plat === 'x')) {
+            // Pass-through — no post data available, can't show which terms were verified
+          } else {
+            needles.forEach(n => push(`≠ ${n}`));
+          }
+        } else {
+          let haystack = '';
+          if (rule.field === 'bio')            haystack = profile.bio || '';
+          if (rule.field === 'name')           haystack = profile.fullName || '';
+          if (rule.field === 'location')       haystack = `${profile.location || ''} ${profile.bio || ''}`;
+          if (rule.field === 'matchedKeyword') haystack = (profile.matchedKeywords || []).join(' ');
+          haystack = haystack.toLowerCase();
+          // Only show the terms that are genuinely absent from the haystack
+          needles.filter(n => !haystack.includes(n.toLowerCase())).forEach(n => push(`≠ ${n}`));
+        }
       } else {
         push(`${rule.op} ${rule.value}`);
       }
