@@ -4534,9 +4534,41 @@ function bdMatchedConditionLabels(profile) {
     const group = bdFilterGroups[gi];
     const active = group.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
     for (const rule of active) {
-      if (!bdEvaluateRule(profile, rule)) continue;
       const fieldLabel = FIELD_LABEL[rule.field] || rule.field;
       const push = value => matched.push({ fieldLabel, value, groupIdx: gi });
+
+      // 'does not contain' rules are handled specially: we always compute which terms
+      // actually appear in the haystack so we can show violations on excluded profiles
+      // and a clean summary on matching profiles — without the global pass/fail gate.
+      if (rule.op === 'does not contain') {
+        const needles = String(rule.value).split(',').map(v => v.trim()).filter(Boolean);
+        if (rule.field === 'postContent' || rule.field === 'postLocation') {
+          const posts = rule.field === 'postContent' ? (profile.postCaptions || []) : (profile.postLocations || []);
+          const plat = (profile.rawPlatform || '').toLowerCase();
+          if (!posts.length && (plat === 'youtube' || plat === 'x')) {
+            // Pass-through — no post data to verify, nothing to show
+          } else {
+            const violating = needles.filter(n => posts.some(post => post.toLowerCase().includes(n.toLowerCase())));
+            if (violating.length) violating.forEach(n => push(`≠ ${n}`));
+            else push('✓ no excluded terms');
+          }
+        } else {
+          let haystack = '';
+          if (rule.field === 'bio')            haystack = profile.bio || '';
+          if (rule.field === 'name')           haystack = profile.fullName || '';
+          if (rule.field === 'location')       haystack = `${profile.location || ''} ${profile.bio || ''}`;
+          if (rule.field === 'matchedKeyword') haystack = (profile.matchedKeywords || []).join(' ');
+          haystack = haystack.toLowerCase();
+          const violating = needles.filter(n => haystack.includes(n.toLowerCase()));
+          if (violating.length) violating.forEach(n => push(`≠ ${n}`));
+          else push('✓ no excluded terms');
+        }
+        continue;
+      }
+
+      // All other rule types: skip if they don't pass
+      if (!bdEvaluateRule(profile, rule)) continue;
+
       if (rule.field === 'verified') {
         push(rule.value === 'true' ? '✓ verified' : 'not verified');
       } else if (NUMERIC[rule.field]) {
@@ -4566,26 +4598,6 @@ function bdMatchedConditionLabels(profile) {
           if (rule.field === 'matchedKeyword') haystack = (profile.matchedKeywords || []).join(' ');
           haystack = haystack.toLowerCase();
           needles.filter(n => haystack.includes(n.toLowerCase())).forEach(n => push(n));
-        }
-      } else if (rule.op === 'does not contain') {
-        const needles = String(rule.value).split(',').map(v => v.trim()).filter(Boolean);
-        if (rule.field === 'postContent' || rule.field === 'postLocation') {
-          const posts = rule.field === 'postContent' ? (profile.postCaptions || []) : (profile.postLocations || []);
-          const plat = (profile.rawPlatform || '').toLowerCase();
-          if (!posts.length && (plat === 'youtube' || plat === 'x')) {
-            // Pass-through — no post data available, can't show which terms were verified
-          } else {
-            needles.forEach(n => push(`≠ ${n}`));
-          }
-        } else {
-          let haystack = '';
-          if (rule.field === 'bio')            haystack = profile.bio || '';
-          if (rule.field === 'name')           haystack = profile.fullName || '';
-          if (rule.field === 'location')       haystack = `${profile.location || ''} ${profile.bio || ''}`;
-          if (rule.field === 'matchedKeyword') haystack = (profile.matchedKeywords || []).join(' ');
-          haystack = haystack.toLowerCase();
-          // Only show the terms that are genuinely absent from the haystack
-          needles.filter(n => !haystack.includes(n.toLowerCase())).forEach(n => push(`≠ ${n}`));
         }
       } else {
         push(`${rule.op} ${rule.value}`);
