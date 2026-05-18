@@ -6100,11 +6100,11 @@ function bdrRenderTable(rows) {
       ? `<span style="font-size:11px">${m.post_count}${isYTrow ? ' videos' : ''}</span>`
       : '<span style="color:var(--muted2)">—</span>';
 
-    // AVG column: total views for YouTube (stored in avg_likes), avg likes for others
+    // AVG column: avg views per video for YouTube (stored in avg_likes), avg likes for others
     const avgNum = Number(m.avg_likes) || 0;
     const avgHtml = avgNum
       ? (isYTrow
-          ? `<span style="font-size:11px" title="Total channel views">${bdFormatCompact(avgNum)} views</span>`
+          ? `<span style="font-size:11px" title="Avg views per video">${bdFormatCompact(avgNum)} avg</span>`
           : `<span style="font-size:11px">${bdFormatCompact(avgNum)}</span>`)
       : `<span style="color:var(--muted2);font-size:10px">${isYTrow ? 'n/a' : '—'}</span>`;
 
