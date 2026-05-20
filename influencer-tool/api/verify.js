@@ -1208,18 +1208,22 @@ async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
   else                 console.log('[x-search] routing direct (no proxy configured)');
 
   async function xFetch(url, cookieRaw, extraHeaders = {}) {
-    const { authToken, ct0 } = parseXCookie(cookieRaw);
+    const { ct0 } = parseXCookie(cookieRaw);
     const headers = {
-      'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
-      'x-csrf-token':   ct0,
-      'cookie':         cookieRaw.includes('auth_token=') ? cookieRaw : `auth_token=${authToken}; ct0=${ct0}`,
-      'x-twitter-auth-type': 'OAuth2Session',
-      'x-twitter-active-user': 'yes',
+      'authorization':           'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+      'x-csrf-token':            ct0,
+      'cookie':                  cookieRaw,
+      'x-twitter-auth-type':     'OAuth2Session',
+      'x-twitter-active-user':   'yes',
       'x-twitter-client-language': 'en',
-      'accept':          'application/json',
-      'accept-language': 'en-US,en;q=0.9',
-      'referer':         'https://x.com/search?q=' + encodeURIComponent(keyword) + '&f=user',
-      'user-agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'x-client-uuid':           'f2e2cd91-4be1-4af8-b5e1-1a3a3c29e9a3',
+      'accept':                  '*/*',
+      'accept-language':         'en-US,en;q=0.9',
+      'referer':                 'https://x.com/search?q=' + encodeURIComponent(keyword) + '&src=typed_query&f=user',
+      'sec-fetch-dest':          'empty',
+      'sec-fetch-mode':          'cors',
+      'sec-fetch-site':          'same-origin',
+      'user-agent':              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       ...extraHeaders,
     };
     const ctrl = new AbortController();
@@ -1261,10 +1265,11 @@ async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
     responsive_web_enhance_cards_enabled: false,
   }));
 
+  // SearchTimeline endpoint — x.com/i/api/ path is more stable than api.x.com/graphql/
   function buildSearchUrl(query, cursor) {
     const vars = { rawQuery: query, count: 20, querySource: 'typed_query', product: 'People' };
     if (cursor) vars.cursor = cursor;
-    return `https://api.x.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(vars))}&features=${SEARCH_FEATURES}`;
+    return `https://x.com/i/api/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(vars))}&features=${SEARCH_FEATURES}`;
   }
 
   function extractUsersAndCursor(data) {
@@ -1337,7 +1342,9 @@ async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
           continue;
         }
         if (resp.status === 401 || resp.status === 403) {
-          throw new Error(`X account ${usedCookieIdx + 1} session expired — paste a fresh auth_token= cookie and try again`);
+          const body = await resp.text().catch(() => '');
+          console.error(`[x-search] ${resp.status} response body:`, body.slice(0, 500));
+          throw new Error(`X account ${usedCookieIdx + 1} session expired or invalid (HTTP ${resp.status}) — paste a fresh auth_token= cookie and try again`);
         }
         if (resp.ok) break;
         console.log(`[x-search] page ${page}${acctTag} HTTP ${resp.status}${attempt < cookies.length - 1 ? ', retrying…' : ''}`);
