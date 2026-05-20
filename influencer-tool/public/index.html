@@ -3676,15 +3676,16 @@ function closeProfileCard() {
           style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;resize:vertical"
           oninput="localStorage.setItem('tt_session_cookie', this.value.trim())"></textarea>
       </div>
-      <!-- X / Twitter session cookie -->
+      <!-- X / Twitter session cookies (multi-account pool, same pattern as Instagram) -->
       <div id="bdXCookieSection" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">X / Twitter Session Cookie</label>
-          <span style="font-size:11px;color:var(--muted)">DevTools (F12) → Network → x.com → Cookie header · Must include auth_token= and ct0=</span>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">X / Twitter Session Cookies</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span style="font-size:11px;color:var(--muted)">Keywords rotate between accounts · DevTools (F12) → Network → x.com → Cookie header · Must include auth_token= and ct0=</span>
+            <button class="btn-sm" id="bdXAddCookieBtn" onclick="bdXAddCookieSlot()">+ Add account</button>
+          </div>
         </div>
-        <textarea id="bdXCookie" rows="2" placeholder="Paste your X cookie string here (auth_token=...; ct0=...; ...)"
-          style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;resize:vertical"
-          oninput="localStorage.setItem('x_session_cookie', this.value.trim())"></textarea>
+        <div id="bdXCookiePool" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
     </div>
 
@@ -4108,6 +4109,65 @@ function bdResetAllSlots() {
   document.querySelectorAll('#bdCookiePool .bd-cookie-slot').forEach((_, i) => bdMarkCookieSlot(i, 'ready'));
 }
 
+// ── X / Twitter cookie pool (mirrors Instagram pool) ─────────────────────────
+function bdXMakeCookieSlot(idx, value) {
+  const div = document.createElement('div');
+  div.className = 'bd-cookie-slot';
+  div.style.cssText = 'display:flex;gap:8px;align-items:center';
+  div.innerHTML = `
+    <span class="bd-slot-label" style="font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap;min-width:62px">Account ${idx + 1}</span>
+    <input type="password" class="bd-cookie-input"
+      placeholder="Paste full X cookie string (auth_token=...; ct0=...; …)"
+      style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace"
+      oninput="bdXSaveCookies()">
+    <span class="bd-slot-dot" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;flex-shrink:0;cursor:default" title="Ready"></span>
+    <button class="btn-sm bd-slot-remove" onclick="bdXRemoveCookieSlot(this)" style="flex-shrink:0;padding:3px 7px;font-size:11px">✕</button>
+  `;
+  div.querySelector('.bd-cookie-input').value = value || '';
+  return div;
+}
+
+function bdXRenderCookiePool(values) {
+  const pool = document.getElementById('bdXCookiePool');
+  pool.innerHTML = '';
+  const list = values.length ? values : [''];
+  list.forEach((v, i) => pool.appendChild(bdXMakeCookieSlot(i, v)));
+  bdXUpdateCookieSlotUI();
+}
+
+function bdXUpdateCookieSlotUI() {
+  const slots = document.querySelectorAll('#bdXCookiePool .bd-cookie-slot');
+  slots.forEach((slot, i) => { slot.querySelector('.bd-slot-label').textContent = `Account ${i + 1}`; });
+  const addBtn = document.getElementById('bdXAddCookieBtn');
+  if (addBtn) addBtn.style.display = slots.length >= 5 ? 'none' : '';
+}
+
+function bdXAddCookieSlot() {
+  const pool = document.getElementById('bdXCookiePool');
+  const slots = pool.querySelectorAll('.bd-cookie-slot');
+  if (slots.length >= 5) return;
+  pool.appendChild(bdXMakeCookieSlot(slots.length, ''));
+  bdXUpdateCookieSlotUI();
+  bdXSaveCookies();
+}
+
+function bdXRemoveCookieSlot(btn) {
+  btn.closest('.bd-cookie-slot').remove();
+  bdXUpdateCookieSlotUI();
+  bdXSaveCookies();
+}
+
+function bdXSaveCookies() {
+  const vals = Array.from(document.querySelectorAll('#bdXCookiePool .bd-cookie-input')).map(i => i.value);
+  localStorage.setItem('x_cookie_pool', JSON.stringify(vals));
+}
+
+function bdXGetCookiePoolAll() {
+  return Array.from(document.querySelectorAll('#bdXCookiePool .bd-cookie-input'))
+    .map((inp, idx) => ({ cookie: inp.value.trim(), slotIdx: idx }))
+    .filter(x => x.cookie);
+}
+
 async function bdCountdown(seconds, msg) {
   for (let s = seconds; s > 0; s--) {
     setBdStatus(`${msg} — ${s}s`, '');
@@ -4152,9 +4212,15 @@ function loadEnrichTab() {
   const ttCookieEl = document.getElementById('bdTtCookie');
   if (ttCookieEl) ttCookieEl.value = localStorage.getItem('tt_session_cookie') || '';
 
-  // Restore X cookie
-  const xCookieEl = document.getElementById('bdXCookie');
-  if (xCookieEl) xCookieEl.value = localStorage.getItem('x_session_cookie') || '';
+  // Restore X cookie pool
+  let xSaved = [];
+  try { xSaved = JSON.parse(localStorage.getItem('x_cookie_pool') || '[]'); } catch (_) {}
+  // Migrate legacy single-cookie key
+  if (!xSaved.length) {
+    const legacy = localStorage.getItem('x_session_cookie');
+    if (legacy) xSaved = [legacy];
+  }
+  bdXRenderCookiePool(xSaved);
 
   // Apply correct section visibility for current platform
   const ptEl = document.getElementById('bdPlatformSel');
@@ -5244,7 +5310,7 @@ async function bdRunOneSearch(keyword, sessionCookies, ctx, slotMap) {
     method: 'POST', headers: getApiHeaders(),
     body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookies,
       tiktokCookie: bdPlatform === 'tiktok' ? (document.getElementById('bdTtCookie')?.value.trim() || '') : undefined,
-      xCookie:      bdPlatform === 'x'      ? (document.getElementById('bdXCookie')?.value.trim()   || '') : undefined }),
+      xCookies:     bdPlatform === 'x'      ? bdXGetCookiePoolAll().map(x => x.cookie)              : undefined }),
   });
   const startData = await startResp.json();
   if (!startResp.ok || startData.error || !startData.searchId) {

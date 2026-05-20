@@ -1174,8 +1174,17 @@ async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
     throw new Error('X session cookie required. Paste your auth_token= cookie in the search panel.');
   }
 
-  const MAX_PAGES = 5; // each page ≈ 20 users; 5 pages ≈ 100 users per keyword
+  const MAX_PAGES        = 10; // each page ≈ 20 users; 10 pages ≈ 200 users per keyword
+  const PAGES_PER_COOKIE = 3;  // rotate to next account every N pages (same as Instagram)
   const sleep = (min, max) => new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
+
+  // Which cookie to use for a given pagination page (1-based), rotates every PAGES_PER_COOKIE
+  function cookieForPage(pageNum) {
+    return cookies[Math.floor((pageNum - 1) / PAGES_PER_COOKIE) % cookies.length];
+  }
+  function cookieIdxForPage(pageNum) {
+    return Math.floor((pageNum - 1) / PAGES_PER_COOKIE) % cookies.length;
+  }
 
   // Extract auth_token and ct0 from a raw cookie string
   function parseXCookie(raw) {
@@ -1187,9 +1196,6 @@ async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
       raw,
     };
   }
-
-  // Round-robin across cookie pool
-  function cookieFor(i) { return cookies[i % cookies.length]; }
 
   const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
   const proxyDispatcher = proxyUrl ? new ProxyAgent({
@@ -1309,28 +1315,46 @@ async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
   const seen     = new Set();
   const profiles = [];
   let   cursor   = null;
-  let   cookieIdx = 0;
 
-  onProgress({ phase: 'searching', current: 0, total: 0, cookieIdx: 0 });
+  onProgress({ phase: 'fetching-page', page: 1, current: 0, total: 0, cookieIdx: 0 });
 
   for (let page = 1; page <= MAX_PAGES; page++) {
-    cookieIdx = (page - 1) % cookies.length;
-    onProgress({ phase: 'fetching-page', page, current: profiles.length, total: profiles.length, cookieIdx });
+    const baseCookieIdx = cookieIdxForPage(page);
+    onProgress({ phase: 'fetching-page', page, current: profiles.length, total: profiles.length, cookieIdx: baseCookieIdx });
 
-    const url  = buildSearchUrl(keyword, cursor);
-    const resp = await xFetch(url, cookieFor(page - 1));
-
-    if (resp.status === 401 || resp.status === 403) {
-      throw new Error('X session expired or invalid — paste a fresh auth_token= cookie and try again');
+    // Try each cookie in round-robin order until one succeeds (handles 429/rate-limit per account)
+    const url = buildSearchUrl(keyword, cursor);
+    let resp = null, usedCookieIdx = baseCookieIdx;
+    for (let attempt = 0; attempt < cookies.length; attempt++) {
+      usedCookieIdx = (baseCookieIdx + attempt) % cookies.length;
+      const acctTag = cookies.length > 1 ? ` [acct ${usedCookieIdx + 1}/${cookies.length}]` : '';
+      try {
+        resp = await xFetch(url, cookies[usedCookieIdx]);
+        if (resp.status === 429 || resp.status === 503) {
+          console.log(`[x-search] page ${page}${acctTag} rate-limited (${resp.status})${attempt < cookies.length - 1 ? ', retrying with next account…' : ''}`);
+          resp = null;
+          if (attempt < cookies.length - 1) await sleep(1000, 2000);
+          continue;
+        }
+        if (resp.status === 401 || resp.status === 403) {
+          throw new Error(`X account ${usedCookieIdx + 1} session expired — paste a fresh auth_token= cookie and try again`);
+        }
+        if (resp.ok) break;
+        console.log(`[x-search] page ${page}${acctTag} HTTP ${resp.status}${attempt < cookies.length - 1 ? ', retrying…' : ''}`);
+        resp = null;
+        if (attempt < cookies.length - 1) await sleep(1000, 2000);
+      } catch (e) {
+        if (e.message.includes('session expired')) throw e;
+        console.log(`[x-search] page ${page}${acctTag} error: ${e.message}${attempt < cookies.length - 1 ? ', retrying…' : ''}`);
+        resp = null;
+      }
     }
-    if (!resp.ok) throw new Error(`X search HTTP ${resp.status}`);
+
+    if (!resp) { console.log(`[x-search] all accounts failed on page ${page}, stopping`); break; }
 
     let data;
-    try {
-      const text = await resp.text();
-      data = JSON.parse(text);
-    } catch (_) {
-      throw new Error('X returned non-JSON — session may be rate-limited');
+    try { data = JSON.parse(await resp.text()); } catch (_) {
+      console.log(`[x-search] page ${page} non-JSON response — rate-limited, stopping`); break;
     }
 
     const { users, nextCursor } = extractUsersAndCursor(data);
@@ -1342,8 +1366,9 @@ async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
       added++;
     }
 
-    console.log(`[x-search] page ${page}: +${added} users (total ${profiles.length}), cursor=${nextCursor ? 'yes' : 'none'}`);
-    onProgress({ phase: 'paginating', page, current: profiles.length, total: profiles.length, cookieIdx });
+    const acctTag = cookies.length > 1 ? ` [acct ${usedCookieIdx + 1}/${cookies.length}]` : '';
+    console.log(`[x-search] page ${page}${acctTag}: +${added} users (total ${profiles.length})`);
+    onProgress({ phase: 'paginating', page, current: profiles.length, total: profiles.length, cookieIdx: usedCookieIdx });
 
     if (!nextCursor || added === 0) break;
     cursor = nextCursor;
@@ -1358,7 +1383,7 @@ async function handleBdSearch(req, res) {
   const token = process.env.BRIGHTDATA_API_TOKEN;
   if (!token) return res.status(500).json({ error: 'BRIGHTDATA_API_TOKEN env var not set' });
 
-  const { platform, keyword, sessionCookie, sessionCookies, tiktokCookie, xCookie, scanRecentFeed } = req.body || {};
+  const { platform, keyword, sessionCookie, sessionCookies, tiktokCookie, xCookie, xCookies, scanRecentFeed } = req.body || {};
   // sessionCookies (array) takes priority; fall back to legacy single-cookie string
   const cookiePool = Array.isArray(sessionCookies) && sessionCookies.length
     ? sessionCookies.filter(Boolean)
@@ -1396,8 +1421,8 @@ async function handleBdSearch(req, res) {
         result = await ytKeywordSearch(kw);
       } else if (platform === 'x') {
         onProgress({ phase: 'searching', current: 0, total: 1 });
-        const xCookies = xCookie ? [xCookie] : [];
-        result = await xUserSearch(kw, xCookies, onProgress);
+        const xPool = Array.isArray(xCookies) && xCookies.length ? xCookies : (xCookie ? [xCookie] : []);
+        result = await xUserSearch(kw, xPool, onProgress);
       }
 
       let profiles = Array.isArray(result) ? result : (result?.profiles || []);
