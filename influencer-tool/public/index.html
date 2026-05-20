@@ -3291,7 +3291,10 @@ async function loadCoverage() {
   document.getElementById('covEmpty').style.display = 'none';
 
   try {
-    const resp = await fetch('/api/manual-coverage', { headers: getApiHeaders() });
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'manual-coverage' }),
+    });
     const data = await resp.json();
     if (!resp.ok) { alert('Coverage load failed: ' + data.error); return; }
 
@@ -3303,10 +3306,11 @@ async function loadCoverage() {
     }
 
     // Stats
-    document.getElementById('covTotal').textContent   = data.total;
-    document.getElementById('covFound').textContent   = data.found;
-    document.getElementById('covMissing').textContent = data.missing;
-    document.getElementById('covPct').textContent     = data.total ? Math.round(data.found / data.total * 100) + '%' : '—';
+    document.getElementById('covStatManual').textContent  = data.totalManual;
+    document.getElementById('covStatBd').textContent      = data.totalBd;
+    document.getElementById('covStatMatched').textContent = data.matched;
+    document.getElementById('covStatMOnly').textContent   = data.manualOnly;
+    document.getElementById('covStatBdOnly').textContent  = data.bdOnly;
     document.getElementById('covStats').style.display = 'flex';
     document.getElementById('covToolbar').style.display = 'flex';
     document.getElementById('covTableWrap').style.display = 'block';
@@ -3321,8 +3325,8 @@ async function loadCoverage() {
 
 function renderCovTable() {
   const rows = covFilter === 'all'     ? covAllRows
-             : covFilter === 'found'   ? covAllRows.filter(r => r.found || r.bdFound)
-             : covAllRows.filter(r => !r.found && !r.bdFound);
+             : covFilter === 'found'   ? covAllRows.filter(r => r.bdFound)
+             : covAllRows.filter(r => !r.bdFound);
 
   document.getElementById('covFilterLabel').textContent = `Showing ${rows.length} of ${covAllRows.length}`;
 
@@ -3339,11 +3343,6 @@ function renderCovTable() {
            style="font-family:var(--mono);font-size:11px;color:var(--blue);text-decoration:none">
            @${handle} ↗</a>`
       : `<span style="font-family:var(--mono);font-size:11px;color:var(--muted)">@${handle}</span>`;
-
-    // In Tool badge
-    const toolBadge = r.found
-      ? `<span class="cov-badge found">✓ Found</span>`
-      : `<span class="cov-badge missing">✕ Missing</span>`;
 
     // In BD Results badge with link
     const bdBadge = r.bdFound
@@ -3368,7 +3367,6 @@ function renderCovTable() {
       <td style="font-family:var(--mono);font-size:11px">${r.followers || '—'}</td>
       <td style="font-size:11px">${r.location || '—'}</td>
       <td style="font-size:11px">${r.bucket || '—'}</td>
-      <td>${toolBadge}</td>
       <td>${bdBadge}</td>
       <td>${bdType}</td>
       <td>${bdTier}</td>
@@ -3596,10 +3594,11 @@ function closeProfileCard() {
 
     <!-- Stats -->
     <div class="cov-stats" id="covStats" style="display:none">
-      <div class="cov-stat"><div class="cov-stat-num" id="covTotal">—</div><div class="cov-stat-label">Manual list</div></div>
-      <div class="cov-stat found"><div class="cov-stat-num" id="covFound">—</div><div class="cov-stat-label">Found by tool</div></div>
-      <div class="cov-stat missing"><div class="cov-stat-num" id="covMissing">—</div><div class="cov-stat-label">Not yet found</div></div>
-      <div class="cov-stat"><div class="cov-stat-num" id="covPct">—</div><div class="cov-stat-label">Coverage</div></div>
+      <div class="cov-stat"><div class="cov-stat-num" id="covStatManual">—</div><div class="cov-stat-label">Manual list</div></div>
+      <div class="cov-stat"><div class="cov-stat-num" id="covStatBd">—</div><div class="cov-stat-label">BD Results</div></div>
+      <div class="cov-stat found"><div class="cov-stat-num" id="covStatMatched">—</div><div class="cov-stat-label">Matched</div></div>
+      <div class="cov-stat missing"><div class="cov-stat-num" id="covStatMOnly">—</div><div class="cov-stat-label">In manual, not BD</div></div>
+      <div class="cov-stat" style="color:var(--blue)"><div class="cov-stat-num" id="covStatBdOnly">—</div><div class="cov-stat-label">In BD, not manual</div></div>
     </div>
 
     <!-- Filter pills -->
@@ -3623,7 +3622,6 @@ function closeProfileCard() {
             <th>Followers</th>
             <th>Location</th>
             <th>Bucket</th>
-            <th>In Tool?</th>
             <th>In BD Results?</th>
             <th>BD Type</th>
             <th>BD Tier</th>
