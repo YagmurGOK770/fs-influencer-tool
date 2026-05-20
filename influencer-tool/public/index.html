@@ -4111,6 +4111,10 @@ function bdOnPlatformChange(platform) {
   if (startSel)  startSel.style.display  = platform === 'instagram' ? '' : 'none';
 }
 
+const BD_CACHE_CHUNK = 'bd_cached_chunk_';
+const BD_CACHE_META  = 'bd_cached_meta';
+const BD_CHUNK_SIZE  = 500;
+
 function loadEnrichTab() {
   // Restore cookie pool (with legacy single-cookie migration)
   let saved = [];
@@ -4162,18 +4166,31 @@ function loadEnrichTab() {
 
   // Restore cached search results (if any) so a refresh doesn't lose them
   try {
-    const cached = JSON.parse(localStorage.getItem('bd_cached_results') || 'null');
-    if (cached && Array.isArray(cached.profiles) && cached.profiles.length) {
-      bdAllResults = cached.profiles;
-      bdPlatform   = cached.platform || bdPlatform;
-      // Restore keyword/platform inputs so the user can re-search easily
-      const kwEl = document.getElementById('bdKeyword');
-      const ptEl = document.getElementById('bdPlatformSel');
-      if (kwEl && cached.keyword) kwEl.value = cached.keyword;
-      if (ptEl && cached.platform) ptEl.value = cached.platform;
-      bdApplyFilters();
-      const ageMin = Math.max(1, Math.round((Date.now() - cached.timestamp) / 60000));
-      setBdStatus(`Restored ${cached.profiles.length} cached results for "${cached.keyword}" (${ageMin} min ago). Run search again to refresh.`, '');
+    // Try new chunked format first, fall back to legacy single-key format
+    const meta = JSON.parse(localStorage.getItem(BD_CACHE_META) || 'null');
+    const legacy = !meta ? JSON.parse(localStorage.getItem('bd_cached_results') || 'null') : null;
+    const cached = meta || legacy;
+    if (cached) {
+      let profiles = [];
+      if (meta && meta.chunks > 0) {
+        for (let i = 0; i < meta.chunks; i++) {
+          const chunk = JSON.parse(localStorage.getItem(BD_CACHE_CHUNK + i) || '[]');
+          profiles = profiles.concat(chunk);
+        }
+      } else if (legacy && Array.isArray(legacy.profiles)) {
+        profiles = legacy.profiles;
+      }
+      if (profiles.length) {
+        bdAllResults = profiles;
+        bdPlatform   = cached.platform || bdPlatform;
+        const kwEl = document.getElementById('bdKeyword');
+        const ptEl = document.getElementById('bdPlatformSel');
+        if (kwEl && cached.keyword) kwEl.value = cached.keyword;
+        if (ptEl && cached.platform) ptEl.value = cached.platform;
+        bdApplyFilters();
+        const ageMin = Math.max(1, Math.round((Date.now() - cached.timestamp) / 60000));
+        setBdStatus(`Restored ${profiles.length} cached results for "${cached.keyword}" (${ageMin} min ago). Run search again to refresh.`, '');
+      }
     }
   } catch (_) { /* ignore corrupt cache */ }
 }
@@ -4190,22 +4207,44 @@ function bdSaveFilterState() {
 }
 
 function bdSaveCachedResults(keyword, platform) {
-  const base = { keyword, platform, timestamp: Date.now() };
+  // Clear any previous chunked cache
   try {
-    localStorage.setItem('bd_cached_results', JSON.stringify({ ...base, profiles: bdAllResults }));
-  } catch (_) {
-    // Full save exceeded quota — retry without post captions/locations (large arrays)
-    try {
-      const slim = bdAllResults.map(({ postCaptions, postLocations, ...rest }) => rest);
-      localStorage.setItem('bd_cached_results', JSON.stringify({ ...base, profiles: slim }));
-    } catch (e) {
-      console.warn('Could not cache results (quota exceeded):', e.message);
+    const oldMeta = JSON.parse(localStorage.getItem(BD_CACHE_META) || 'null');
+    const oldChunks = oldMeta?.chunks || 0;
+    for (let i = 0; i < oldChunks; i++) localStorage.removeItem(BD_CACHE_CHUNK + i);
+    localStorage.removeItem(BD_CACHE_META);
+    localStorage.removeItem('bd_cached_results'); // remove legacy key
+  } catch (_) {}
+
+  const meta = { keyword, platform, timestamp: Date.now(), total: bdAllResults.length, chunks: 0 };
+  let chunkIdx = 0;
+  try {
+    for (let i = 0; i < bdAllResults.length; i += BD_CHUNK_SIZE) {
+      const slice = bdAllResults.slice(i, i + BD_CHUNK_SIZE);
+      try {
+        localStorage.setItem(BD_CACHE_CHUNK + chunkIdx, JSON.stringify(slice));
+      } catch (_) {
+        // Chunk too big — retry slim (no postCaptions/postLocations/bio)
+        const slim = slice.map(({ postCaptions, postLocations, bio, ...rest }) => rest);
+        localStorage.setItem(BD_CACHE_CHUNK + chunkIdx, JSON.stringify(slim));
+      }
+      chunkIdx++;
     }
+    meta.chunks = chunkIdx;
+    localStorage.setItem(BD_CACHE_META, JSON.stringify(meta));
+  } catch (e) {
+    console.warn('Could not cache results (quota exceeded):', e.message);
   }
 }
 
 function bdClearCachedResults() {
-  try { localStorage.removeItem('bd_cached_results'); } catch (_) {}
+  try {
+    const meta = JSON.parse(localStorage.getItem(BD_CACHE_META) || 'null');
+    const chunks = meta?.chunks || 0;
+    for (let i = 0; i < chunks; i++) localStorage.removeItem(BD_CACHE_CHUNK + i);
+    localStorage.removeItem(BD_CACHE_META);
+    localStorage.removeItem('bd_cached_results');
+  } catch (_) {}
 }
 
 function bdClear() {
