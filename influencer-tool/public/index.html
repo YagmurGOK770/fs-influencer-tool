@@ -4108,12 +4108,18 @@ async function bdCountdown(seconds, msg) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function bdOnPlatformChange(platform) {
-  const igSection = document.getElementById('bdIgCookieSection');
-  const ttSection = document.getElementById('bdTtCookieSection');
-  const startSel  = document.getElementById('bdStartSlotSel');
-  if (igSection) igSection.style.display = platform === 'instagram' ? '' : 'none';
-  if (ttSection) ttSection.style.display = platform === 'tiktok'    ? '' : 'none';
-  if (startSel)  startSel.style.display  = platform === 'instagram' ? '' : 'none';
+  const igSection    = document.getElementById('bdIgCookieSection');
+  const ttSection    = document.getElementById('bdTtCookieSection');
+  const startSel     = document.getElementById('bdStartSlotSel');
+  const scanBtn      = document.getElementById('bdScanPostsBtn');
+  const reenrichBtn  = document.getElementById('bdReenrichBtn');
+  const ytEnrichBtn  = document.getElementById('bdYtEnrichBtn');
+  if (igSection)   igSection.style.display   = platform === 'instagram' ? '' : 'none';
+  if (ttSection)   ttSection.style.display   = platform === 'tiktok'    ? '' : 'none';
+  if (startSel)    startSel.style.display    = platform === 'instagram' ? '' : 'none';
+  if (scanBtn)     scanBtn.style.display     = platform === 'instagram' ? '' : 'none';
+  if (reenrichBtn) reenrichBtn.style.display = platform === 'instagram' || platform === 'tiktok' ? '' : 'none';
+  if (ytEnrichBtn) ytEnrichBtn.style.display = platform === 'youtube'   ? '' : 'none';
 }
 
 const BD_CACHE_CHUNK = 'bd_cached_chunk_';
@@ -4738,12 +4744,7 @@ function bdApplyFilters() {
   } else {
     document.getElementById('bdFltCount').textContent = '';
   }
-  // Show correct enrichment button based on platform
-  const isYT = bdPlatform === 'youtube';
-  const reenrichBtn = document.getElementById('bdReenrichBtn');
-  const ytEnrichBtn = document.getElementById('bdYtEnrichBtn');
-  if (reenrichBtn) reenrichBtn.style.display = isYT ? 'none' : '';
-  if (ytEnrichBtn) ytEnrichBtn.style.display = isYT ? '' : 'none';
+  // Button visibility is managed by bdOnPlatformChange — no need to repeat here
   // Always update BD Results tab if loaded — runs even when no Enrich search is active
   if (typeof bdrLoaded !== 'undefined' && bdrLoaded) bdrAutoApply();
 }
