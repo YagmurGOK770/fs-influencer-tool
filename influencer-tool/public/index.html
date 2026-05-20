@@ -5368,15 +5368,26 @@ async function bdSaveFiltered() {
   const btn = document.getElementById('bdSaveBtn');
   const originalText = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '⏳ Saving…';
+  const target = isExcluded ? 'excluded' : 'matching';
+  // Vercel has a ~4.5 MB body limit; batch to avoid 413 "Request Entity Too Large"
+  const BATCH = 300;
+  let totalSaved = 0;
+  let lastTable = '';
   try {
-    const resp = await fetch('/api/db-save', {
-      method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata', profiles: toSave, target: isExcluded ? 'excluded' : 'matching' }),
-    });
-    const data = await resp.json();
-    if (resp.ok) setBdStatus(`Saved ${data.saved} profiles to ${data.table || 'BrightData table'}.`, 'green');
-    else setBdStatus(`Save failed: ${data.error}`, 'red');
+    for (let i = 0; i < toSave.length; i += BATCH) {
+      const chunk = toSave.slice(i, i + BATCH);
+      btn.textContent = `⏳ Saving… ${Math.min(i + BATCH, toSave.length)}/${toSave.length}`;
+      const resp = await fetch('/api/db-save', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'brightdata', profiles: chunk, target }),
+      });
+      let data;
+      try { data = await resp.json(); } catch (_) { throw new Error('Server returned non-JSON (payload too large?)'); }
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      totalSaved += data.saved ?? 0;
+      lastTable = data.table || lastTable;
+    }
+    setBdStatus(`Saved ${totalSaved} profiles to ${lastTable || 'BrightData table'}.`, 'green');
   } catch (e) {
     setBdStatus(`Save error: ${e.message}`, 'red');
   } finally {
