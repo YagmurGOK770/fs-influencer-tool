@@ -5022,7 +5022,8 @@ async function bdSaveCurrentSearch() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     await bdFetchSearchHistory(data.search?.id);
-    setBdStatus(`Saved search "${keywords}" to your library.`, 'green');
+    const label = keywords.length > 60 ? keywords.slice(0, 57) + '…' : keywords;
+    setBdStatus(`Saved search "${label}" to your library.`, 'green');
   } catch (e) {
     setBdStatus(`Failed to save search: ${e.message}`, 'red');
   }
