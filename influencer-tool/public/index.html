@@ -6066,16 +6066,32 @@ function bdrAutoApply() {
 async function bdrSaveReclassify() {
   if (!bdrPendingMatching || !bdrPendingExcluded) return;
   const btn = document.getElementById('bdrSaveReclassifyBtn');
-  btn.disabled = true; btn.textContent = '⏳ Saving…';
+  btn.disabled = true;
+  // Send in chunks of 300 each to stay under Vercel body limit
+  const CHUNK = 300;
   try {
-    const resp = await fetch('/api/db-save', {
-      method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata-reclassify', matching: bdrPendingMatching, excluded: bdrPendingExcluded }),
-    });
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    const matching = bdrPendingMatching, excluded = bdrPendingExcluded;
+    const totalChunks = Math.max(
+      Math.ceil(matching.length / CHUNK),
+      Math.ceil(excluded.length / CHUNK),
+      1
+    );
+    for (let i = 0; i < totalChunks; i++) {
+      const mChunk = matching.slice(i * CHUNK, (i + 1) * CHUNK);
+      const eChunk = excluded.slice(i * CHUNK, (i + 1) * CHUNK);
+      // Only send non-empty chunks, but always need at least one call to clear moves
+      if (!mChunk.length && !eChunk.length) continue;
+      btn.textContent = `⏳ Saving… ${Math.min((i + 1) * CHUNK, matching.length + excluded.length)}/${matching.length + excluded.length}`;
+      const resp = await fetch('/api/db-save', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'brightdata-reclassify', matching: mChunk, excluded: eChunk }),
+      });
+      let data;
+      try { data = await resp.json(); } catch (_) { throw new Error('Server returned non-JSON (payload too large?)'); }
+      if (!resp.ok) throw new Error(data.error || resp.statusText);
+    }
     document.getElementById('bdrReclassifyMsg').textContent =
-      `Saved — ${data.matching} matching, ${data.excluded} filtered out`;
+      `Saved — ${matching.length} matching, ${excluded.length} filtered out`;
     document.getElementById('bdrSaveReclassifyBtn').style.display = 'none';
     bdrPendingMatching = null;
     bdrPendingExcluded = null;
