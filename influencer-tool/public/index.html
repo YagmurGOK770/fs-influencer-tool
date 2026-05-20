@@ -3375,6 +3375,38 @@ function renderCovTable() {
   }).join('');
 }
 
+function exportCovCsv() {
+  if (!covAllRows.length) return;
+  const TIER_LABEL = { 1: 'T1 Priority', 2: 'T2 Strong', 3: 'T3 Watch', 4: 'T4 Non-food' };
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const headers = ['Name','Handle','Platform','Followers','Location','Bucket','Niche','In BD Results','BD Followers','BD Type','BD Tier','Profile URL','Notes'];
+  const lines = [headers.join(',')];
+  for (const r of covAllRows) {
+    lines.push([
+      esc(r.name),
+      esc(r.handle),
+      esc(r.platform),
+      esc(r.followers),
+      esc(r.location),
+      esc(r.bucket),
+      esc(r.niche),
+      esc(r.bdFound ? 'Yes' : 'No'),
+      esc(r.bdFollowers),
+      esc(r.bdType),
+      esc(r.bdTier != null ? (TIER_LABEL[r.bdTier] || 'T' + r.bdTier) : ''),
+      esc(r.bdProfileUrl || r.profileUrl),
+      esc(r.notes),
+    ].join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(blob),
+    download: `coverage-${new Date().toISOString().slice(0,10)}.csv`,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 // ── Profile card (click name to open) ────────────────────────────────────────
 function openProfileCard(handle) {
   const r = allRows.find(x => x.handle === handle || x.handle === '@' + handle) || {};
@@ -3609,6 +3641,7 @@ function closeProfileCard() {
         <button class="cov-pill"        data-filter="found"   onclick="setCovFilter('found',this)">Found only</button>
       </div>
       <div style="font-size:12px;color:var(--muted)" id="covFilterLabel"></div>
+      <button class="btn-sm" onclick="exportCovCsv()">⬇ Export CSV</button>
     </div>
 
     <!-- Table -->
