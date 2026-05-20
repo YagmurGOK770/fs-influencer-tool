@@ -5357,6 +5357,12 @@ async function runBdSearch() {
       bdAllResults = Array.from(profileMap.values());
       bdSetView('matching');
       bdApplyFilters();
+
+      // Auto-save new profiles from this keyword to DB immediately (fire-and-forget)
+      const newProfiles = profiles
+        .filter(p => (p.handle || '').trim())
+        .map(p => ({ ...p, rawPlatform: bdPlatform }));
+      if (newProfiles.length) bdAutoSaveToDB(newProfiles, 'matching');
     }
 
     bdAllResults = Array.from(profileMap.values());
@@ -5440,6 +5446,19 @@ async function bdSaveFiltered() {
     btn.disabled = false;
     btn.textContent = originalText;
   }
+}
+
+async function bdAutoSaveToDB(profiles, target) {
+  // Silent background upsert — batched to stay under Vercel body limit
+  const BATCH = 300;
+  try {
+    for (let i = 0; i < profiles.length; i += BATCH) {
+      await fetch('/api/db-save', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'brightdata', profiles: profiles.slice(i, i + BATCH), target }),
+      });
+    }
+  } catch (_) { /* silent — don't interrupt the search */ }
 }
 
 function bdExportJSON() {
