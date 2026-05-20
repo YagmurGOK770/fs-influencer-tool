@@ -2485,7 +2485,7 @@ function switchMainTab(tab) {
   if (tab === 'coverage')  loadCoverage();
   if (tab === 'history')   loadSearchHistory();
   if (tab === 'enrich')    loadEnrichTab();
-  if (tab === 'bdresults') loadBdResults();
+  if (tab === 'bdresults') { bdrUpdateModelSel(); loadBdResults(); }
   localStorage.setItem('activeMainTab', tab);
 }
 
@@ -3068,6 +3068,7 @@ function eExportXlsx() {
 
 document.addEventListener('DOMContentLoaded', () => {
   eInit();
+  bdrUpdateModelSel();
   const savedTab = localStorage.getItem('activeMainTab');
   if (savedTab) switchMainTab(savedTab);
 });
@@ -3320,27 +3321,57 @@ async function loadCoverage() {
 
 function renderCovTable() {
   const rows = covFilter === 'all'     ? covAllRows
-             : covFilter === 'found'   ? covAllRows.filter(r => r.found)
-             : covAllRows.filter(r => !r.found);
+             : covFilter === 'found'   ? covAllRows.filter(r => r.found || r.bdFound)
+             : covAllRows.filter(r => !r.found && !r.bdFound);
 
   document.getElementById('covFilterLabel').textContent = `Showing ${rows.length} of ${covAllRows.length}`;
 
+  const TIER_LABEL = { 1: 'T1 Priority', 2: 'T2 Strong', 3: 'T3 Watch', 4: 'T4 Non-food' };
+  const TIER_COLOR = { 1: 'var(--green)', 2: 'var(--blue)', 3: 'var(--amber)', 4: '#c0392b' };
+
   const tbody = document.getElementById('covTableBody');
   tbody.innerHTML = rows.map(r => {
-    const badge = r.found
-      ? `<span class="cov-badge found">Found</span>`
-      : `<span class="cov-badge missing">Missing</span>`;
-    const toolFollowers = r.found ? (r.toolFollowers || '—') : '—';
-    const handle = r.igHandle || r.ttHandle || r.ytHandle || r.xHandle || r.handle || '—';
+    const handle = (r.igHandle || r.ttHandle || r.ytHandle || r.xHandle || r.handle || '').replace(/^@/, '');
+
+    // Clickable handle linking to their profile
+    const handleHtml = r.profileUrl
+      ? `<a href="${r.profileUrl}" target="_blank" rel="noopener"
+           style="font-family:var(--mono);font-size:11px;color:var(--blue);text-decoration:none">
+           @${handle} ↗</a>`
+      : `<span style="font-family:var(--mono);font-size:11px;color:var(--muted)">@${handle}</span>`;
+
+    // In Tool badge
+    const toolBadge = r.found
+      ? `<span class="cov-badge found">✓ Found</span>`
+      : `<span class="cov-badge missing">✕ Missing</span>`;
+
+    // In BD Results badge with link
+    const bdBadge = r.bdFound
+      ? `<a href="${r.bdProfileUrl}" target="_blank" rel="noopener" style="text-decoration:none">
+           <span class="cov-badge found">✓ In BD ↗</span></a>`
+      : `<span class="cov-badge missing">✕ Not in BD</span>`;
+
+    // BD Type
+    const bdType = r.bdType
+      ? `<span style="font-size:11px;color:var(--text)">${r.bdType}</span>`
+      : '<span style="color:var(--muted2)">—</span>';
+
+    // BD Tier badge
+    const bdTier = r.bdTier != null
+      ? `<span style="font-size:10px;font-weight:700;color:${TIER_COLOR[r.bdTier]||'var(--muted)'}">${TIER_LABEL[r.bdTier]||'T'+r.bdTier}</span>`
+      : '<span style="color:var(--muted2)">—</span>';
+
     return `<tr>
       <td style="font-weight:600">${r.name || '—'}</td>
-      <td>${r.platform || '—'}</td>
-      <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${handle}</td>
+      <td style="font-size:11px">${r.platform || '—'}</td>
+      <td style="white-space:nowrap">${handleHtml}</td>
       <td style="font-family:var(--mono);font-size:11px">${r.followers || '—'}</td>
-      <td>${r.location || '—'}</td>
-      <td>${r.bucket || '—'}</td>
-      <td>${badge}</td>
-      <td style="font-family:var(--mono);font-size:11px;color:${r.found ? 'var(--green)' : 'var(--muted2)'}">${toolFollowers}</td>
+      <td style="font-size:11px">${r.location || '—'}</td>
+      <td style="font-size:11px">${r.bucket || '—'}</td>
+      <td>${toolBadge}</td>
+      <td>${bdBadge}</td>
+      <td>${bdType}</td>
+      <td>${bdTier}</td>
       <td style="font-size:11px;color:var(--muted)">${r.notes || ''}</td>
     </tr>`;
   }).join('');
@@ -3589,11 +3620,13 @@ function closeProfileCard() {
             <th>Name</th>
             <th>Platform</th>
             <th>Handle</th>
-            <th>Followers (manual)</th>
+            <th>Followers</th>
             <th>Location</th>
             <th>Bucket</th>
-            <th>Status</th>
-            <th>Tool followers</th>
+            <th>In Tool?</th>
+            <th>In BD Results?</th>
+            <th>BD Type</th>
+            <th>BD Tier</th>
             <th>Notes</th>
           </tr>
         </thead>
@@ -3919,6 +3952,15 @@ function closeProfileCard() {
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-sm" onclick="bdBulkToggleBadges('bdrTbody', this)">⊞ Expand all</button>
+        <select id="bdrClassifyProviderSel" onchange="bdrUpdateModelSel()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="anthropic">Anthropic</option>
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Google</option>
+          <option value="grok">xAI</option>
+        </select>
+        <select id="bdrClassifyModelSel" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:180px"></select>
+        <button class="btn-sm" id="bdrClassifyBtn" onclick="bdrClassifyVisible()" title="Run AI classification on visible rows">✨ AI Classify</button>
+        <button class="btn-sm" id="bdrClassifyTestBtn" onclick="bdrClassifyVisible(10)" title="Test: classify first 10 rows only" style="opacity:.7">✨ Test (10)</button>
         <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrApplyFilter()" style="width:210px">
       </div>
     </div>
@@ -3955,6 +3997,8 @@ function closeProfileCard() {
               <th>Bio</th>
               <th onclick="bdrSetSort('location')" style="cursor:pointer;user-select:none">Location <span id="bdrSrt-location" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('type')" style="cursor:pointer;user-select:none" title="Label the influencer type — saved in your browser">Type <span id="bdrSrt-type" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('llm_tier')" style="cursor:pointer;user-select:none" title="AI outreach tier">Tier <span id="bdrSrt-llm_tier" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th title="Tier reasoning">Reason</th>
               <th onclick="bdrSetSort('fetched_at')" style="cursor:pointer;user-select:none">Saved <span id="bdrSrt-fetched_at" style="font-size:10px;opacity:1;color:var(--accent)">↓</span></th>
             </tr>
           </thead>
@@ -3969,18 +4013,17 @@ function closeProfileCard() {
 
     <!-- datalist for type autocomplete -->
     <datalist id="bdrTypeList">
-      <option value="Food Creator">
-      <option value="Restaurant">
       <option value="Chef">
-      <option value="Food Photographer">
-      <option value="Lifestyle">
-      <option value="Travel + Food">
-      <option value="Vegan / Plant-based">
-      <option value="Baker / Pastry">
-      <option value="Drinks / Cocktails">
-      <option value="Fitness + Food">
-      <option value="Family Food">
+      <option value="Home Cook & Recipe Creator">
       <option value="Food Reviewer">
+      <option value="Food Guide & Curator">
+      <option value="Mukbanger / Eating Show">
+      <option value="Street Food & Market Explorer">
+      <option value="Cuisine Specialist">
+      <option value="Drinks & Nightlife Creator">
+      <option value="Travel Blogger">
+      <option value="Lifestyle Blogger">
+      <option value="City Guide / Editorial">
     </datalist>
 
   </div>
@@ -4187,7 +4230,7 @@ function bdOnPlatformChange(platform) {
   const ytEnrichBtn  = document.getElementById('bdYtEnrichBtn');
   if (igSection)   igSection.style.display   = platform === 'instagram' ? '' : 'none';
   if (ttSection)   ttSection.style.display   = platform === 'tiktok'    ? '' : 'none';
-  if (xSection)    xSection.style.display    = platform === 'x'         ? '' : 'none';
+  if (xSection)    xSection.style.display    = 'none'; // X uses Apify — no cookie needed
   if (startSel)    startSel.style.display    = platform === 'instagram' ? '' : 'none';
   if (scanBtn)     scanBtn.style.display     = platform === 'instagram' ? '' : 'none';
   if (reenrichBtn) reenrichBtn.style.display = platform === 'instagram' || platform === 'tiktok' ? '' : 'none';
@@ -5943,6 +5986,97 @@ function bdrGetType(handle, platform) {
   return bdrGetTypes()[`${platform}:${handle}`] || '';
 }
 
+const BDR_LLM_KEY = 'bd_llm_meta';
+
+function bdrGetAllLLMMeta() {
+  try { return JSON.parse(localStorage.getItem(BDR_LLM_KEY) || '{}'); } catch (_) { return {}; }
+}
+
+function bdrGetLLMMeta(handle, platform) {
+  return bdrGetAllLLMMeta()[`${platform}:${handle}`] || {};
+}
+
+function bdrSetLLMMeta(handle, platform, tier, tier_reason, reason) {
+  const all = bdrGetAllLLMMeta();
+  all[`${platform}:${handle}`] = { tier, tier_reason, reason };
+  localStorage.setItem(BDR_LLM_KEY, JSON.stringify(all));
+}
+
+function bdrUpdateModelSel() {
+  const provider = document.getElementById('bdrClassifyProviderSel').value;
+  const sel = document.getElementById('bdrClassifyModelSel');
+  sel.innerHTML = (PROVIDER_MODELS[provider] || [])
+    .map(m => `<option value="${m.id}">${m.label}</option>`).join('');
+}
+
+async function bdrClassifyVisible(limit) {
+  const isTest = !!limit;
+  const btn = document.getElementById(isTest ? 'bdrClassifyTestBtn' : 'bdrClassifyBtn');
+  const rows = isTest ? bdrCurrentRows.slice(0, limit) : bdrCurrentRows;
+  if (!rows || !rows.length) return;
+
+  btn.disabled = true;
+  btn.textContent = `⏳ Classifying 0/${rows.length}…`;
+
+  const provider = document.getElementById('bdrClassifyProviderSel')?.value || 'anthropic';
+  const model    = document.getElementById('bdrClassifyModelSel')?.value    || 'claude-haiku-4-5-20251001';
+
+  const profiles = rows.map(m => ({
+    handle:          m.handle,
+    platform:        m.platforms[0] || '',
+    full_name:       m.full_name || '',
+    followers:       m.followers || '',
+    engagement_rate: m.engagement_rate || 0,
+    platform_count:  m.platforms?.length || 1,
+    bio:             m.bio || '',
+    post_captions:   m.post_captions || [],
+  }));
+
+  // Send in batches of 50
+  const BATCH = 50;
+  let done = 0;
+  try {
+    for (let i = 0; i < profiles.length; i += BATCH) {
+      const batch = profiles.slice(i, i + BATCH);
+      const resp = await fetch('/api/classify', {
+        method: 'POST',
+        headers: getApiHeaders(),
+        body: JSON.stringify({ profiles: batch, provider, model }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const { results } = await resp.json();
+      const patches = [];
+      for (const r of results) {
+        if (r.type) bdrSetType(r.handle, r.platform, r.type);
+        if (r.tier || r.reason) bdrSetLLMMeta(r.handle, r.platform, r.tier, r.tier_reason, r.reason);
+        patches.push({
+          handle:           r.handle,
+          platform:         r.platform,
+          influencer_type:  r.type        || null,
+          influencer_tier:  r.tier        ?? null,
+          tier_reason:      r.tier_reason || null,
+        });
+      }
+      // Fire-and-forget save to DB
+      bdrPatchClassificationDB(patches);
+      done += batch.length;
+      btn.textContent = `⏳ Classifying ${done}/${profiles.length}…`;
+    }
+    btn.textContent = `✅ Done (${done})`;
+    // Re-render table with updated types
+    bdrRenderTable(rows);
+  } catch (e) {
+    btn.textContent = '✨ AI Classify';
+    alert('Classification failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => { if (btn.textContent.startsWith('✅')) btn.textContent = '✨ AI Classify'; }, 3000);
+  }
+}
+
 // ── BD Results: re-apply current filter rules ──────────────────────────
 
 function bdrMergeByHandle(rows) {
@@ -6245,6 +6379,7 @@ function bdrApplyFilter() {
         case 'engagement_rate': av=Number(a.engagement_rate)||0;   bv=Number(b.engagement_rate)||0;   break;
         case 'location':        av=(a.location||'').toLowerCase(); bv=(b.location||'').toLowerCase(); break;
         case 'type':            av=bdrGetType(a.handle,'').toLowerCase(); bv=bdrGetType(b.handle,'').toLowerCase(); break;
+        case 'llm_tier':        av=bdrGetLLMMeta(a.handle,a.platforms?.[0]||'').tier||99; bv=bdrGetLLMMeta(b.handle,b.platforms?.[0]||'').tier||99; break;
         case 'fetched_at':      av=a.fetched_at||'';               bv=b.fetched_at||'';               break;
         default:                av=''; bv='';
       }
@@ -6310,7 +6445,10 @@ function bdrTogglePosts(id) {
   if (btn) btn.textContent = btn.textContent.replace(isHidden ? '▾' : '▴', isHidden ? '▴' : '▾');
 }
 
+let bdrCurrentRows = [];
+
 function bdrRenderTable(rows) {
+  bdrCurrentRows = rows;
   const PLAT_COLORS = { instagram: '#e1306c', tiktok: '#010101', youtube: '#ff0000', x: '#1da1f2' };
   const PLAT_LABEL  = { instagram: 'IG', tiktok: 'TT', youtube: 'YT', x: 'X' };
 
@@ -6411,8 +6549,23 @@ function bdrRenderTable(rows) {
       ? new Date(m.fetched_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'2-digit'})
       : '—';
 
-    const safeHandle = (m.handle||'').replace(/"/g,'&quot;');
-    const typeVal    = bdrGetType(m.handle, m.platforms[0]||'').replace(/"/g,'&quot;');
+    const safeHandle   = (m.handle||'').replace(/"/g,'&quot;');
+    const typeVal      = bdrGetType(m.handle, m.platforms[0]||'').replace(/"/g,'&quot;');
+    const llmMeta    = bdrGetLLMMeta(m.handle, m.platforms[0]||'');
+    const TIER_STYLE = {
+      1: { label: 'T1 Priority',   bg: '#edf7f1', color: 'var(--green)',  border: 'var(--green)' },
+      2: { label: 'T2 Strong',     bg: '#eef4fc', color: 'var(--blue)',   border: 'var(--blue)'  },
+      3: { label: 'T3 Watch',      bg: '#fef8ec', color: 'var(--amber)',  border: 'var(--amber)' },
+      4: { label: 'T4 Non-food',   bg: '#fdf0ee', color: '#c0392b',       border: '#c0392b'      },
+    };
+    const ts = TIER_STYLE[llmMeta.tier];
+    const tierBadge  = ts
+      ? `<span style="font-size:10px;font-weight:700;background:${ts.bg};color:${ts.color};border:1px solid ${ts.border}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${ts.label}</span>`
+      : '<span style="color:var(--muted2)">—</span>';
+    const tierReason = llmMeta.tier_reason || llmMeta.reason || '';
+    const reasonHtml = tierReason
+      ? `<span title="${tierReason.replace(/"/g,"'")}" style="font-size:10.5px;color:var(--muted);cursor:help">${tierReason.slice(0,60)}${tierReason.length>60?'…':''}</span>`
+      : '<span style="color:var(--muted2)">—</span>';
 
     // Expandable posts row — combined captions from all platforms
     const captions   = m.post_captions;
@@ -6426,7 +6579,7 @@ function bdrRenderTable(rows) {
 
     const postsExpandHtml = captions.length ? `
     <tr id="${postsRowId}" style="display:none">
-      <td colspan="14" style="padding:0;background:var(--surface);border-bottom:2px solid var(--border)">
+      <td colspan="16" style="padding:0;background:var(--surface);border-bottom:2px solid var(--border)">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto">
           ${captions.map((cap,i) => {
             const loc  = postLocs[i] ? `<span style="display:inline-block;font-size:10px;font-weight:600;background:var(--blue-bg);color:var(--blue);border-radius:100px;padding:1px 7px;margin-right:6px;flex-shrink:0">📍 ${postLocs[i]}</span>` : '';
@@ -6458,17 +6611,78 @@ function bdrRenderTable(rows) {
       <td style="max-width:200px">${bioHtml}</td>
       <td>${locHtml}</td>
       <td>
-        <input class="bucket-input" type="text" list="bdrTypeList" placeholder="+ add type"
-          value="${typeVal}" data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}"
-          onblur="bdrSaveType(this)" onkeydown="if(event.key==='Enter'){this.blur();event.preventDefault()}"/>
+        <select class="bucket-input" data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}"
+          onchange="bdrSaveType(this)" style="min-width:160px">
+          <option value="">— select type —</option>
+          <option value="Chef"${typeVal==='Chef'?' selected':''}>Chef</option>
+          <option value="Home Cook & Recipe Creator"${typeVal==='Home Cook & Recipe Creator'?' selected':''}>Home Cook & Recipe Creator</option>
+          <option value="Food Reviewer"${typeVal==='Food Reviewer'?' selected':''}>Food Reviewer</option>
+          <option value="Food Guide & Curator"${typeVal==='Food Guide & Curator'?' selected':''}>Food Guide & Curator</option>
+          <option value="Mukbanger / Eating Show"${typeVal==='Mukbanger / Eating Show'?' selected':''}>Mukbanger / Eating Show</option>
+          <option value="Street Food & Market Explorer"${typeVal==='Street Food & Market Explorer'?' selected':''}>Street Food & Market Explorer</option>
+          <option value="Cuisine Specialist"${typeVal==='Cuisine Specialist'?' selected':''}>Cuisine Specialist</option>
+          <option value="Drinks & Nightlife Creator"${typeVal==='Drinks & Nightlife Creator'?' selected':''}>Drinks & Nightlife Creator</option>
+          <option value="Travel Blogger"${typeVal==='Travel Blogger'?' selected':''}>Travel Blogger</option>
+          <option value="Lifestyle Blogger"${typeVal==='Lifestyle Blogger'?' selected':''}>Lifestyle Blogger</option>
+          <option value="City Guide / Editorial"${typeVal==='City Guide / Editorial'?' selected':''}>City Guide / Editorial</option>
+        </select>
       </td>
+      <td style="white-space:nowrap">
+        <select data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}"
+          onchange="bdrSaveTier(this)"
+          style="font-size:11px;padding:2px 6px;border:1px solid ${ts?.border||'var(--border)'};border-radius:6px;background:${ts?.bg||'var(--white)'};color:${ts?.color||'var(--text)'};font-weight:${ts?'700':'400'}">
+          <option value="">— tier —</option>
+          <option value="1"${llmMeta.tier===1?' selected':''}>T1 Priority</option>
+          <option value="2"${llmMeta.tier===2?' selected':''}>T2 Strong</option>
+          <option value="3"${llmMeta.tier===3?' selected':''}>T3 Watch</option>
+          <option value="4"${llmMeta.tier===4?' selected':''}>T4 Non-food</option>
+        </select>
+      </td>
+      <td style="max-width:200px">${reasonHtml}</td>
       <td style="font-size:11px;color:var(--muted2);white-space:nowrap">${savedAt}</td>
     </tr>${postsExpandHtml}`;
   }).join('');
 }
 
 function bdrSaveType(input) {
-  bdrSetType(input.dataset.handle, input.dataset.platform, input.value);
+  const handle   = input.dataset.handle;
+  const platform = input.dataset.platform;
+  bdrSetType(handle, platform, input.value);
+  bdrPatchClassificationDB([{ handle, platform, influencer_type: input.value || null }]);
+}
+
+function bdrSaveTier(select) {
+  const handle   = select.dataset.handle;
+  const platform = select.dataset.platform;
+  const tier     = select.value ? Number(select.value) : null;
+  const meta     = bdrGetLLMMeta(handle, platform);
+  bdrSetLLMMeta(handle, platform, tier, meta.tier_reason, meta.reason);
+  // Re-colour the select to match new tier
+  const TIER_STYLE = {
+    1: { bg: '#edf7f1', color: 'var(--green)',  border: 'var(--green)' },
+    2: { bg: '#eef4fc', color: 'var(--blue)',   border: 'var(--blue)'  },
+    3: { bg: '#fef8ec', color: 'var(--amber)',  border: 'var(--amber)' },
+    4: { bg: '#fdf0ee', color: '#c0392b',       border: '#c0392b'      },
+  };
+  const ts = tier ? TIER_STYLE[tier] : null;
+  select.style.background  = ts?.bg     || 'var(--white)';
+  select.style.color       = ts?.color  || 'var(--text)';
+  select.style.borderColor = ts?.border || 'var(--border)';
+  select.style.fontWeight  = ts ? '700' : '400';
+  bdrPatchClassificationDB([{ handle, platform, influencer_tier: tier }]);
+}
+
+async function bdrPatchClassificationDB(patches) {
+  if (!patches.length) return;
+  try {
+    await fetch('/api/db-save', {
+      method: 'POST',
+      headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'patch-classification', patches }),
+    });
+  } catch (e) {
+    console.warn('[bdr] patch-classification failed silently:', e.message);
+  }
 }
 
 function bdrProfileUrl(r) {

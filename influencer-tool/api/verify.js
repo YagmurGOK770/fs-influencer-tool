@@ -1166,224 +1166,116 @@ async function ytKeywordSearch(keyword) {
   return profiles;
 }
 
-async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
-  // X requires an authenticated session — uses the residential proxy (same as Instagram)
-  // so our auth_token + ct0 cookies are passed through intact (Web Unlocker would strip them).
-  const cookies = (Array.isArray(sessionCookies) ? sessionCookies : [sessionCookies]).filter(Boolean);
-  if (!cookies.length) {
-    throw new Error('X session cookie required. Paste your auth_token= cookie in the search panel.');
-  }
+async function xUserSearch(keyword, _sessionCookies, onProgress = () => {}) {
+  // Uses Apify twitter-scraper — no cookie management needed, handles Cloudflare/auth internally.
+  const apifyToken = process.env.APIFY_API_TOKEN;
+  if (!apifyToken) throw new Error('APIFY_API_TOKEN not set — add it to .env.local');
 
-  const MAX_PAGES        = 10; // each page ≈ 20 users; 10 pages ≈ 200 users per keyword
-  const PAGES_PER_COOKIE = 3;  // rotate to next account every N pages (same as Instagram)
-  const sleep = (min, max) => new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
+  const tag = keyword.replace(/^#/, '').trim();
+  console.log(`[x-apify] starting search for "${tag}"`);
+  onProgress({ phase: 'searching', current: 0, total: 200 });
 
-  // Which cookie to use for a given pagination page (1-based), rotates every PAGES_PER_COOKIE
-  function cookieForPage(pageNum) {
-    return cookies[Math.floor((pageNum - 1) / PAGES_PER_COOKIE) % cookies.length];
-  }
-  function cookieIdxForPage(pageNum) {
-    return Math.floor((pageNum - 1) / PAGES_PER_COOKIE) % cookies.length;
-  }
-
-  // Extract auth_token and ct0 from a raw cookie string
-  function parseXCookie(raw) {
-    const authMatch = raw.match(/auth_token=([^;]+)/);
-    const ct0Match  = raw.match(/ct0=([^;]+)/);
-    return {
-      authToken: authMatch ? authMatch[1].trim() : '',
-      ct0:       ct0Match  ? ct0Match[1].trim()  : '',
-      raw,
-    };
-  }
-
-  const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
-  const proxyDispatcher = proxyUrl ? new ProxyAgent({
-    uri: proxyUrl,
-    requestTls: { rejectUnauthorized: false },
-    proxyTls:   { rejectUnauthorized: false },
-  }) : null;
-
-  if (proxyDispatcher) console.log('[x-search] routing via BrightData residential proxy');
-  else                 console.log('[x-search] routing direct (no proxy configured)');
-
-  async function xFetch(url, cookieRaw, extraHeaders = {}) {
-    const { ct0 } = parseXCookie(cookieRaw);
-    const headers = {
-      'authorization':           'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
-      'x-csrf-token':            ct0,
-      'cookie':                  cookieRaw,
-      'x-twitter-auth-type':     'OAuth2Session',
-      'x-twitter-active-user':   'yes',
-      'x-twitter-client-language': 'en',
-      'x-client-uuid':           'f2e2cd91-4be1-4af8-b5e1-1a3a3c29e9a3',
-      'accept':                  '*/*',
-      'accept-language':         'en-US,en;q=0.9',
-      'referer':                 'https://x.com/search?q=' + encodeURIComponent(keyword) + '&src=typed_query&f=user',
-      'sec-fetch-dest':          'empty',
-      'sec-fetch-mode':          'cors',
-      'sec-fetch-site':          'same-origin',
-      'user-agent':              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-      ...extraHeaders,
-    };
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 30000);
-    const fetcher = proxyDispatcher ? undiciFetch : fetch;
-    try {
-      return await fetcher(url, {
-        headers,
-        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
-        signal: ctrl.signal,
-      });
-    } finally { clearTimeout(t); }
-  }
-
-  // X GraphQL search API — SearchTimeline
-  const SEARCH_FEATURES = encodeURIComponent(JSON.stringify({
-    rweb_tipjar_consumption_enabled: true,
-    responsive_web_graphql_exclude_directive_enabled: true,
-    verified_phone_label_enabled: false,
-    creator_subscriptions_tweet_preview_api_enabled: true,
-    responsive_web_graphql_timeline_navigation_enabled: true,
-    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
-    communities_web_enable_tweet_community_results_fetch: true,
-    c9s_tweet_anatomy_moderator_badge_enabled: true,
-    articles_preview_enabled: true,
-    responsive_web_edit_tweet_api_enabled: true,
-    graphql_is_translatable_rweb_tweet_and_user_result_enabled: true,
-    view_counts_everywhere_api_enabled: true,
-    longform_notetweets_consumption_enabled: true,
-    responsive_web_twitter_article_tweet_consumption_enabled: true,
-    tweet_awards_web_tipping_enabled: false,
-    creator_subscriptions_quote_tweet_preview_enabled: false,
-    freedom_of_speech_not_reach_the_hear_this_out_enabled: true,
-    standardized_nudges_misinfo: true,
-    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
-    rweb_video_timestamps_enabled: true,
-    longform_notetweets_rich_text_read_enabled: true,
-    longform_notetweets_inline_media_enabled: true,
-    responsive_web_enhance_cards_enabled: false,
-  }));
-
-  // SearchTimeline endpoint — x.com/i/api/ path is more stable than api.x.com/graphql/
-  function buildSearchUrl(query, cursor) {
-    const vars = { rawQuery: query, count: 20, querySource: 'typed_query', product: 'People' };
-    if (cursor) vars.cursor = cursor;
-    return `https://x.com/i/api/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(vars))}&features=${SEARCH_FEATURES}`;
-  }
-
-  function extractUsersAndCursor(data) {
-    const users = [];
-    let nextCursor = null;
-    const instructions = data?.data?.search_by_raw_query?.search_timeline?.timeline?.instructions || [];
-    for (const instr of instructions) {
-      const entries = instr.entries || (instr.entry ? [instr.entry] : []);
-      for (const entry of entries) {
-        // Cursor entry
-        if (entry.content?.entryType === 'TimelineTimelineCursor' && entry.content?.cursorType === 'Bottom') {
-          nextCursor = entry.content.value;
-          continue;
-        }
-        // User entry (direct)
-        const ur = entry.content?.itemContent?.user_results?.result;
-        if (ur?.legacy?.screen_name) {
-          users.push(buildXProfile(ur));
-          continue;
-        }
-        // Module entry (grid of users)
-        for (const item of entry.content?.items || []) {
-          const ur2 = item.item?.itemContent?.user_results?.result;
-          if (ur2?.legacy?.screen_name) users.push(buildXProfile(ur2));
-        }
-      }
+  // 1. Start actor run — apidojo/twitter-scraper searches tweets by keyword/hashtag
+  const runResp = await fetch(
+    `https://api.apify.com/v2/acts/apidojo~tweet-scraper/runs?token=${apifyToken}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        searchTerms:    [`#${tag}`],
+        maxItems:       200,
+        addUserInfo:    true,
+        queryType:      'Latest',
+      }),
     }
-    return { users, nextCursor };
+  );
+  const runData = await runResp.json();
+  const runId     = runData?.data?.id;
+  const datasetId = runData?.data?.defaultDatasetId;
+  if (!runId) throw new Error(`Apify X run failed to start: ${JSON.stringify(runData)}`);
+  console.log(`[x-apify] run started runId=${runId} tag="${tag}"`);
+
+  // 2. Poll until finished
+  const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT']);
+  let attempts = 0;
+  while (attempts++ < 36) {
+    await new Promise(r => setTimeout(r, 5000));
+    const sResp  = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${apifyToken}`);
+    const sData  = await sResp.json();
+    const status = sData?.data?.status;
+    const itemCount = sData?.data?.stats?.itemCount ?? 0;
+    console.log(`[x-apify] run=${runId} status=${status} items=${itemCount}`);
+    onProgress({ phase: 'searching', current: Math.min(itemCount, 200), total: 200 });
+    if (status === 'SUCCEEDED') break;
+    if (TERMINAL.has(status)) throw new Error(`Apify X run ${status}`);
   }
 
-  function buildXProfile(ur) {
-    const user = ur.legacy;
-    return {
-      handle:      user.screen_name,
-      fullName:    user.name || '',
-      followers:   String(user.followers_count ?? ''),
-      bio:         user.description || '',
-      isVerified:  !!(ur.is_blue_verified || user.verified),
-      postCount:   String(user.statuses_count ?? ''),
-      location:    user.location || '',
-      avatarUrl:   (user.profile_image_url_https || '').replace('_normal', '_400x400'),
-      profileUrl:  `https://x.com/${user.screen_name}`,
-      rawPlatform: 'x',
-      platform:    'x',
-    };
+  // 3. Fetch dataset items
+  const itemsResp = await fetch(
+    `https://api.apify.com/v2/datasets/${datasetId}/items?token=${apifyToken}&clean=true`
+  );
+  const items = await itemsResp.json();
+  console.log(`[x-apify] dataset=${datasetId} → ${items.length} tweet items`);
+
+  // 4. Group tweets by author, aggregate engagement
+  const authorTweets = new Map();
+  for (const item of items) {
+    const user = item.author || {};
+    const handle = user.userName;
+    if (!handle) continue;
+    const key = handle.toLowerCase();
+    if (!authorTweets.has(key)) authorTweets.set(key, { user, tweets: [] });
+    authorTweets.get(key).tweets.push({
+      caption:  item.fullText || item.text || '',
+      likes:    item.likeCount    ?? 0,
+      comments: item.replyCount   ?? 0,
+      shares:   item.retweetCount ?? 0,
+      views:    item.viewCount    ?? 0,
+      location: item.place?.full_name || '',
+    });
   }
 
-  const seen     = new Set();
   const profiles = [];
-  let   cursor   = null;
+  for (const [, { user, tweets }] of authorTweets) {
+    const handle = user.userName;
+    if (!handle) continue;
 
-  onProgress({ phase: 'fetching-page', page: 1, current: 0, total: 0, cookieIdx: 0 });
+    const totalLikes    = tweets.reduce((s, t) => s + t.likes,    0);
+    const totalComments = tweets.reduce((s, t) => s + t.comments, 0);
+    const totalViews    = tweets.reduce((s, t) => s + t.views,    0);
+    const avgLikes      = tweets.length ? Math.round(totalLikes    / tweets.length) : 0;
+    const avgComments   = tweets.length ? Math.round(totalComments / tweets.length) : 0;
+    const avgViews      = tweets.length ? Math.round(totalViews    / tweets.length) : 0;
+    const followers     = Number(user.followers ?? 0);
+    const engagementRate = followers > 0
+      ? Math.round(((avgLikes + avgComments) / followers) * 10000) / 100
+      : 0;
 
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    const baseCookieIdx = cookieIdxForPage(page);
-    onProgress({ phase: 'fetching-page', page, current: profiles.length, total: profiles.length, cookieIdx: baseCookieIdx });
-
-    // Try each cookie in round-robin order until one succeeds (handles 429/rate-limit per account)
-    const url = buildSearchUrl(keyword, cursor);
-    let resp = null, usedCookieIdx = baseCookieIdx;
-    for (let attempt = 0; attempt < cookies.length; attempt++) {
-      usedCookieIdx = (baseCookieIdx + attempt) % cookies.length;
-      const acctTag = cookies.length > 1 ? ` [acct ${usedCookieIdx + 1}/${cookies.length}]` : '';
-      try {
-        resp = await xFetch(url, cookies[usedCookieIdx]);
-        if (resp.status === 429 || resp.status === 503) {
-          console.log(`[x-search] page ${page}${acctTag} rate-limited (${resp.status})${attempt < cookies.length - 1 ? ', retrying with next account…' : ''}`);
-          resp = null;
-          if (attempt < cookies.length - 1) await sleep(1000, 2000);
-          continue;
-        }
-        if (resp.status === 401 || resp.status === 403) {
-          const body = await resp.text().catch(() => '');
-          console.error(`[x-search] ${resp.status} response body:`, body.slice(0, 500));
-          throw new Error(`X account ${usedCookieIdx + 1} session expired or invalid (HTTP ${resp.status}) — paste a fresh auth_token= cookie and try again`);
-        }
-        if (resp.ok) break;
-        console.log(`[x-search] page ${page}${acctTag} HTTP ${resp.status}${attempt < cookies.length - 1 ? ', retrying…' : ''}`);
-        resp = null;
-        if (attempt < cookies.length - 1) await sleep(1000, 2000);
-      } catch (e) {
-        if (e.message.includes('session expired')) throw e;
-        console.log(`[x-search] page ${page}${acctTag} error: ${e.message}${attempt < cookies.length - 1 ? ', retrying…' : ''}`);
-        resp = null;
-      }
-    }
-
-    if (!resp) { console.log(`[x-search] all accounts failed on page ${page}, stopping`); break; }
-
-    let data;
-    try { data = JSON.parse(await resp.text()); } catch (_) {
-      console.log(`[x-search] page ${page} non-JSON response — rate-limited, stopping`); break;
-    }
-
-    const { users, nextCursor } = extractUsersAndCursor(data);
-    let added = 0;
-    for (const p of users) {
-      if (!p.handle || seen.has(p.handle.toLowerCase())) continue;
-      seen.add(p.handle.toLowerCase());
-      profiles.push({ ...p, matchedKeywords: [keyword] });
-      added++;
-    }
-
-    const acctTag = cookies.length > 1 ? ` [acct ${usedCookieIdx + 1}/${cookies.length}]` : '';
-    console.log(`[x-search] page ${page}${acctTag}: +${added} users (total ${profiles.length})`);
-    onProgress({ phase: 'paginating', page, current: profiles.length, total: profiles.length, cookieIdx: usedCookieIdx });
-
-    if (!nextCursor || added === 0) break;
-    cursor = nextCursor;
-    if (page < MAX_PAGES) await sleep(800, 1600);
+    profiles.push({
+      handle,
+      fullName:      user.name        || '',
+      followers:     String(followers || ''),
+      bio:           user.description || '',
+      isVerified:    !!(user.isBlueVerified),
+      postCount:     String(user.statusesCount ?? ''),
+      location:      user.location    || '',
+      avatarUrl:     (user.profilePicture || '').replace('_normal', '_400x400'),
+      profileUrl:    `https://x.com/${handle}`,
+      rawPlatform:   'x',
+      platform:      'x',
+      hashtagPosts:  tweets.length,
+      avgLikes,
+      avgComments,
+      avgViews,
+      engagementRate,
+      postCaptions:  tweets.map(t => t.caption).filter(Boolean),
+      postLocations: [...new Set(tweets.map(t => t.location).filter(Boolean))],
+    });
   }
 
-  console.log(`[x-search] "${keyword}" → ${profiles.length} users`);
+  console.log(`[x-apify] "${tag}" → ${profiles.length} unique authors`);
   return { profiles, callCount: profiles.length };
+
 }
 
 async function handleBdSearch(req, res) {

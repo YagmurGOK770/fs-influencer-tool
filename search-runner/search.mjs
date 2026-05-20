@@ -1,16 +1,17 @@
 /**
- * Standalone YouTube (+ TikTok / X / Instagram) keyword search runner.
+ * Standalone YouTube / X / TikTok / Instagram keyword search runner.
  *
  * Usage:
  *   node search.mjs --platform youtube --keywords keywords.txt [--concurrency 8]
- *   node search.mjs --platform youtube --keywords keywords.txt --concurrency 8 --dry-run
+ *   node search.mjs --platform x       --keywords keywords.txt [--concurrency 4]
+ *   node search.mjs --platform youtube --keywords keywords.txt --dry-run
  *
  * Options:
- *   --platform    youtube | instagram | tiktok | x  (default: youtube)
+ *   --platform    youtube | x | instagram | tiktok  (default: youtube)
  *   --keywords    path to a text file — one keyword per line, or comma-separated
- *   --concurrency how many keywords to search in parallel (default: 8 for YT, 1 for IG)
+ *   --concurrency keywords searched in parallel (default: 8 for YT, 4 for X, 1 for IG)
  *   --dry-run     search but don't save to Supabase
- *   --no-enrich   skip the /about enrichment step (faster, fewer fields)
+ *   --no-enrich   skip YouTube /about enrichment step
  *
  * Results are saved to Supabase (brightdata_profiles) as they complete.
  * Progress is printed to stdout; errors go to stderr.
