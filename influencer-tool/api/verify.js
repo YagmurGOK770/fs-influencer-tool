@@ -1166,53 +1166,199 @@ async function ytKeywordSearch(keyword) {
   return profiles;
 }
 
-async function xUserSearch(keyword) {
-  // X search page with f=user — parse __NEXT_DATA__ embedded server-side
-  const resp = await bdFetch(
-    `https://x.com/search?q=${encodeURIComponent(keyword)}&src=typed_query&f=user`,
-    {
-      'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'accept-language': 'en-US,en;q=0.9',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    },
-    30000
-  );
-  if (!resp.ok) throw new Error(`X search HTTP ${resp.status}`);
-  const html = await resp.text();
-  const profiles = [];
-  const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-  if (nextMatch) {
-    try {
-      const data = JSON.parse(nextMatch[1]);
-      const timeline = data?.props?.pageProps?.timeline_response?.timeline;
-      const entries = (timeline?.instructions || []).flatMap(i => i.entries || i.addEntries?.entries || []);
-      for (const entry of entries) {
-        const ur = entry?.content?.itemContent?.user_results?.result;
-        const user = ur?.legacy;
-        if (!user?.screen_name) continue;
-        profiles.push({
-          handle:     user.screen_name,
-          fullName:   user.name || '',
-          followers:  String(user.followers_count ?? ''),
-          bio:        user.description || '',
-          isVerified: !!(ur?.is_blue_verified || user.verified),
-          postCount:  String(user.statuses_count ?? ''),
-          location:   user.location || '',
-          profileUrl: `https://x.com/${user.screen_name}`,
-          rawPlatform: 'x',
-        });
-      }
-    } catch (_) { /* skip */ }
+async function xUserSearch(keyword, sessionCookies, onProgress = () => {}) {
+  // X requires an authenticated session — uses the residential proxy (same as Instagram)
+  // so our auth_token + ct0 cookies are passed through intact (Web Unlocker would strip them).
+  const cookies = (Array.isArray(sessionCookies) ? sessionCookies : [sessionCookies]).filter(Boolean);
+  if (!cookies.length) {
+    throw new Error('X session cookie required. Paste your auth_token= cookie in the search panel.');
   }
-  console.log(`[x-search] "${keyword}" → ${profiles.length} users, htmlLen=${html.length}`);
-  return profiles;
+
+  const MAX_PAGES = 5; // each page ≈ 20 users; 5 pages ≈ 100 users per keyword
+  const sleep = (min, max) => new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
+
+  // Extract auth_token and ct0 from a raw cookie string
+  function parseXCookie(raw) {
+    const authMatch = raw.match(/auth_token=([^;]+)/);
+    const ct0Match  = raw.match(/ct0=([^;]+)/);
+    return {
+      authToken: authMatch ? authMatch[1].trim() : '',
+      ct0:       ct0Match  ? ct0Match[1].trim()  : '',
+      raw,
+    };
+  }
+
+  // Round-robin across cookie pool
+  function cookieFor(i) { return cookies[i % cookies.length]; }
+
+  const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
+  const proxyDispatcher = proxyUrl ? new ProxyAgent({
+    uri: proxyUrl,
+    requestTls: { rejectUnauthorized: false },
+    proxyTls:   { rejectUnauthorized: false },
+  }) : null;
+
+  if (proxyDispatcher) console.log('[x-search] routing via BrightData residential proxy');
+  else                 console.log('[x-search] routing direct (no proxy configured)');
+
+  async function xFetch(url, cookieRaw, extraHeaders = {}) {
+    const { authToken, ct0 } = parseXCookie(cookieRaw);
+    const headers = {
+      'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+      'x-csrf-token':   ct0,
+      'cookie':         cookieRaw.includes('auth_token=') ? cookieRaw : `auth_token=${authToken}; ct0=${ct0}`,
+      'x-twitter-auth-type': 'OAuth2Session',
+      'x-twitter-active-user': 'yes',
+      'x-twitter-client-language': 'en',
+      'accept':          'application/json',
+      'accept-language': 'en-US,en;q=0.9',
+      'referer':         'https://x.com/search?q=' + encodeURIComponent(keyword) + '&f=user',
+      'user-agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      ...extraHeaders,
+    };
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 30000);
+    const fetcher = proxyDispatcher ? undiciFetch : fetch;
+    try {
+      return await fetcher(url, {
+        headers,
+        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
+        signal: ctrl.signal,
+      });
+    } finally { clearTimeout(t); }
+  }
+
+  // X GraphQL search API — SearchTimeline
+  const SEARCH_FEATURES = encodeURIComponent(JSON.stringify({
+    rweb_tipjar_consumption_enabled: true,
+    responsive_web_graphql_exclude_directive_enabled: true,
+    verified_phone_label_enabled: false,
+    creator_subscriptions_tweet_preview_api_enabled: true,
+    responsive_web_graphql_timeline_navigation_enabled: true,
+    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+    communities_web_enable_tweet_community_results_fetch: true,
+    c9s_tweet_anatomy_moderator_badge_enabled: true,
+    articles_preview_enabled: true,
+    responsive_web_edit_tweet_api_enabled: true,
+    graphql_is_translatable_rweb_tweet_and_user_result_enabled: true,
+    view_counts_everywhere_api_enabled: true,
+    longform_notetweets_consumption_enabled: true,
+    responsive_web_twitter_article_tweet_consumption_enabled: true,
+    tweet_awards_web_tipping_enabled: false,
+    creator_subscriptions_quote_tweet_preview_enabled: false,
+    freedom_of_speech_not_reach_the_hear_this_out_enabled: true,
+    standardized_nudges_misinfo: true,
+    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+    rweb_video_timestamps_enabled: true,
+    longform_notetweets_rich_text_read_enabled: true,
+    longform_notetweets_inline_media_enabled: true,
+    responsive_web_enhance_cards_enabled: false,
+  }));
+
+  function buildSearchUrl(query, cursor) {
+    const vars = { rawQuery: query, count: 20, querySource: 'typed_query', product: 'People' };
+    if (cursor) vars.cursor = cursor;
+    return `https://api.x.com/graphql/gkjsKepM6gl_HmFWoWKfgg/SearchTimeline?variables=${encodeURIComponent(JSON.stringify(vars))}&features=${SEARCH_FEATURES}`;
+  }
+
+  function extractUsersAndCursor(data) {
+    const users = [];
+    let nextCursor = null;
+    const instructions = data?.data?.search_by_raw_query?.search_timeline?.timeline?.instructions || [];
+    for (const instr of instructions) {
+      const entries = instr.entries || (instr.entry ? [instr.entry] : []);
+      for (const entry of entries) {
+        // Cursor entry
+        if (entry.content?.entryType === 'TimelineTimelineCursor' && entry.content?.cursorType === 'Bottom') {
+          nextCursor = entry.content.value;
+          continue;
+        }
+        // User entry (direct)
+        const ur = entry.content?.itemContent?.user_results?.result;
+        if (ur?.legacy?.screen_name) {
+          users.push(buildXProfile(ur));
+          continue;
+        }
+        // Module entry (grid of users)
+        for (const item of entry.content?.items || []) {
+          const ur2 = item.item?.itemContent?.user_results?.result;
+          if (ur2?.legacy?.screen_name) users.push(buildXProfile(ur2));
+        }
+      }
+    }
+    return { users, nextCursor };
+  }
+
+  function buildXProfile(ur) {
+    const user = ur.legacy;
+    return {
+      handle:      user.screen_name,
+      fullName:    user.name || '',
+      followers:   String(user.followers_count ?? ''),
+      bio:         user.description || '',
+      isVerified:  !!(ur.is_blue_verified || user.verified),
+      postCount:   String(user.statuses_count ?? ''),
+      location:    user.location || '',
+      avatarUrl:   (user.profile_image_url_https || '').replace('_normal', '_400x400'),
+      profileUrl:  `https://x.com/${user.screen_name}`,
+      rawPlatform: 'x',
+      platform:    'x',
+    };
+  }
+
+  const seen     = new Set();
+  const profiles = [];
+  let   cursor   = null;
+  let   cookieIdx = 0;
+
+  onProgress({ phase: 'searching', current: 0, total: 0, cookieIdx: 0 });
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    cookieIdx = (page - 1) % cookies.length;
+    onProgress({ phase: 'fetching-page', page, current: profiles.length, total: profiles.length, cookieIdx });
+
+    const url  = buildSearchUrl(keyword, cursor);
+    const resp = await xFetch(url, cookieFor(page - 1));
+
+    if (resp.status === 401 || resp.status === 403) {
+      throw new Error('X session expired or invalid — paste a fresh auth_token= cookie and try again');
+    }
+    if (!resp.ok) throw new Error(`X search HTTP ${resp.status}`);
+
+    let data;
+    try {
+      const text = await resp.text();
+      data = JSON.parse(text);
+    } catch (_) {
+      throw new Error('X returned non-JSON — session may be rate-limited');
+    }
+
+    const { users, nextCursor } = extractUsersAndCursor(data);
+    let added = 0;
+    for (const p of users) {
+      if (!p.handle || seen.has(p.handle.toLowerCase())) continue;
+      seen.add(p.handle.toLowerCase());
+      profiles.push({ ...p, matchedKeywords: [keyword] });
+      added++;
+    }
+
+    console.log(`[x-search] page ${page}: +${added} users (total ${profiles.length}), cursor=${nextCursor ? 'yes' : 'none'}`);
+    onProgress({ phase: 'paginating', page, current: profiles.length, total: profiles.length, cookieIdx });
+
+    if (!nextCursor || added === 0) break;
+    cursor = nextCursor;
+    if (page < MAX_PAGES) await sleep(800, 1600);
+  }
+
+  console.log(`[x-search] "${keyword}" → ${profiles.length} users`);
+  return { profiles, callCount: profiles.length };
 }
 
 async function handleBdSearch(req, res) {
   const token = process.env.BRIGHTDATA_API_TOKEN;
   if (!token) return res.status(500).json({ error: 'BRIGHTDATA_API_TOKEN env var not set' });
 
-  const { platform, keyword, sessionCookie, sessionCookies, tiktokCookie, scanRecentFeed } = req.body || {};
+  const { platform, keyword, sessionCookie, sessionCookies, tiktokCookie, xCookie, scanRecentFeed } = req.body || {};
   // sessionCookies (array) takes priority; fall back to legacy single-cookie string
   const cookiePool = Array.isArray(sessionCookies) && sessionCookies.length
     ? sessionCookies.filter(Boolean)
@@ -1250,7 +1396,8 @@ async function handleBdSearch(req, res) {
         result = await ytKeywordSearch(kw);
       } else if (platform === 'x') {
         onProgress({ phase: 'searching', current: 0, total: 1 });
-        result = await xUserSearch(kw);
+        const xCookies = xCookie ? [xCookie] : [];
+        result = await xUserSearch(kw, xCookies, onProgress);
       }
 
       let profiles = Array.isArray(result) ? result : (result?.profiles || []);

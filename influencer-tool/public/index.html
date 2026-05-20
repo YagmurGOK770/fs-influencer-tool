@@ -3676,6 +3676,16 @@ function closeProfileCard() {
           style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;resize:vertical"
           oninput="localStorage.setItem('tt_session_cookie', this.value.trim())"></textarea>
       </div>
+      <!-- X / Twitter session cookie -->
+      <div id="bdXCookieSection" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">X / Twitter Session Cookie</label>
+          <span style="font-size:11px;color:var(--muted)">DevTools (F12) → Network → x.com → Cookie header · Must include auth_token= and ct0=</span>
+        </div>
+        <textarea id="bdXCookie" rows="2" placeholder="Paste your X cookie string here (auth_token=...; ct0=...; ...)"
+          style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;resize:vertical"
+          oninput="localStorage.setItem('x_session_cookie', this.value.trim())"></textarea>
+      </div>
     </div>
 
     <!-- Pre-fetch filters -->
@@ -4110,12 +4120,14 @@ async function bdCountdown(seconds, msg) {
 function bdOnPlatformChange(platform) {
   const igSection    = document.getElementById('bdIgCookieSection');
   const ttSection    = document.getElementById('bdTtCookieSection');
+  const xSection     = document.getElementById('bdXCookieSection');
   const startSel     = document.getElementById('bdStartSlotSel');
   const scanBtn      = document.getElementById('bdScanPostsBtn');
   const reenrichBtn  = document.getElementById('bdReenrichBtn');
   const ytEnrichBtn  = document.getElementById('bdYtEnrichBtn');
   if (igSection)   igSection.style.display   = platform === 'instagram' ? '' : 'none';
   if (ttSection)   ttSection.style.display   = platform === 'tiktok'    ? '' : 'none';
+  if (xSection)    xSection.style.display    = platform === 'x'         ? '' : 'none';
   if (startSel)    startSel.style.display    = platform === 'instagram' ? '' : 'none';
   if (scanBtn)     scanBtn.style.display     = platform === 'instagram' ? '' : 'none';
   if (reenrichBtn) reenrichBtn.style.display = platform === 'instagram' || platform === 'tiktok' ? '' : 'none';
@@ -4139,6 +4151,10 @@ function loadEnrichTab() {
   // Restore TikTok cookie
   const ttCookieEl = document.getElementById('bdTtCookie');
   if (ttCookieEl) ttCookieEl.value = localStorage.getItem('tt_session_cookie') || '';
+
+  // Restore X cookie
+  const xCookieEl = document.getElementById('bdXCookie');
+  if (xCookieEl) xCookieEl.value = localStorage.getItem('x_session_cookie') || '';
 
   // Apply correct section visibility for current platform
   const ptEl = document.getElementById('bdPlatformSel');
@@ -5227,7 +5243,8 @@ async function bdRunOneSearch(keyword, sessionCookies, ctx, slotMap) {
   const startResp = await fetch('/api/verify', {
     method: 'POST', headers: getApiHeaders(),
     body: JSON.stringify({ action: 'bd-search', platform: bdPlatform, keyword, sessionCookies,
-      tiktokCookie: bdPlatform === 'tiktok' ? (document.getElementById('bdTtCookie')?.value.trim() || '') : undefined }),
+      tiktokCookie: bdPlatform === 'tiktok' ? (document.getElementById('bdTtCookie')?.value.trim() || '') : undefined,
+      xCookie:      bdPlatform === 'x'      ? (document.getElementById('bdXCookie')?.value.trim()   || '') : undefined }),
   });
   const startData = await startResp.json();
   if (!startResp.ok || startData.error || !startData.searchId) {
