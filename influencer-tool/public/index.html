@@ -6919,8 +6919,11 @@ async function bdrReenrichMissing() {
   const needsEnrich = r => !r.engagement_rate || !r.followers;
 
   const ytProfiles = allMerged
-    .filter(m => m.platforms.some(p => p.includes('youtube')) && m._rows.some(needsEnrich))
-    .map(m => ({ handle: m.handle, profileUrl: m.profile_url || `https://www.youtube.com/@${m.handle}` }));
+    .filter(m => m.platforms.some(p => p.includes('youtube')) && m._rows.some(r => (r.platform||'').includes('youtube') && needsEnrich(r)))
+    .map(m => {
+      const ytRow = m._rows.find(r => (r.platform||'').includes('youtube'));
+      return { handle: m.handle, profileUrl: ytRow?.profile_url || `https://www.youtube.com/@${m.handle}` };
+    });
 
   const igProfiles = bdrMatchingData
     .filter(r => (r.platform||'').includes('instagram') && needsEnrich(r) && r.pk)
