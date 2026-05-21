@@ -4034,6 +4034,7 @@ function closeProfileCard() {
               <th onclick="bdrSetSort('type')" style="cursor:pointer;user-select:none" title="Label the influencer type — saved in your browser">Type <span id="bdrSrt-type" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('llm_tier')" style="cursor:pointer;user-select:none" title="AI outreach tier">Tier <span id="bdrSrt-llm_tier" style="font-size:10px;opacity:.3">⇅</span></th>
               <th title="Tier reasoning">Reason</th>
+              <th onclick="bdrSetSort('language')" style="cursor:pointer;user-select:none" title="Detected language (ISO code)">Lang <span id="bdrSrt-language" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('fetched_at')" style="cursor:pointer;user-select:none">Saved <span id="bdrSrt-fetched_at" style="font-size:10px;opacity:.3">⇅</span></th>
             </tr>
           </thead>
@@ -4047,7 +4048,11 @@ function closeProfileCard() {
           <span id="bdrPageInfo" style="font-size:12px;color:var(--muted)"></span>
           <button class="btn-sm" id="bdrNextBtn" onclick="bdrChangePage(1)" style="display:none">Next ›</button>
         </div>
-        <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn-sm" id="bdrDetectLangBtn" onclick="bdrDetectAllLanguages()">🌐 Detect Language</button>
+          <span id="bdrDetectLangStatus" style="font-size:11px;color:var(--muted);display:none"></span>
+          <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
+        </div>
       </div>
     </div>
 
@@ -6418,6 +6423,7 @@ function bdrMergeByHandle(rows) {
       matched_keywords: allKeywords,
       fetched_at:      platformRows.map(r=>r.fetched_at||'').sort().reverse()[0],
       profile_url:     primary.profile_url,
+      language:        platformRows.map(r=>r.language).find(l=>!!l) || null,
       _rows:           uniqueRows,
     };
   });
@@ -7028,6 +7034,59 @@ async function insPreloadOutreach() {
 // stub — no longer used but kept to avoid reference errors from bdrUpdateStats call
 function bdrUpdateOverview() { bdrInsightsRender(); }
 
+let _bdrLangRunning = false;
+
+async function bdrDetectAllLanguages() {
+  if (_bdrLangRunning) return;
+  const merged = bdrMergeByHandle(bdrMatchingData);
+  const todo = merged.filter(m => !m.language);
+  if (!todo.length) { alert('All profiles already have a language detected.'); return; }
+
+  const btn = document.getElementById('bdrDetectLangBtn');
+  const status = document.getElementById('bdrDetectLangStatus');
+  btn.disabled = true;
+  status.style.display = '';
+  _bdrLangRunning = true;
+
+  let done = 0;
+  for (const m of todo) {
+    status.textContent = `Detecting… ${done}/${todo.length}`;
+    try {
+      const resp = await fetch('/api/db-save', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'detect-language', handle: m.handle, platform: m.platforms[0] || '' }),
+      });
+      if (resp.ok) {
+        const d = await resp.json();
+        if (d.language) bdrMatchingData.forEach(r => { if (r.handle === m.handle) r.language = d.language; });
+      }
+    } catch (e) { console.warn('[detectLang]', m.handle, e.message); }
+    done++;
+  }
+
+  _bdrLangRunning = false;
+  btn.disabled = false;
+  status.textContent = `✓ Done (${done})`;
+  setTimeout(() => { status.style.display = 'none'; }, 3000);
+  bdrApplyFilter();
+}
+
+async function bdrDetectOneLang(handle, platform) {
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'detect-language', handle, platform }),
+    });
+    if (resp.ok) {
+      const d = await resp.json();
+      if (d.language) {
+        bdrMatchingData.forEach(r => { if (r.handle === handle) r.language = d.language; });
+        bdrApplyFilter();
+      }
+    }
+  } catch (e) { console.warn('[detectOneLang]', handle, e.message); }
+}
+
 function bdrRefreshFilterDropdowns(filteredRows) {
   const TIER_LABELS = { 1:'T1', 2:'T2', 3:'T3', 4:'T4', 0:'No tier' };
   const tierSel = document.getElementById('bdrFilterTier');
@@ -7466,6 +7525,10 @@ function bdrRenderTable(rows, _skipPageSetup) {
         </select>
       </td>
       <td style="max-width:200px">${reasonHtml}</td>
+      <td style="white-space:nowrap">${m.language
+        ? `<span style="font-size:10px;font-weight:700;background:${m.language==='en'?'var(--green-bg)':'#fef8ec'};color:${m.language==='en'?'var(--green)':'var(--amber)'};border:1px solid ${m.language==='en'?'var(--green)':'var(--amber)'}40;border-radius:100px;padding:2px 9px;text-transform:uppercase">${m.language}</span>`
+        : `<button onclick="bdrDetectOneLang('${safeHandle}','${m.platforms[0]||''}')" style="font-size:10px;padding:1px 8px;border:1px solid var(--border);border-radius:100px;background:var(--white);cursor:pointer;color:var(--muted2)" title="Detect language">?</button>`
+      }</td>
       <td style="font-size:11px;color:var(--muted2);white-space:nowrap">${savedAt}</td>
     </tr>${postsExpandHtml}`;
   }).join('');
