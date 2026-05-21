@@ -357,6 +357,7 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
       <button class="nav-tab" id="tabHistoryBtn" onclick="switchMainTab('history')">Search History</button>
       <button class="nav-tab" id="tabEnrichBtn" onclick="switchMainTab('enrich')">BrightData Enrich</button>
       <button class="nav-tab" id="tabBdResultsBtn" onclick="switchMainTab('bdresults')">BD Results</button>
+      <button class="nav-tab" id="tabInsightsBtn" onclick="switchMainTab('insights')">Insights</button>
     </div>
   </div>
   <div class="nav-right">
@@ -2475,17 +2476,20 @@ function switchMainTab(tab) {
   document.getElementById('mainHistory').style.display = tab === 'history'  ? '' : 'none';
   document.getElementById('mainEnrich').style.display     = tab === 'enrich'    ? '' : 'none';
   document.getElementById('mainBdResults').style.display  = tab === 'bdresults' ? '' : 'none';
+  document.getElementById('mainInsights').style.display   = tab === 'insights'  ? '' : 'none';
   document.getElementById('tabDashBtn').classList.toggle('active',      tab === 'dash');
   document.getElementById('tabChangesBtn').classList.toggle('active',   tab === 'changes');
   document.getElementById('tabCoverageBtn').classList.toggle('active',  tab === 'coverage');
   document.getElementById('tabHistoryBtn').classList.toggle('active',   tab === 'history');
   document.getElementById('tabEnrichBtn').classList.toggle('active',    tab === 'enrich');
   document.getElementById('tabBdResultsBtn').classList.toggle('active', tab === 'bdresults');
+  document.getElementById('tabInsightsBtn').classList.toggle('active',  tab === 'insights');
   if (tab === 'changes')   loadChanges();
   if (tab === 'coverage')  loadCoverage();
   if (tab === 'history')   loadSearchHistory();
   if (tab === 'enrich')    loadEnrichTab();
   if (tab === 'bdresults') { bdrUpdateModelSel(); loadBdResults(); }
+  if (tab === 'insights')  { loadBdResults(); bdrInsightsRender(); }
   localStorage.setItem('activeMainTab', tab);
 }
 
@@ -3962,30 +3966,6 @@ function closeProfileCard() {
       </div>
     </div>
 
-    <!-- Overview breakdown: Tiers × Platforms + Types -->
-    <div id="bdrOverviewWrap" style="display:none;background:var(--white);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px">
-      <div onclick="bdrToggleOverview()" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;margin-bottom:10px">
-        <div style="display:flex;align-items:center;gap:8px">
-          <span id="bdrOvChevron" style="font-size:10px;color:var(--muted);transition:transform .15s">▼</span>
-          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Overview</span>
-        </div>
-      </div>
-      <div id="bdrOverviewContent">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <!-- Tiers panel -->
-          <div>
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Tiers</div>
-            <div id="bdrOvTiers"></div>
-          </div>
-          <!-- Types panel -->
-          <div>
-            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Types</div>
-            <div id="bdrOvTypes"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- Toolbar: view toggle + platform pills + search -->
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)">
@@ -4094,6 +4074,95 @@ function closeProfileCard() {
       <option value="City Guide / Editorial">
     </datalist>
 
+  </div>
+</div>
+
+<div id="mainInsights" style="display:none">
+  <div class="cov-page">
+    <div class="cl-toolbar" style="margin-bottom:20px">
+      <div>
+        <div class="cl-toolbar-title">Insights</div>
+        <div class="cl-toolbar-sub">Dynamic breakdown of your saved BD profiles by tier, type, platform and engagement</div>
+      </div>
+    </div>
+
+    <!-- Platform filter -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Platform</span>
+      <button class="pfill active" id="insPfAll" onclick="insSetPlatform('all',this)">All <span class="fcount" id="insPcAll">0</span></button>
+      <button class="pfill pfig"   id="insPfIg"  onclick="insSetPlatform('instagram',this)">Instagram <span class="fcount" id="insPcIg">0</span></button>
+      <button class="pfill pftt"   id="insPfTt"  onclick="insSetPlatform('tiktok',this)">TikTok <span class="fcount" id="insPcTt">0</span></button>
+      <button class="pfill pfyt"   id="insPfYt"  onclick="insSetPlatform('youtube',this)">YouTube <span class="fcount" id="insPcYt">0</span></button>
+      <button class="pfill pfx"    id="insPfX"   onclick="insSetPlatform('x',this)">X <span class="fcount" id="insPcX">0</span></button>
+    </div>
+
+    <!-- Dimension selectors -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Row</span>
+        <select id="insDimRow" onchange="bdrInsightsRender()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="tier">Tier</option>
+          <option value="type">Type</option>
+          <option value="followers">Followers range</option>
+          <option value="er">ER% range</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Column</span>
+        <select id="insDimCol" onchange="bdrInsightsRender()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="type">Type</option>
+          <option value="tier">Tier</option>
+          <option value="followers">Followers range</option>
+          <option value="er">ER% range</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Sort by</span>
+        <select id="insSortBy" onchange="bdrInsightsRender()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="count">Count</option>
+          <option value="followers">Avg followers</option>
+          <option value="er">Avg ER%</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Summary stat cards -->
+    <div id="insStatCards" class="cov-stats" style="margin-bottom:20px"></div>
+
+    <!-- Cross-tab breakdown -->
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em" id="insCrossTitle">Breakdown</div>
+      <div style="overflow-x:auto">
+        <table id="insCrossTable" class="cov-table" style="min-width:500px"></table>
+      </div>
+    </div>
+
+    <!-- Top profiles list -->
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Top Profiles</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;color:var(--muted)">Sort by</span>
+          <select id="insTopSort" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="followers">Followers</option>
+            <option value="er">ER%</option>
+          </select>
+          <span style="font-size:11px;color:var(--muted)">Filter tier</span>
+          <select id="insTopTier" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="">All</option>
+            <option value="1">T1</option>
+            <option value="2">T2</option>
+            <option value="3">T3</option>
+            <option value="4">T4</option>
+          </select>
+          <span style="font-size:11px;color:var(--muted)">Filter type</span>
+          <select id="insTopType" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="">All</option>
+          </select>
+        </div>
+      </div>
+      <div id="insTopList" style="padding:12px 16px"></div>
+    </div>
   </div>
 </div>
 
@@ -6383,97 +6452,257 @@ function bdrUpdateStats() {
   document.getElementById('bdrPcX').textContent   = pc('x');
   document.getElementById('bdrMatchCount').textContent = uniqMatch;
   document.getElementById('bdrExclCount').textContent  = uniqExcl;
-  bdrUpdateOverview();
+  bdrInsightsRender();
 }
 
-let bdrOverviewOpen = true;
-function bdrToggleOverview() {
-  bdrOverviewOpen = !bdrOverviewOpen;
-  document.getElementById('bdrOverviewContent').style.display = bdrOverviewOpen ? '' : 'none';
-  document.getElementById('bdrOvChevron').style.transform = bdrOverviewOpen ? '' : 'rotate(-90deg)';
+// ── Insights tab ─────────────────────────────────────────────────────────
+
+let insPlatform = 'all';
+
+function insSetPlatform(plat, el) {
+  insPlatform = plat;
+  document.querySelectorAll('#mainInsights .pfill').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  bdrInsightsRender();
 }
 
-function bdrUpdateOverview() {
+function insGetRows() {
   const merged = bdrMergeByHandle(bdrMatchingData);
-  if (!merged.length) { document.getElementById('bdrOverviewWrap').style.display = 'none'; return; }
-  document.getElementById('bdrOverviewWrap').style.display = '';
+  if (insPlatform === 'all') return merged;
+  return merged.filter(m => m.platforms.some(p => p.includes(insPlatform)));
+}
 
-  const PLATS = ['instagram','tiktok','youtube','x'];
-  const PLAT_COLOR = { instagram:'#e1306c', tiktok:'#222', youtube:'#ff0000', x:'#1da1f2' };
-  const PLAT_LABEL = { instagram:'IG', tiktok:'TT', youtube:'YT', x:'X' };
+function insTierLabel(tier) {
+  return tier ? `T${tier}` : 'No tier';
+}
 
-  const TIER_STYLE = {
-    1: { label:'T1', color:'var(--green)',  bg:'#edf7f1' },
-    2: { label:'T2',   color:'var(--blue)',   bg:'#eef4fc' },
-    3: { label:'T3',    color:'var(--amber)',  bg:'#fef8ec' },
-    4: { label:'T4', color:'#c0392b',       bg:'#fdf0ee' },
-    0: { label:'No tier',     color:'var(--muted)',  bg:'var(--surface)' },
+function insTierColor(tier) {
+  return { 1:'var(--green)', 2:'var(--blue)', 3:'var(--amber)', 4:'#c0392b', 0:'var(--muted)' }[tier||0];
+}
+
+function insFollowersBucket(followers) {
+  const f = Number(followers) || 0;
+  if (f >= 1_000_000) return '1M+';
+  if (f >= 500_000)   return '500K–1M';
+  if (f >= 100_000)   return '100K–500K';
+  if (f >= 50_000)    return '50K–100K';
+  if (f >= 10_000)    return '10K–50K';
+  if (f > 0)          return '<10K';
+  return 'Unknown';
+}
+const FOLLOWERS_ORDER = ['1M+','500K–1M','100K–500K','50K–100K','10K–50K','<10K','Unknown'];
+
+function insErBucket(er) {
+  const v = Number(er);
+  if (!er || isNaN(v)) return 'Unknown';
+  if (v >= 10)  return '10%+';
+  if (v >= 5)   return '5–10%';
+  if (v >= 3)   return '3–5%';
+  if (v >= 1)   return '1–3%';
+  return '<1%';
+}
+const ER_ORDER = ['10%+','5–10%','3–5%','1–3%','<1%','Unknown'];
+
+function insDimValue(m, dim) {
+  if (dim === 'tier')      return insTierLabel(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier || 0);
+  if (dim === 'type')      return bdrGetType(m.handle, m.platforms?.[0]||'') || '(none)';
+  if (dim === 'followers') return insFollowersBucket(m.followers);
+  if (dim === 'er')        return insErBucket(m.engagement_rate);
+  return '?';
+}
+
+function insDimOrder(dim, keys) {
+  if (dim === 'tier')      return ['T1','T2','T3','T4','No tier'].filter(k => keys.has(k));
+  if (dim === 'followers') return FOLLOWERS_ORDER.filter(k => keys.has(k));
+  if (dim === 'er')        return ER_ORDER.filter(k => keys.has(k));
+  // type: sort by count (already handled by caller)
+  return [...keys].sort();
+}
+
+function bdrInsightsRender() {
+  if (document.getElementById('mainInsights').style.display === 'none') return;
+  const rows = insGetRows();
+
+  // Update platform pill counts
+  const allM = bdrMergeByHandle(bdrMatchingData);
+  document.getElementById('insPcAll').textContent = allM.length;
+  ['instagram','tiktok','youtube','x'].forEach(p => {
+    const id = { instagram:'insPcIg', tiktok:'insPcTt', youtube:'insPcYt', x:'insPcX' }[p];
+    document.getElementById(id).textContent = allM.filter(m => m.platforms.some(pl => pl.includes(p))).length;
+  });
+
+  if (!rows.length) {
+    document.getElementById('insStatCards').innerHTML = '<span style="font-size:13px;color:var(--muted)">No data — run a search and save results first.</span>';
+    document.getElementById('insCrossTable').innerHTML = '';
+    document.getElementById('insTopList').innerHTML = '';
+    return;
+  }
+
+  const rowDim = document.getElementById('insDimRow').value;
+  const colDim = document.getElementById('insDimCol').value;
+  const sortBy = document.getElementById('insSortBy').value;
+
+  // --- Stat cards ---
+  const totalFollowers = rows.reduce((s,m) => s + (Number(m.followers)||0), 0);
+  const erRows = rows.filter(m => m.engagement_rate != null && Number(m.engagement_rate) > 0);
+  const avgEr  = erRows.length ? (erRows.reduce((s,m) => s + Number(m.engagement_rate), 0) / erRows.length) : 0;
+  const t1count = rows.filter(m => (bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === 1).length;
+  const typedCount = rows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'')).length;
+  document.getElementById('insStatCards').innerHTML = [
+    { num: rows.length,                    label: 'Creators' },
+    { num: bdFormatCompact(totalFollowers), label: 'Total followers' },
+    { num: avgEr.toFixed(1) + '%',         label: 'Avg ER%' },
+    { num: t1count,                        label: 'T1 creators' },
+    { num: typedCount,                     label: 'Typed creators' },
+  ].map(s => `<div class="cov-stat"><div class="cov-stat-num" style="font-size:22px">${s.num}</div><div class="cov-stat-label">${s.label}</div></div>`).join('');
+
+  // --- Cross-tab breakdown ---
+  // Build cell map: { rowKey -> { colKey -> [profiles] } }
+  const cellMap = {};
+  const colKeySet = new Set();
+  rows.forEach(m => {
+    const rk = insDimValue(m, rowDim);
+    const ck = insDimValue(m, colDim);
+    colKeySet.add(ck);
+    if (!cellMap[rk]) cellMap[rk] = {};
+    if (!cellMap[rk][ck]) cellMap[rk][ck] = [];
+    cellMap[rk][ck].push(m);
+  });
+
+  const rowKeys = (() => {
+    const keySet = new Set(Object.keys(cellMap));
+    const ordered = insDimOrder(rowDim, keySet);
+    // For type dim, sort by total count
+    if (rowDim === 'type') return Object.keys(cellMap).sort((a,b) => {
+      const ta = Object.values(cellMap[a]).reduce((s,a)=>s+a.length,0);
+      const tb = Object.values(cellMap[b]).reduce((s,a)=>s+a.length,0);
+      return tb - ta;
+    });
+    return ordered;
+  })();
+  const colKeys = (() => {
+    const ordered = insDimOrder(colDim, colKeySet);
+    if (colDim === 'type') {
+      const typeTotals = {};
+      colKeySet.forEach(ck => {
+        typeTotals[ck] = rows.filter(m => insDimValue(m, colDim) === ck).length;
+      });
+      return [...colKeySet].sort((a,b) => typeTotals[b] - typeTotals[a]);
+    }
+    return ordered;
+  })();
+
+  const cellVal = (rk, ck) => {
+    const profiles = cellMap[rk]?.[ck] || [];
+    if (!profiles.length) return { v: 0, display: '—' };
+    if (sortBy === 'count')     return { v: profiles.length, display: String(profiles.length) };
+    if (sortBy === 'followers') {
+      const avg = profiles.reduce((s,m)=>s+(Number(m.followers)||0),0) / profiles.length;
+      return { v: avg, display: bdFormatCompact(Math.round(avg)) };
+    }
+    if (sortBy === 'er') {
+      const valid = profiles.filter(m => m.engagement_rate != null && Number(m.engagement_rate) > 0);
+      if (!valid.length) return { v: 0, display: '—' };
+      const avg = valid.reduce((s,m) => s + Number(m.engagement_rate), 0) / valid.length;
+      return { v: avg, display: avg.toFixed(1) + '%' };
+    }
+    return { v: 0, display: '—' };
   };
 
-  // --- Tiers breakdown ---
-  // Build: { tierKey -> { total, ig, tt, yt, x } }
-  const tierMap = {};
-  merged.forEach(m => {
-    const t = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier || 0;
-    if (!tierMap[t]) tierMap[t] = { total:0, instagram:0, tiktok:0, youtube:0, x:0 };
-    tierMap[t].total++;
-    PLATS.forEach(p => { if (m.platforms.some(pl => pl.includes(p))) tierMap[t][p]++; });
+  // Row totals for heat map
+  const rowMaxes = {};
+  rowKeys.forEach(rk => {
+    rowMaxes[rk] = Math.max(...colKeys.map(ck => cellVal(rk,ck).v), 1);
   });
-  const tierOrder = [1,2,3,4,0].filter(k => tierMap[k]);
-  const maxTier = Math.max(...tierOrder.map(k => tierMap[k].total), 1);
+  const globalMax = Math.max(...rowKeys.flatMap(rk => colKeys.map(ck => cellVal(rk,ck).v)), 1);
 
-  document.getElementById('bdrOvTiers').innerHTML = tierOrder.map(k => {
-    const d = tierMap[k];
-    const ts = TIER_STYLE[k];
-    const barW = Math.round((d.total / maxTier) * 100);
-    const platPills = PLATS.filter(p => d[p] > 0).map(p =>
-      `<span style="font-size:10px;font-weight:600;color:${PLAT_COLOR[p]};background:${PLAT_COLOR[p]}18;border:1px solid ${PLAT_COLOR[p]}40;border-radius:100px;padding:1px 6px">${PLAT_LABEL[p]} ${d[p]}</span>`
-    ).join('');
-    return `<div style="margin-bottom:7px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:11px;font-weight:700;color:${ts.color}">${ts.label}</span>
-          <span style="font-size:12px;font-weight:800;color:var(--text)">${d.total}</span>
-        </div>
-        <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end">${platPills}</div>
-      </div>
-      <div style="height:5px;border-radius:100px;background:var(--surface);overflow:hidden">
-        <div style="height:100%;width:${barW}%;background:${ts.color};border-radius:100px;transition:width .3s"></div>
-      </div>
-    </div>`;
-  }).join('') || '<span style="font-size:12px;color:var(--muted2)">No tiers assigned yet</span>';
+  document.getElementById('insCrossTitle').textContent =
+    `${rowDim.charAt(0).toUpperCase()+rowDim.slice(1)} × ${colDim.charAt(0).toUpperCase()+colDim.slice(1)} — ${sortBy === 'count' ? 'count' : 'avg ' + sortBy}`;
 
-  // --- Types breakdown ---
-  const typeMap = {};
-  merged.forEach(m => {
-    const t = bdrGetType(m.handle, m.platforms?.[0] || '') || '(none)';
-    if (!typeMap[t]) typeMap[t] = { total:0, instagram:0, tiktok:0, youtube:0, x:0 };
-    typeMap[t].total++;
-    PLATS.forEach(p => { if (m.platforms.some(pl => pl.includes(p))) typeMap[t][p]++; });
-  });
-  const typeOrder = Object.keys(typeMap).sort((a,b) => typeMap[b].total - typeMap[a].total);
-  const maxType = Math.max(...typeOrder.map(k => typeMap[k].total), 1);
+  const th = s => `<th style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;padding:8px 10px">${s}</th>`;
+  const thead = `<thead><tr>${th('')}${colKeys.map(ck => th(ck)).join('')}${th('Total')}</tr></thead>`;
 
-  document.getElementById('bdrOvTypes').innerHTML = typeOrder.map(k => {
-    const d = typeMap[k];
-    const barW = Math.round((d.total / maxType) * 100);
-    const platPills = PLATS.filter(p => d[p] > 0).map(p =>
-      `<span style="font-size:10px;font-weight:600;color:${PLAT_COLOR[p]};background:${PLAT_COLOR[p]}18;border:1px solid ${PLAT_COLOR[p]}40;border-radius:100px;padding:1px 6px">${PLAT_LABEL[p]} ${d[p]}</span>`
-    ).join('');
-    return `<div style="margin-bottom:7px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
-        <div style="display:flex;align-items:center;gap:6px">
-          <span style="font-size:11px;font-weight:600;color:var(--text)">${k}</span>
-          <span style="font-size:12px;font-weight:800;color:var(--text)">${d.total}</span>
-        </div>
-        <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end">${platPills}</div>
-      </div>
-      <div style="height:5px;border-radius:100px;background:var(--surface);overflow:hidden">
-        <div style="height:100%;width:${barW}%;background:var(--accent);border-radius:100px;transition:width .3s"></div>
-      </div>
-    </div>`;
-  }).join('') || '<span style="font-size:12px;color:var(--muted2)">No types assigned yet</span>';
+  const tbody = rowKeys.map(rk => {
+    const rowTotal = rows.filter(m => insDimValue(m, rowDim) === rk).length;
+    const tierNum = rowDim === 'tier' ? [1,2,3,4].find(n => `T${n}` === rk) : null;
+    const rowLabel = tierNum
+      ? `<span style="font-weight:700;color:${insTierColor(tierNum)}">${rk}</span>`
+      : `<span style="font-weight:600">${rk}</span>`;
+    const cells = colKeys.map(ck => {
+      const { v, display } = cellVal(rk, ck);
+      const intensity = v > 0 ? Math.round((v / globalMax) * 90) : 0;
+      const bg = v > 0 ? `background:var(--green-bg);opacity:${0.2 + intensity/100}` : '';
+      return `<td style="text-align:center;font-size:12px;font-family:var(--mono);padding:7px 10px;${bg}">${display}</td>`;
+    }).join('');
+    return `<tr><td style="font-size:12px;padding:7px 12px;white-space:nowrap">${rowLabel}</td>${cells}<td style="text-align:center;font-size:12px;font-weight:700;padding:7px 10px;color:var(--muted)">${rowTotal}</td></tr>`;
+  }).join('');
+
+  const colTotals = colKeys.map(ck => {
+    const t = rows.filter(m => insDimValue(m, colDim) === ck).length;
+    return `<td style="text-align:center;font-size:11px;font-weight:700;color:var(--muted);padding:6px 10px">${t}</td>`;
+  }).join('');
+  const tfoot = `<tfoot><tr><td style="font-size:11px;font-weight:700;color:var(--muted);padding:6px 12px">Total</td>${colTotals}<td style="text-align:center;font-size:11px;font-weight:700;padding:6px 10px;color:var(--muted)">${rows.length}</td></tr></tfoot>`;
+
+  document.getElementById('insCrossTable').innerHTML = thead + `<tbody>${tbody}</tbody>` + tfoot;
+
+  // --- Top profiles list ---
+  // Populate type filter dropdown dynamically
+  const topTypeSel = document.getElementById('insTopType');
+  const prevTopType = topTypeSel.value;
+  const allTypes = [...new Set(rows.map(m => bdrGetType(m.handle, m.platforms?.[0]||'')).filter(Boolean))].sort();
+  topTypeSel.innerHTML = '<option value="">All</option>' + allTypes.map(t => `<option value="${t}"${t===prevTopType?' selected':''}>${t}</option>`).join('');
+
+  const topSort = document.getElementById('insTopSort').value;
+  const topTier = document.getElementById('insTopTier').value;
+  const topType = topTypeSel.value;
+
+  let topRows = [...rows];
+  if (topTier) topRows = topRows.filter(m => String(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === topTier);
+  if (topType) topRows = topRows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'') === topType);
+  topRows.sort((a,b) => topSort === 'er'
+    ? (Number(b.engagement_rate)||0) - (Number(a.engagement_rate)||0)
+    : (Number(b.followers)||0) - (Number(a.followers)||0));
+  topRows = topRows.slice(0, 30);
+
+  const PLAT_COLOR = { instagram:'#e1306c', tiktok:'#222', youtube:'#ff0000', x:'#1da1f2' };
+  const PLAT_LABEL = { instagram:'IG', tiktok:'TT', youtube:'YT', x:'X' };
+  const TIER_BG    = { 1:'#edf7f1', 2:'#eef4fc', 3:'#fef8ec', 4:'#fdf0ee' };
+
+  document.getElementById('insTopList').innerHTML = topRows.length
+    ? `<table style="width:100%;border-collapse:collapse">
+        <thead><tr style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em">
+          <th style="padding:6px 8px;text-align:left">Handle</th>
+          <th style="padding:6px 8px;text-align:left">Platforms</th>
+          <th style="padding:6px 8px;text-align:right">Followers</th>
+          <th style="padding:6px 8px;text-align:right">ER%</th>
+          <th style="padding:6px 8px;text-align:left">Tier</th>
+          <th style="padding:6px 8px;text-align:left">Type</th>
+        </tr></thead>
+        <tbody>${topRows.map((m,i) => {
+          const tier = bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier || 0;
+          const type = bdrGetType(m.handle, m.platforms?.[0]||'') || '—';
+          const er   = m.engagement_rate != null ? Number(m.engagement_rate).toFixed(1)+'%' : '—';
+          const platPills = m.platforms.map(p => {
+            const pKey = Object.keys(PLAT_COLOR).find(k => p.includes(k)) || '';
+            return pKey ? `<span style="font-size:10px;font-weight:700;color:${PLAT_COLOR[pKey]};background:${PLAT_COLOR[pKey]}18;border-radius:100px;padding:1px 6px;border:1px solid ${PLAT_COLOR[pKey]}40">${PLAT_LABEL[pKey]}</span>` : '';
+          }).filter(Boolean).join(' ');
+          const tierBadge = tier ? `<span style="font-size:10px;font-weight:700;background:${TIER_BG[tier]};color:${insTierColor(tier)};border-radius:100px;padding:2px 8px">T${tier}</span>` : '—';
+          const rowBg = i % 2 === 0 ? '' : 'background:var(--surface)';
+          return `<tr style="font-size:12px;${rowBg}">
+            <td style="padding:6px 8px;font-weight:600">@${m.handle}</td>
+            <td style="padding:6px 8px">${platPills}</td>
+            <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
+            <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
+            <td style="padding:6px 8px">${tierBadge}</td>
+            <td style="padding:6px 8px;color:var(--muted)">${type}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`
+    : '<span style="font-size:12px;color:var(--muted2)">No profiles match filters.</span>';
 }
+
+// stub — no longer used but kept to avoid reference errors from bdrUpdateStats call
+function bdrUpdateOverview() { bdrInsightsRender(); }
 
 function bdrRefreshFilterDropdowns(filteredRows) {
   const TIER_LABELS = { 1:'T1', 2:'T2', 3:'T3', 4:'T4', 0:'No tier' };
@@ -7046,7 +7275,7 @@ function bdrSaveType(input) {
   const platform = input.dataset.platform;
   bdrSetType(handle, platform, input.value);
   bdrPatchClassificationDB([{ handle, platform, influencer_type: input.value || null }]);
-  bdrUpdateOverview();
+  bdrInsightsRender();
 }
 
 function bdrSaveTier(select) {
@@ -7068,7 +7297,7 @@ function bdrSaveTier(select) {
   select.style.borderColor = ts?.border || 'var(--border)';
   select.style.fontWeight  = ts ? '700' : '400';
   bdrPatchClassificationDB([{ handle, platform, influencer_tier: tier }]);
-  bdrUpdateOverview();
+  bdrInsightsRender();
 }
 
 async function bdrPatchClassificationDB(patches) {
