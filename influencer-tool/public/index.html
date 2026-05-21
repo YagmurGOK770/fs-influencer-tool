@@ -6959,7 +6959,6 @@ async function bdrReenrichMissing() {
             platform:        'youtube',
             ...(e.followers  ? { followers:  e.followers }  : {}),
             ...(e.postCount  ? { post_count: e.postCount }  : {}),
-            ...(e.totalViews ? { total_views: String(e.totalViews) } : {}),
             ...(avgViews     ? { avg_likes:  avgViews }      : {}),
             ...(er           ? { engagement_rate: String(er) } : {}),
             ...(e.location   ? { location:   e.location }   : {}),
