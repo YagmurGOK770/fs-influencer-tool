@@ -6324,6 +6324,21 @@ async function loadBdResults(forceRefresh) {
     const data = await resp.json();
     bdrMatchingData = data.matching || [];
     bdrExcludedData = data.excluded || [];
+    // Seed localStorage from DB values so tiers/types are visible on any device
+    const allDbRows = [...bdrMatchingData, ...bdrExcludedData];
+    const types = bdrGetTypes();
+    const llmAll = bdrGetAllLLMMeta();
+    allDbRows.forEach(r => {
+      if (!r.handle || !r.platform) return;
+      const key = `${r.platform}:${r.handle}`;
+      if (r.influencer_type)  types[key]  = r.influencer_type;
+      if (r.influencer_tier != null) {
+        const existing = llmAll[key] || {};
+        llmAll[key] = { ...existing, tier: Number(r.influencer_tier), tier_reason: r.tier_reason || existing.tier_reason || '' };
+      }
+    });
+    localStorage.setItem(BDR_TYPE_KEY, JSON.stringify(types));
+    localStorage.setItem(BDR_LLM_KEY,  JSON.stringify(llmAll));
     bdrLoaded = true;
     if (bdPresets.length) bdRenderPresets('');  // already loaded — just populate the dropdown
     else bdFetchPresets('');                    // not loaded yet — fetch and then populate
