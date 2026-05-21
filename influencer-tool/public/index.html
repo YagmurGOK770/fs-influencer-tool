@@ -4726,6 +4726,7 @@ const BD_FIELD_OPS = {
   postContent:    [['contains', 'contains'], ['does not contain', 'does not contain']],
   postLocation:   [['contains', 'contains'], ['does not contain', 'does not contain']],
   verified:       [['is', 'is'], ['is not', 'is not']],
+  language:       [['is', 'is'], ['is not', 'is not']],
 };
 
 const BD_FIELD_LABELS = {
@@ -4741,10 +4742,11 @@ const BD_FIELD_LABELS = {
   postContent:    'Post content',
   postLocation:   'Post location (tag)',
   verified:       'Verified',
+  language:       'Language',
 };
 
 function bdDefaultOpFor(field) { return BD_FIELD_OPS[field][0][0]; }
-function bdDefaultValueFor(field) { return field === 'verified' ? 'true' : ''; }
+function bdDefaultValueFor(field) { return field === 'verified' ? 'true' : field === 'language' ? 'en' : ''; }
 
 function bdNewRule(initial) {
   return { id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '', ...(initial || {}) };
@@ -4864,6 +4866,16 @@ function bdRenderFilterGroups() {
           placeholder="e.g. 2 (at least 2 hashtag posts)"
           oninput="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
           style="flex:1;min-width:140px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+      } else if (rule.field === 'language') {
+        const LANG_OPTS = [
+          ['en','English'],['tr','Turkish'],['es','Spanish'],['fr','French'],['de','German'],
+          ['it','Italian'],['nl','Dutch'],['pt','Portuguese'],['ar','Arabic'],['ja','Japanese'],
+          ['ko','Korean'],['zh','Chinese'],['ru','Russian'],['pl','Polish'],['hi','Hindi'],
+          ['none','Not detected'],
+        ];
+        const opts = LANG_OPTS.map(([v,l]) => `<option value="${v}" ${rule.value===v?'selected':''}>${l}</option>`).join('');
+        valueInput = `<select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:140px">${opts}</select>`;
       } else {
         const ph = rule.field === 'location' ? 'e.g. london, england, uk' : rule.field === 'name' ? 'e.g. Carol' : rule.field === 'bio' ? 'e.g. chef, cook, food' : rule.field === 'postContent' || rule.field === 'postLocation' ? 'e.g. london, england' : 'e.g. food, chef';
         valueInput = `<input type="text" value="${(rule.value || '').replace(/"/g,'&quot;')}"
@@ -4948,6 +4960,10 @@ function bdEvaluateRule(p, rule) {
     const want = value === 'true';
     return op === 'is' ? !!p.isVerified === want : !!p.isVerified !== want;
   }
+  if (field === 'language') {
+    if (value === 'none') return op === 'is' ? !p.language : !!p.language;
+    return op === 'is' ? p.language === value : p.language !== value;
+  }
   // Text fields — value supports comma-separated alternatives (ANY match for contains)
   const needles = String(value).split(',').map(v => v.toLowerCase().trim()).filter(Boolean);
   if (!needles.length) return true;
@@ -5001,7 +5017,7 @@ function bdMatchedConditionLabels(profile) {
     bio: 'Bio', name: 'Full name', location: 'Location (bio)',
     matchedKeyword: 'Keyword', postContent: 'Post content', postLocation: 'Post location (tag)',
     followers: 'Followers', engagementRate: 'Engagement %', avgLikes: 'Avg likes',
-    avgComments: 'Avg comments', hashtagPosts: 'Tag posts', verified: 'Verified'
+    avgComments: 'Avg comments', hashtagPosts: 'Tag posts', verified: 'Verified', language: 'Language'
   };
   const NUMERIC = { followers: 1, engagementRate: 1, avgLikes: 1, avgComments: 1, hashtagPosts: 1 };
   const matched = [];
@@ -6450,6 +6466,7 @@ function bdrToFilterShape(row) {
     postLocations:   Array.isArray(row.post_locations)   ? row.post_locations   : [],
     matchedKeywords: Array.isArray(row.matched_keywords) ? row.matched_keywords : [],
     rawPlatform:     Array.isArray(row.platforms) ? row.platforms.join(',') : (row.raw_platform||row.platform||''),
+    language:        row.language || null,
   };
 }
 
