@@ -4908,6 +4908,13 @@ function bdRenderFilterGroups() {
   });
 }
 
+// Word-boundary keyword match — "uk" must not match inside "mukbang".
+// Both text and needle should already be lowercased before calling.
+function bdWordMatch(text, needle) {
+  const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('\\b' + esc + '\\b').test(text);
+}
+
 function bdEvaluateRule(p, rule) {
   const { field, op, value } = rule;
   if (field !== 'verified' && (value == null || value === '')) return true;
@@ -4947,8 +4954,8 @@ function bdEvaluateRule(p, rule) {
       return op === 'does not contain';
     }
     const minPosts = Number(rule.minPosts) || 1;
-    if (op === 'contains')         return needles.some(n => posts.filter(post => post.toLowerCase().includes(n)).length >= minPosts);
-    if (op === 'does not contain') return needles.every(n => posts.filter(post => post.toLowerCase().includes(n)).length === 0);
+    if (op === 'contains')         return needles.some(n => posts.filter(post => bdWordMatch(post.toLowerCase(), n)).length >= minPosts);
+    if (op === 'does not contain') return needles.every(n => posts.filter(post => bdWordMatch(post.toLowerCase(), n)).length === 0);
     return true;
   }
   let haystack = '';
@@ -4959,8 +4966,8 @@ function bdEvaluateRule(p, rule) {
   // YouTube is a keyword search — all results already match the keyword by definition
   if (field === 'matchedKeyword' && plat === 'youtube') return true;
   haystack = haystack.toLowerCase();
-  if (op === 'contains')         return needles.some(n => haystack.includes(n));
-  if (op === 'does not contain') return needles.every(n => !haystack.includes(n));
+  if (op === 'contains')         return needles.some(n => bdWordMatch(haystack, n));
+  if (op === 'does not contain') return needles.every(n => !bdWordMatch(haystack, n));
   return true;
 }
 
@@ -5008,7 +5015,7 @@ function bdMatchedConditionLabels(profile) {
           if (!posts.length && (plat === 'youtube' || plat === 'x')) {
             // Pass-through — no post data to verify, nothing to show
           } else {
-            const violating = needles.filter(n => posts.some(post => post.toLowerCase().includes(n.toLowerCase())));
+            const violating = needles.filter(n => posts.some(post => bdWordMatch(post.toLowerCase(), n.toLowerCase())));
             if (violating.length) violating.forEach(n => push(`≠ ${n}`));
             else push('✓ no excluded terms');
           }
@@ -5019,7 +5026,7 @@ function bdMatchedConditionLabels(profile) {
           if (rule.field === 'location')       haystack = `${profile.location || ''} ${profile.bio || ''}`;
           if (rule.field === 'matchedKeyword') haystack = (profile.matchedKeywords || []).join(' ');
           haystack = haystack.toLowerCase();
-          const violating = needles.filter(n => haystack.includes(n.toLowerCase()));
+          const violating = needles.filter(n => bdWordMatch(haystack, n.toLowerCase()));
           if (violating.length) violating.forEach(n => push(`≠ ${n}`));
           else push('✓ no excluded terms');
         }
@@ -5047,7 +5054,7 @@ function bdMatchedConditionLabels(profile) {
             // Pass-through — no post data available, can't show which keywords matched
           } else {
             const minPosts = Number(rule.minPosts) || 1;
-            needles.filter(n => posts.filter(post => post.toLowerCase().includes(n.toLowerCase())).length >= minPosts)
+            needles.filter(n => posts.filter(post => bdWordMatch(post.toLowerCase(), n.toLowerCase())).length >= minPosts)
               .forEach(n => push(n));
           }
         } else {
