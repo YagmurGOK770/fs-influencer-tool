@@ -354,6 +354,7 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
       <button class="nav-tab" id="tabInsightsBtn" onclick="switchMainTab('insights')">Overview</button>
       <button class="nav-tab" id="tabEnrichBtn" onclick="switchMainTab('enrich')">Search &amp; Enrich</button>
       <button class="nav-tab" id="tabBdResultsBtn" onclick="switchMainTab('bdresults')">Results</button>
+      <button class="nav-tab" id="tabOutreachBtn" onclick="switchMainTab('outreach')">Outreach</button>
       <button class="nav-tab" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
     </div>
   </div>
@@ -2473,14 +2474,17 @@ function switchMainTab(tab) {
   document.getElementById('mainEnrich').style.display    = tab === 'enrich'    ? '' : 'none';
   document.getElementById('mainBdResults').style.display = tab === 'bdresults' ? '' : 'none';
   document.getElementById('mainInsights').style.display  = tab === 'insights'  ? '' : 'none';
+  document.getElementById('mainOutreach').style.display  = tab === 'outreach'  ? '' : 'none';
   document.getElementById('tabCoverageBtn').classList.toggle('active',  tab === 'coverage');
   document.getElementById('tabEnrichBtn').classList.toggle('active',    tab === 'enrich');
   document.getElementById('tabBdResultsBtn').classList.toggle('active', tab === 'bdresults');
   document.getElementById('tabInsightsBtn').classList.toggle('active',  tab === 'insights');
+  document.getElementById('tabOutreachBtn').classList.toggle('active',  tab === 'outreach');
   if (tab === 'coverage')  loadCoverage();
   if (tab === 'enrich')    loadEnrichTab();
   if (tab === 'bdresults') { bdrUpdateModelSel(); loadBdResults(); }
   if (tab === 'insights')  { if (!bdrLoaded) loadBdResults(); else bdrInsightsRender(); }
+  if (tab === 'outreach')  loadOutreach();
   localStorage.setItem('activeMainTab', tab);
 }
 
@@ -4149,7 +4153,152 @@ function closeProfileCard() {
           </select>
         </div>
       </div>
+      <div id="insSelBar" style="display:none;padding:8px 16px;background:var(--green-bg);border-bottom:1px solid var(--green-border);display:none;align-items:center;justify-content:space-between;gap:8px">
+        <span id="insSelCount" style="font-size:12px;font-weight:700;color:var(--green)">0 selected</span>
+        <div style="display:flex;gap:6px">
+          <button id="insAddOutreachBtn" onclick="insAddToOutreach()" style="background:var(--green);color:#fff;border:none;border-radius:7px;padding:5px 14px;font-size:12px;font-weight:700;cursor:pointer">Add to Outreach</button>
+          <button onclick="insClearSelection()" style="background:none;border:1px solid var(--green-border);color:var(--green);border-radius:7px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer">Clear</button>
+        </div>
+      </div>
       <div id="insTopList" style="padding:12px 16px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Outreach tab ── -->
+<div id="mainOutreach" style="display:none">
+  <div class="cov-page">
+
+    <!-- Stat cards -->
+    <div id="outreachStats" class="cov-stats" style="margin-bottom:20px"></div>
+
+    <!-- Pipeline table -->
+    <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Outreach Pipeline</span>
+        <button onclick="outreachOpenForm(null)" style="display:inline-flex;align-items:center;gap:5px;background:var(--green);color:#fff;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">+ Add influencer</button>
+      </div>
+      <div id="outreachTableWrap" style="overflow-x:auto">
+        <table id="outreachTable" style="width:100%;border-collapse:collapse;min-width:800px">
+          <thead>
+            <tr style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)">
+              <th style="padding:8px 12px;text-align:left">Handle</th>
+              <th style="padding:8px 12px;text-align:left">Contacted</th>
+              <th style="padding:8px 12px;text-align:left">Status</th>
+              <th style="padding:8px 12px;text-align:left">Price</th>
+              <th style="padding:8px 12px;text-align:left">Deal</th>
+              <th style="padding:8px 12px;text-align:left">First post</th>
+              <th style="padding:8px 12px;text-align:left">Agency</th>
+              <th style="padding:8px 12px"></th>
+            </tr>
+          </thead>
+          <tbody id="outreachTbody">
+            <tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted2);font-size:12px">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit / Add modal -->
+  <div id="outreachOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;overflow-y:auto" onclick="if(event.target===this)outreachCloseForm()">
+    <div style="background:var(--white);border-radius:12px;width:600px;max-width:96vw;margin:40px auto;padding:0;box-shadow:0 8px 40px rgba(0,0,0,.18)">
+      <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <span id="outreachFormTitle" style="font-size:14px;font-weight:700">Add influencer</span>
+        <button onclick="outreachCloseForm()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted);line-height:1">&times;</button>
+      </div>
+      <div style="padding:20px;display:flex;flex-direction:column;gap:16px">
+
+        <!-- Handle -->
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Handle *</label>
+          <input id="oHandle" type="text" placeholder="@handle" onblur="outreachShowHandleInfo(this.value)" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          <div id="oHandleInfo" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
+        </div>
+
+        <!-- Contact info row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Email</label>
+            <input id="oEmail" type="email" placeholder="email@example.com" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Mobile</label>
+            <input id="oMobile" type="tel" placeholder="+1 555 000 0000" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+
+        <!-- Agency -->
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+          <input id="oAgency" type="checkbox" style="width:15px;height:15px;cursor:pointer">
+          <span>Requires agency / sponsor to get in contact</span>
+        </label>
+
+        <!-- Outreach dates -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">First contact date</label>
+            <input id="oContactDate" type="date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div style="display:flex;flex-direction:column;justify-content:flex-end;gap:6px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input id="oResponded" type="checkbox" style="width:15px;height:15px;cursor:pointer" onchange="outreachToggleResponded()">
+              <span>Responded</span>
+            </label>
+            <input id="oRespondedDate" type="date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box;display:none" title="Date they responded">
+          </div>
+        </div>
+
+        <!-- Price -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Price min (€)</label>
+            <input id="oPriceMin" type="number" min="0" placeholder="500" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Price max (€)</label>
+            <input id="oPriceMax" type="number" min="0" placeholder="2000" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+
+        <!-- Deal agreed -->
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Deal agreed</label>
+          <input id="oDeal" type="text" placeholder="e.g. 2 posts + story, €1200" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+        </div>
+
+        <!-- Timeline -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Agreed start</label>
+            <input id="oStartDate" type="date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Agreed end</label>
+            <input id="oEndDate" type="date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">First post date</label>
+            <input id="oFirstPost" type="date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+
+        <!-- Notes -->
+        <div>
+          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">Notes</label>
+          <textarea id="oNotes" rows="3" placeholder="Any additional info…" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:13px;resize:vertical;box-sizing:border-box;font-family:var(--sans)"></textarea>
+        </div>
+
+        <!-- Actions -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding-top:4px">
+          <button id="oDeleteBtn" onclick="outreachDelete()" style="background:none;border:1px solid #e55;color:#e55;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;display:none">Delete</button>
+          <div style="display:flex;gap:8px;margin-left:auto">
+            <button onclick="outreachCloseForm()" style="background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>
+            <button onclick="outreachSave()" style="background:var(--green);color:#fff;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">Save</button>
+          </div>
+        </div>
+
+      </div>
     </div>
   </div>
 </div>
@@ -6528,6 +6677,7 @@ function insDimOrder(dim, keys) {
 
 function bdrInsightsRender() {
   if (document.getElementById('mainInsights').style.display === 'none') return;
+  insPreloadOutreach().then(wasLoaded => { if (wasLoaded) bdrInsightsRender(); }).catch(() => {});
   const rows = insGetRows();
 
   // Update platform pill counts
@@ -6677,15 +6827,16 @@ function bdrInsightsRender() {
   const topTier = document.getElementById('insTopTier').value;
   const topType = topTypeSel.value;
 
-  let topRows = [...rows];
-  if (topTier) topRows = topRows.filter(m => String(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === topTier);
-  if (topType) topRows = topRows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'') === topType);
   const topErOf = m => {
     const isYT = m.platforms?.some(p => p.includes('youtube'));
     if (isYT) { const av = Number(m.avg_likes), fl = Number(m.followers); return (av > 0 && fl > 0) ? av / fl * 100 : 0; }
     const v = Number(m.engagement_rate); return (v > 0 && v <= 200) ? v : 0;
   };
-  topRows.sort((a,b) => topSort === 'er'
+
+  let topRows = [...rows];
+  if (topTier) topRows = topRows.filter(m => String(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === topTier);
+  if (topType) topRows = topRows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'') === topType);
+  topRows.sort((a, b) => topSort === 'er'
     ? topErOf(b) - topErOf(a)
     : (Number(b.followers)||0) - (Number(a.followers)||0));
   topRows = topRows.slice(0, 30);
@@ -6702,9 +6853,11 @@ function bdrInsightsRender() {
     tiktok: '#010101', youtube: '#ff0000', x: '#000000',
   };
 
+  const trackedHandles = new Set(_outreachData.map(r => r.handle));
   document.getElementById('insTopList').innerHTML = topRows.length
     ? `<table style="width:100%;border-collapse:collapse">
         <thead><tr style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em">
+          <th style="padding:6px 8px;width:28px"></th>
           <th style="padding:6px 8px;text-align:left">Handle</th>
           <th style="padding:6px 8px;text-align:right">Followers</th>
           <th style="padding:6px 8px;text-align:right">ER%</th>
@@ -6720,6 +6873,10 @@ function bdrInsightsRender() {
             : (m.engagement_rate != null ? Number(m.engagement_rate) : null);
           const er = erVal2 != null ? erVal2.toFixed(1)+'%' : '—';
           const h = (m.handle || '').replace(/^@/, '');
+          const isTracked = trackedHandles.has(h);
+          const checkCell = isTracked
+            ? `<td style="padding:6px 8px"><span title="Already in Outreach" style="font-size:11px;font-weight:700;color:var(--green)">✓</span></td>`
+            : `<td style="padding:6px 8px"><input type="checkbox" data-handle="${h}" onchange="insUpdateSelBar()" style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)"></td>`;
           const platIconLinks = m.platforms.map(p => {
             const row = m._rows?.find(r => (r.platform || r.raw_platform || '').toLowerCase().includes(p));
             let platUrl = row?.profile_url || '';
@@ -6738,6 +6895,7 @@ function bdrInsightsRender() {
           const tierBadge = tier ? `<span style="font-size:10px;font-weight:700;background:${TIER_BG[tier]};color:${insTierColor(tier)};border-radius:100px;padding:2px 8px">T${tier}</span>` : '—';
           const rowBg = i % 2 === 0 ? '' : 'background:var(--surface)';
           return `<tr style="font-size:12px;${rowBg}">
+            ${checkCell}
             <td style="padding:6px 8px;font-weight:600">@${m.handle}${platIconLinks}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
@@ -6747,6 +6905,65 @@ function bdrInsightsRender() {
         }).join('')}</tbody>
       </table>`
     : '<span style="font-size:12px;color:var(--muted2)">No profiles match filters.</span>';
+}
+
+// ── Overview → Outreach selection helpers ────────────────────────────────────
+
+function insUpdateSelBar() {
+  const checked = document.querySelectorAll('#insTopList input[type=checkbox]:checked');
+  const bar = document.getElementById('insSelBar');
+  if (checked.length) {
+    bar.style.display = 'flex';
+    document.getElementById('insSelCount').textContent = `${checked.length} selected`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function insClearSelection() {
+  document.querySelectorAll('#insTopList input[type=checkbox]').forEach(cb => cb.checked = false);
+  insUpdateSelBar();
+}
+
+async function insAddToOutreach() {
+  const checked = [...document.querySelectorAll('#insTopList input[type=checkbox]:checked')];
+  const handles = checked.map(el => el.dataset.handle);
+  if (!handles.length) return;
+
+  const btn = document.getElementById('insAddOutreachBtn');
+  btn.disabled = true; btn.textContent = `Adding ${handles.length}…`;
+
+  let added = 0;
+  for (const handle of handles) {
+    try {
+      const resp = await fetch('/api/db-save', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'outreach-save', handle }),
+      });
+      if (resp.ok) { added++; _outreachData.push({ handle }); }
+    } catch (e) { console.warn('[insAddToOutreach]', handle, e.message); }
+  }
+
+  btn.textContent = `✓ ${added} added`;
+  setTimeout(() => {
+    btn.textContent = 'Add to Outreach';
+    btn.disabled = false;
+    bdrInsightsRender(); // re-render to flip checkboxes → ✓ Tracked
+  }, 1500);
+}
+
+// Silently load outreach data (no spinner, no table render) so Overview can
+// show tracked indicators without requiring the user to visit Outreach first.
+async function insPreloadOutreach() {
+  if (_outreachData.length) return false; // already loaded
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'outreach-list' }),
+    });
+    if (resp.ok) { const d = await resp.json(); _outreachData = d.data || []; return true; }
+  } catch (_) {}
+  return false;
 }
 
 // stub — no longer used but kept to avoid reference errors from bdrUpdateStats call
@@ -7427,6 +7644,236 @@ function bdrExportCsv() {
   a.href        = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   a.download    = `bd_results_${bdrViewMode}_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
+}
+
+// ── Outreach tab ──────────────────────────────────────────────────────────────
+
+let _outreachData = [];       // cached list from DB
+let _outreachEditHandle = null; // null = add mode, string = edit mode
+
+async function loadOutreach() {
+  document.getElementById('outreachTbody').innerHTML =
+    '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted2);font-size:12px">Loading…</td></tr>';
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'outreach-list' }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    _outreachData = data.data || [];
+    outreachRender();
+  } catch (e) {
+    document.getElementById('outreachTbody').innerHTML =
+      `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--red);font-size:12px">Failed to load: ${e.message}</td></tr>`;
+  }
+}
+
+function outreachDaysSince(dateStr) {
+  if (!dateStr) return null;
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+}
+
+function outreachFormatDate(dateStr) {
+  if (!dateStr) return '—';
+  return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function outreachRender() {
+  const rows = _outreachData;
+
+  // Stat cards
+  const total     = rows.length;
+  const awaiting  = rows.filter(r => r.first_contact_date && !r.responded).length;
+  const agreed    = rows.filter(r => r.deal_agreed).length;
+  const live      = rows.filter(r => r.first_post_date).length;
+  document.getElementById('outreachStats').innerHTML = [
+    { num: total,    label: 'Tracked' },
+    { num: awaiting, label: 'Awaiting reply' },
+    { num: agreed,   label: 'Deals agreed' },
+    { num: live,     label: 'Live / posted' },
+  ].map(s => `<div class="cov-stat"><div class="cov-stat-num" style="font-size:22px">${s.num}</div><div class="cov-stat-label">${s.label}</div></div>`).join('');
+
+  // Table rows
+  const tbody = document.getElementById('outreachTbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="padding:32px;text-align:center;color:var(--muted2);font-size:13px">No influencers tracked yet — click <strong>+ Add influencer</strong> to start.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map((r, i) => {
+    const rowBg = i % 2 === 1 ? 'background:var(--surface)' : '';
+
+    // Handle cell — show platform icons if in bdrMatchingData
+    const merged = typeof bdrMergeByHandle === 'function' && bdrMatchingData?.length
+      ? bdrMergeByHandle(bdrMatchingData).find(m => m.handle === r.handle) : null;
+    const platHtml = merged ? merged.platforms.map(p => {
+      const pKey = ['instagram','tiktok','youtube','x'].find(k => p.includes(k)) || '';
+      const lbl  = { instagram:'IG', tiktok:'TT', youtube:'YT', x:'X' }[pKey] || p.slice(0,2).toUpperCase();
+      const col  = { instagram:'#e1306c', tiktok:'#222', youtube:'#ff0000', x:'#1da1f2' }[pKey] || '#888';
+      return `<span style="font-size:10px;font-weight:700;color:${col};background:${col}18;border-radius:100px;padding:1px 5px;border:1px solid ${col}40;margin-left:3px">${lbl}</span>`;
+    }).join('') : '';
+
+    // Status cell
+    let statusHtml;
+    if (!r.first_contact_date) {
+      statusHtml = '<span style="color:var(--muted2);font-size:11px">Not contacted</span>';
+    } else if (r.responded) {
+      statusHtml = `<span style="color:var(--green);font-size:11px;font-weight:700">✓ Replied${r.responded_date ? ' ' + outreachFormatDate(r.responded_date) : ''}</span>`;
+    } else {
+      const days = outreachDaysSince(r.first_contact_date);
+      const color = days >= 7 ? 'var(--red)' : days >= 3 ? 'var(--amber)' : 'var(--muted)';
+      const icon  = days >= 7 ? '🔴' : days >= 3 ? '⚠️' : '⏳';
+      statusHtml = `<span style="color:${color};font-size:11px;font-weight:700">${icon} ${days}d waiting</span>`;
+    }
+
+    // Price
+    const price = r.price_min || r.price_max
+      ? `€${r.price_min||'?'}–€${r.price_max||'?'}`
+      : '—';
+
+    return `<tr style="font-size:12px;${rowBg}" data-handle="${r.handle}">
+      <td style="padding:8px 12px;font-weight:600">@${r.handle}${platHtml}</td>
+      <td style="padding:8px 12px;color:var(--muted)">${outreachFormatDate(r.first_contact_date)}</td>
+      <td style="padding:8px 12px">${statusHtml}</td>
+      <td style="padding:8px 12px;font-family:var(--mono);font-size:11px">${price}</td>
+      <td style="padding:8px 12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${r.deal_agreed || '—'}</td>
+      <td style="padding:8px 12px;color:var(--muted)">${outreachFormatDate(r.first_post_date)}</td>
+      <td style="padding:8px 12px;text-align:center">${r.requires_agency ? '<span title="Requires agency/sponsor" style="font-size:13px">🏢</span>' : '—'}</td>
+      <td style="padding:8px 12px;text-align:right">
+        <button onclick="outreachOpenForm('${r.handle}')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">Edit</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function outreachOpenForm(handle) {
+  _outreachEditHandle = handle;
+  const isEdit = handle !== null;
+  document.getElementById('outreachFormTitle').textContent = isEdit ? `Edit — @${handle}` : 'Add influencer';
+  document.getElementById('oDeleteBtn').style.display = isEdit ? 'inline-block' : 'none';
+
+  // Reset form
+  ['oHandle','oEmail','oMobile','oDeal','oNotes'].forEach(id => document.getElementById(id).value = '');
+  ['oContactDate','oRespondedDate','oStartDate','oEndDate','oFirstPost'].forEach(id => document.getElementById(id).value = '');
+  ['oPriceMin','oPriceMax'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('oAgency').checked   = false;
+  document.getElementById('oResponded').checked = false;
+  document.getElementById('oRespondedDate').style.display = 'none';
+  document.getElementById('oHandle').readOnly = isEdit;
+  document.getElementById('oHandle').style.background = isEdit ? 'var(--surface)' : '';
+
+  if (isEdit) {
+    const r = _outreachData.find(x => x.handle === handle);
+    if (r) {
+      document.getElementById('oHandle').value        = r.handle;
+      document.getElementById('oEmail').value         = r.email || '';
+      document.getElementById('oMobile').value        = r.mobile || '';
+      document.getElementById('oAgency').checked      = !!r.requires_agency;
+      document.getElementById('oContactDate').value   = r.first_contact_date || '';
+      document.getElementById('oResponded').checked   = !!r.responded;
+      document.getElementById('oRespondedDate').value = r.responded_date || '';
+      document.getElementById('oRespondedDate').style.display = r.responded ? '' : 'none';
+      document.getElementById('oPriceMin').value      = r.price_min != null ? r.price_min : '';
+      document.getElementById('oPriceMax').value      = r.price_max != null ? r.price_max : '';
+      document.getElementById('oDeal').value          = r.deal_agreed || '';
+      document.getElementById('oStartDate').value     = r.agreed_start_date || '';
+      document.getElementById('oEndDate').value       = r.agreed_end_date || '';
+      document.getElementById('oFirstPost').value     = r.first_post_date || '';
+      document.getElementById('oNotes').value         = r.notes || '';
+    }
+    // Show profile info from bdrMatchingData
+    outreachShowHandleInfo(handle);
+  } else {
+    document.getElementById('oHandleInfo').textContent = '';
+  }
+
+  document.getElementById('outreachOverlay').style.display = '';
+}
+
+function outreachCloseForm() {
+  document.getElementById('outreachOverlay').style.display = 'none';
+}
+
+function outreachToggleResponded() {
+  const checked = document.getElementById('oResponded').checked;
+  const dateEl  = document.getElementById('oRespondedDate');
+  dateEl.style.display = checked ? '' : 'none';
+  if (checked && !dateEl.value) {
+    dateEl.value = new Date().toISOString().split('T')[0];
+  }
+}
+
+function outreachShowHandleInfo(handle) {
+  const infoEl = document.getElementById('oHandleInfo');
+  if (!handle || !bdrMatchingData?.length) { infoEl.textContent = ''; return; }
+  const h = handle.toLowerCase().replace(/^@/, '');
+  const merged = typeof bdrMergeByHandle === 'function'
+    ? bdrMergeByHandle(bdrMatchingData).find(m => m.handle === h) : null;
+  if (merged) {
+    const plats = merged.platforms.map(p => p.split('_')[0]).join(', ');
+    infoEl.textContent = `${plats} · ${bdFormatCompact(Number(merged.followers)||0)} followers`;
+    infoEl.style.color = 'var(--green)';
+  } else {
+    infoEl.textContent = 'Not found in Results — handle will be added as-is';
+    infoEl.style.color = 'var(--muted)';
+  }
+}
+
+async function outreachSave() {
+  const handle = document.getElementById('oHandle').value.trim().replace(/^@/, '').toLowerCase();
+  if (!handle) { alert('Handle is required.'); return; }
+
+  const payload = {
+    action: 'outreach-save',
+    handle,
+    email:              document.getElementById('oEmail').value.trim()       || null,
+    mobile:             document.getElementById('oMobile').value.trim()      || null,
+    requires_agency:    document.getElementById('oAgency').checked,
+    first_contact_date: document.getElementById('oContactDate').value        || null,
+    responded:          document.getElementById('oResponded').checked,
+    responded_date:     document.getElementById('oRespondedDate').value      || null,
+    price_min:          document.getElementById('oPriceMin').value !== '' ? Number(document.getElementById('oPriceMin').value) : null,
+    price_max:          document.getElementById('oPriceMax').value !== '' ? Number(document.getElementById('oPriceMax').value) : null,
+    deal_agreed:        document.getElementById('oDeal').value.trim()        || null,
+    agreed_start_date:  document.getElementById('oStartDate').value          || null,
+    agreed_end_date:    document.getElementById('oEndDate').value            || null,
+    first_post_date:    document.getElementById('oFirstPost').value          || null,
+    notes:              document.getElementById('oNotes').value.trim()       || null,
+  };
+
+  const btn = document.querySelector('#outreachOverlay button[onclick="outreachSave()"]');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(), body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    outreachCloseForm();
+    await loadOutreach();
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+  } finally {
+    btn.textContent = 'Save'; btn.disabled = false;
+  }
+}
+
+async function outreachDelete() {
+  if (!_outreachEditHandle) return;
+  if (!confirm(`Remove @${_outreachEditHandle} from outreach tracking?`)) return;
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'outreach-delete', handle: _outreachEditHandle }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.statusText);
+    outreachCloseForm();
+    await loadOutreach();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
 }
 </script>
 
