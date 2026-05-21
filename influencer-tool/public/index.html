@@ -6920,9 +6920,12 @@ async function bdrReenrichMissing() {
 
   const ytProfiles = allMerged
     .filter(m => m.platforms.some(p => p.includes('youtube')) && m._rows.some(r => (r.platform||'').includes('youtube') && needsEnrich(r)))
-    .map(m => {
+    .flatMap(m => {
       const ytRow = m._rows.find(r => (r.platform||'').includes('youtube'));
-      return { handle: m.handle, profileUrl: ytRow?.profile_url || `https://www.youtube.com/@${m.handle}` };
+      const profileUrl = ytRow?.profile_url || '';
+      // Skip if no real YouTube URL stored — handle was copied from another platform
+      if (!profileUrl.includes('youtube.com') && !profileUrl.includes('youtu.be')) return [];
+      return [{ handle: m.handle, profileUrl }];
     });
 
   const igProfiles = bdrMatchingData
