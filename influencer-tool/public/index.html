@@ -3330,7 +3330,7 @@ function renderCovTable() {
 
   document.getElementById('covFilterLabel').textContent = `Showing ${rows.length} of ${covAllRows.length}`;
 
-  const TIER_LABEL = { 1: 'T1 Priority', 2: 'T2 Strong', 3: 'T3 Watch', 4: 'T4 Non-food' };
+  const TIER_LABEL = { 1: 'T1', 2: 'T2', 3: 'T3', 4: 'T4' };
   const TIER_COLOR = { 1: 'var(--green)', 2: 'var(--blue)', 3: 'var(--amber)', 4: '#c0392b' };
 
   const tbody = document.getElementById('covTableBody');
@@ -3377,7 +3377,7 @@ function renderCovTable() {
 
 function exportCovCsv() {
   if (!covAllRows.length) return;
-  const TIER_LABEL = { 1: 'T1 Priority', 2: 'T2 Strong', 3: 'T3 Watch', 4: 'T4 Non-food' };
+  const TIER_LABEL = { 1: 'T1', 2: 'T2', 3: 'T3', 4: 'T4' };
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const headers = ['Name','Handle','Platform','Followers','Location','Bucket','Niche','In BD Results','BD Followers','BD Type','BD Tier','Profile URL','Notes'];
   const lines = [headers.join(',')];
@@ -3962,6 +3962,30 @@ function closeProfileCard() {
       </div>
     </div>
 
+    <!-- Overview breakdown: Tiers × Platforms + Types -->
+    <div id="bdrOverviewWrap" style="display:none;background:var(--white);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px">
+      <div onclick="bdrToggleOverview()" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="bdrOvChevron" style="font-size:10px;color:var(--muted);transition:transform .15s">▼</span>
+          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Overview</span>
+        </div>
+      </div>
+      <div id="bdrOverviewContent">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <!-- Tiers panel -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Tiers</div>
+            <div id="bdrOvTiers"></div>
+          </div>
+          <!-- Types panel -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Types</div>
+            <div id="bdrOvTypes"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Toolbar: view toggle + platform pills + search -->
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)">
@@ -3981,7 +4005,14 @@ function closeProfileCard() {
         <button class="pfill pfyt" id="bdrPfYt" onclick="bdrSetPlatform('youtube',this)">YouTube <span class="fcount" id="bdrPcYt">0</span></button>
         <button class="pfill pfx" id="bdrPfX" onclick="bdrSetPlatform('x',this)">X <span class="fcount" id="bdrPcX">0</span></button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="bdrFilterTier" onchange="bdrApplyFilter()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="">All Tiers</option>
+        </select>
+        <select id="bdrFilterType" onchange="bdrApplyFilter()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);max-width:200px">
+          <option value="">All Types</option>
+        </select>
+        <span style="width:1px;height:20px;background:var(--border)"></span>
         <button class="btn-sm" onclick="bdBulkToggleBadges('bdrTbody', this)">⊞ Expand all</button>
         <select id="bdrClassifyProviderSel" onchange="bdrUpdateModelSel()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
           <option value="anthropic">Anthropic</option>
@@ -4018,7 +4049,7 @@ function closeProfileCard() {
               <th onclick="bdrSetSort('handle')" style="cursor:pointer;user-select:none">Handle <span id="bdrSrt-handle" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('full_name')" style="cursor:pointer;user-select:none">Full Name <span id="bdrSrt-full_name" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('platform')" style="cursor:pointer;user-select:none">Platform <span id="bdrSrt-platform" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th onclick="bdrSetSort('followers')" style="cursor:pointer;user-select:none">Followers <span id="bdrSrt-followers" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('followers')" style="cursor:pointer;user-select:none">Followers <span id="bdrSrt-followers" style="font-size:10px;opacity:1;color:var(--accent)">↓</span></th>
               <th onclick="bdrSetSort('post_count')" style="cursor:pointer;user-select:none" title="Video count (YouTube) or post count">Posts <span id="bdrSrt-post_count" style="font-size:10px;opacity:.3">⇅</span></th>
               <th title="Total views (YouTube) or avg likes">AVG ♥</th>
               <th onclick="bdrSetSort('engagement_rate')" style="cursor:pointer;user-select:none" title="ER% for Instagram/TikTok; view rate for YouTube">ER% <span id="bdrSrt-engagement_rate" style="font-size:10px;opacity:.3">⇅</span></th>
@@ -4030,7 +4061,7 @@ function closeProfileCard() {
               <th onclick="bdrSetSort('type')" style="cursor:pointer;user-select:none" title="Label the influencer type — saved in your browser">Type <span id="bdrSrt-type" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('llm_tier')" style="cursor:pointer;user-select:none" title="AI outreach tier">Tier <span id="bdrSrt-llm_tier" style="font-size:10px;opacity:.3">⇅</span></th>
               <th title="Tier reasoning">Reason</th>
-              <th onclick="bdrSetSort('fetched_at')" style="cursor:pointer;user-select:none">Saved <span id="bdrSrt-fetched_at" style="font-size:10px;opacity:1;color:var(--accent)">↓</span></th>
+              <th onclick="bdrSetSort('fetched_at')" style="cursor:pointer;user-select:none">Saved <span id="bdrSrt-fetched_at" style="font-size:10px;opacity:.3">⇅</span></th>
             </tr>
           </thead>
           <tbody id="bdrTbody"></tbody>
@@ -4038,6 +4069,11 @@ function closeProfileCard() {
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:var(--surface);border-top:1px solid var(--border);font-size:12px;color:var(--muted)" id="bdrFooter">
         <span id="bdrFooterInfo">—</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="btn-sm" id="bdrPrevBtn" onclick="bdrChangePage(-1)" style="display:none">‹ Prev</button>
+          <span id="bdrPageInfo" style="font-size:12px;color:var(--muted)"></span>
+          <button class="btn-sm" id="bdrNextBtn" onclick="bdrChangePage(1)" style="display:none">Next ›</button>
+        </div>
         <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
       </div>
     </div>
@@ -5996,7 +6032,7 @@ let bdrExcludedData = [];
 let bdrViewMode = 'matching';
 let bdrPlatform = 'all';
 let bdrLoaded = false;
-let bdrSortCol = 'fetched_at';
+let bdrSortCol = 'followers';
 let bdrSortDir = 'desc';
 
 const BDR_TYPE_KEY = 'bd_type_labels';
@@ -6331,6 +6367,149 @@ function bdrUpdateStats() {
   document.getElementById('bdrPcX').textContent   = pc('x');
   document.getElementById('bdrMatchCount').textContent = uniqMatch;
   document.getElementById('bdrExclCount').textContent  = uniqExcl;
+  bdrUpdateOverview();
+}
+
+let bdrOverviewOpen = true;
+function bdrToggleOverview() {
+  bdrOverviewOpen = !bdrOverviewOpen;
+  document.getElementById('bdrOverviewContent').style.display = bdrOverviewOpen ? '' : 'none';
+  document.getElementById('bdrOvChevron').style.transform = bdrOverviewOpen ? '' : 'rotate(-90deg)';
+}
+
+function bdrUpdateOverview() {
+  const merged = bdrMergeByHandle(bdrMatchingData);
+  if (!merged.length) { document.getElementById('bdrOverviewWrap').style.display = 'none'; return; }
+  document.getElementById('bdrOverviewWrap').style.display = '';
+
+  const PLATS = ['instagram','tiktok','youtube','x'];
+  const PLAT_COLOR = { instagram:'#e1306c', tiktok:'#222', youtube:'#ff0000', x:'#1da1f2' };
+  const PLAT_LABEL = { instagram:'IG', tiktok:'TT', youtube:'YT', x:'X' };
+
+  const TIER_STYLE = {
+    1: { label:'T1', color:'var(--green)',  bg:'#edf7f1' },
+    2: { label:'T2',   color:'var(--blue)',   bg:'#eef4fc' },
+    3: { label:'T3',    color:'var(--amber)',  bg:'#fef8ec' },
+    4: { label:'T4', color:'#c0392b',       bg:'#fdf0ee' },
+    0: { label:'No tier',     color:'var(--muted)',  bg:'var(--surface)' },
+  };
+
+  // --- Tiers breakdown ---
+  // Build: { tierKey -> { total, ig, tt, yt, x } }
+  const tierMap = {};
+  merged.forEach(m => {
+    const t = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier || 0;
+    if (!tierMap[t]) tierMap[t] = { total:0, instagram:0, tiktok:0, youtube:0, x:0 };
+    tierMap[t].total++;
+    PLATS.forEach(p => { if (m.platforms.some(pl => pl.includes(p))) tierMap[t][p]++; });
+  });
+  const tierOrder = [1,2,3,4,0].filter(k => tierMap[k]);
+  const maxTier = Math.max(...tierOrder.map(k => tierMap[k].total), 1);
+
+  document.getElementById('bdrOvTiers').innerHTML = tierOrder.map(k => {
+    const d = tierMap[k];
+    const ts = TIER_STYLE[k];
+    const barW = Math.round((d.total / maxTier) * 100);
+    const platPills = PLATS.filter(p => d[p] > 0).map(p =>
+      `<span style="font-size:10px;font-weight:600;color:${PLAT_COLOR[p]};background:${PLAT_COLOR[p]}18;border:1px solid ${PLAT_COLOR[p]}40;border-radius:100px;padding:1px 6px">${PLAT_LABEL[p]} ${d[p]}</span>`
+    ).join('');
+    return `<div style="margin-bottom:7px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;font-weight:700;color:${ts.color}">${ts.label}</span>
+          <span style="font-size:12px;font-weight:800;color:var(--text)">${d.total}</span>
+        </div>
+        <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end">${platPills}</div>
+      </div>
+      <div style="height:5px;border-radius:100px;background:var(--surface);overflow:hidden">
+        <div style="height:100%;width:${barW}%;background:${ts.color};border-radius:100px;transition:width .3s"></div>
+      </div>
+    </div>`;
+  }).join('') || '<span style="font-size:12px;color:var(--muted2)">No tiers assigned yet</span>';
+
+  // --- Types breakdown ---
+  const typeMap = {};
+  merged.forEach(m => {
+    const t = bdrGetType(m.handle, m.platforms?.[0] || '') || '(none)';
+    if (!typeMap[t]) typeMap[t] = { total:0, instagram:0, tiktok:0, youtube:0, x:0 };
+    typeMap[t].total++;
+    PLATS.forEach(p => { if (m.platforms.some(pl => pl.includes(p))) typeMap[t][p]++; });
+  });
+  const typeOrder = Object.keys(typeMap).sort((a,b) => typeMap[b].total - typeMap[a].total);
+  const maxType = Math.max(...typeOrder.map(k => typeMap[k].total), 1);
+
+  document.getElementById('bdrOvTypes').innerHTML = typeOrder.map(k => {
+    const d = typeMap[k];
+    const barW = Math.round((d.total / maxType) * 100);
+    const platPills = PLATS.filter(p => d[p] > 0).map(p =>
+      `<span style="font-size:10px;font-weight:600;color:${PLAT_COLOR[p]};background:${PLAT_COLOR[p]}18;border:1px solid ${PLAT_COLOR[p]}40;border-radius:100px;padding:1px 6px">${PLAT_LABEL[p]} ${d[p]}</span>`
+    ).join('');
+    return `<div style="margin-bottom:7px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:11px;font-weight:600;color:var(--text)">${k}</span>
+          <span style="font-size:12px;font-weight:800;color:var(--text)">${d.total}</span>
+        </div>
+        <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end">${platPills}</div>
+      </div>
+      <div style="height:5px;border-radius:100px;background:var(--surface);overflow:hidden">
+        <div style="height:100%;width:${barW}%;background:var(--accent);border-radius:100px;transition:width .3s"></div>
+      </div>
+    </div>`;
+  }).join('') || '<span style="font-size:12px;color:var(--muted2)">No types assigned yet</span>';
+}
+
+function bdrRefreshFilterDropdowns(filteredRows) {
+  const TIER_LABELS = { 1:'T1', 2:'T2', 3:'T3', 4:'T4', 0:'No tier' };
+  const tierSel = document.getElementById('bdrFilterTier');
+  const typeSel = document.getElementById('bdrFilterType');
+  if (!tierSel || !typeSel) return;
+
+  const prevTier = tierSel.value;
+  const prevType = typeSel.value;
+
+  // Count tiers and types in the currently-visible (post-filter) rows
+  const tierCounts = {};
+  const typeCounts = {};
+  filteredRows.forEach(m => {
+    const t = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier || 0;
+    tierCounts[t] = (tierCounts[t] || 0) + 1;
+    const ty = bdrGetType(m.handle, m.platforms?.[0] || '') || '';
+    if (ty) typeCounts[ty] = (typeCounts[ty] || 0) + 1;
+    else    typeCounts['(none)'] = (typeCounts['(none)'] || 0) + 1;
+  });
+
+  // Rebuild tier dropdown — fixed order 1,2,3,4,0; only show tiers that exist
+  tierSel.innerHTML = '<option value="">All Tiers</option>';
+  [1,2,3,4,0].forEach(k => {
+    if (!tierCounts[k]) return;
+    const opt = document.createElement('option');
+    opt.value = k === 0 ? 'none' : String(k);
+    opt.textContent = `${TIER_LABELS[k]} (${tierCounts[k]})`;
+    tierSel.appendChild(opt);
+  });
+  // Restore selection if it still exists, else reset
+  if ([...tierSel.options].some(o => o.value === prevTier)) tierSel.value = prevTier;
+  else tierSel.value = '';
+
+  // Rebuild type dropdown — sorted by count desc, named types first, (none) last
+  typeSel.innerHTML = '<option value="">All Types</option>';
+  const named = Object.entries(typeCounts).filter(([k]) => k !== '(none)').sort((a,b) => b[1]-a[1]);
+  const noType = typeCounts['(none)'];
+  named.forEach(([k, n]) => {
+    const opt = document.createElement('option');
+    opt.value = k;
+    opt.textContent = `${k} (${n})`;
+    typeSel.appendChild(opt);
+  });
+  if (noType) {
+    const opt = document.createElement('option');
+    opt.value = 'none';
+    opt.textContent = `No type (${noType})`;
+    typeSel.appendChild(opt);
+  }
+  if ([...typeSel.options].some(o => o.value === prevType)) typeSel.value = prevType;
+  else typeSel.value = '';
 }
 
 function bdrSetView(mode) {
@@ -6381,7 +6560,9 @@ function bdrUpdateSortIndicators() {
 
 function bdrApplyFilter() {
   const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
-  const q   = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
+  const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
+  const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
+  const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
 
   let merged = bdrMergeByHandle(src);
 
@@ -6396,6 +6577,18 @@ function bdrApplyFilter() {
       (m.location  || '').toLowerCase().includes(q) ||
       (Array.isArray(m.matched_keywords) ? m.matched_keywords.join(' ').toLowerCase() : '').includes(q)
     );
+  }
+  if (tierFilt) {
+    merged = merged.filter(m => {
+      const tier = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier;
+      return tierFilt === 'none' ? !tier : String(tier) === tierFilt;
+    });
+  }
+  if (typeFilt) {
+    merged = merged.filter(m => {
+      const type = bdrGetType(m.handle, m.platforms?.[0] || '');
+      return typeFilt === 'none' ? !type : type === typeFilt;
+    });
   }
 
   if (bdrSortCol) {
@@ -6428,15 +6621,18 @@ function bdrApplyFilter() {
     document.getElementById('bdrTableWrap').style.display = 'none';
     const hasAny = bdrMatchingData.length || bdrExcludedData.length;
     document.getElementById('bdrEmpty').innerHTML = hasAny
-      ? '<div style="font-size:2rem;margin-bottom:10px">🔍</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No profiles match</div><div style="font-size:12.5px">Try a different platform or clear the search.</div>'
+      ? '<div style="font-size:2rem;margin-bottom:10px">🔍</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No profiles match</div><div style="font-size:12.5px">Try a different platform, tier, type, or clear the search.</div>'
       : '<div style="font-size:2rem;margin-bottom:10px">📭</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No saved results yet</div><div style="font-size:12.5px">Run a search in the <strong>BrightData Enrich</strong> tab and click <strong>Save filtered results to DB</strong>.</div>';
+    bdrRefreshFilterDropdowns([]);
     return;
   }
 
   document.getElementById('bdrEmpty').style.display    = 'none';
   document.getElementById('bdrTableWrap').style.display = '';
-  document.getElementById('bdrFooterInfo').textContent  = `Showing ${merged.length} creator${merged.length !== 1 ? 's' : ''}`;
-  bdrRenderTable(merged);
+  bdrCurrentRows = merged;
+  bdrPage = 0;
+  bdrRefreshFilterDropdowns(merged);
+  bdrRenderPage();
 }
 
 // Extract best available location from DB fields or bio text
@@ -6477,9 +6673,32 @@ function bdrTogglePosts(id) {
 }
 
 let bdrCurrentRows = [];
+let bdrPage = 0;
+const BDR_PAGE_SIZE = 100;
 
-function bdrRenderTable(rows) {
-  bdrCurrentRows = rows;
+function bdrChangePage(delta) {
+  const totalPages = Math.ceil(bdrCurrentRows.length / BDR_PAGE_SIZE);
+  bdrPage = Math.max(0, Math.min(bdrPage + delta, totalPages - 1));
+  bdrRenderPage();
+}
+
+function bdrRenderPage() {
+  const totalPages = Math.max(1, Math.ceil(bdrCurrentRows.length / BDR_PAGE_SIZE));
+  const start = bdrPage * BDR_PAGE_SIZE;
+  const pageRows = bdrCurrentRows.slice(start, start + BDR_PAGE_SIZE);
+  bdrRenderTable(pageRows, true);
+
+  const end = Math.min(start + BDR_PAGE_SIZE, bdrCurrentRows.length);
+  document.getElementById('bdrFooterInfo').textContent =
+    `Showing ${start + 1}–${end} of ${bdrCurrentRows.length} creator${bdrCurrentRows.length !== 1 ? 's' : ''}`;
+  document.getElementById('bdrPageInfo').textContent =
+    totalPages > 1 ? `Page ${bdrPage + 1} / ${totalPages}` : '';
+  document.getElementById('bdrPrevBtn').style.display = bdrPage > 0 ? '' : 'none';
+  document.getElementById('bdrNextBtn').style.display = bdrPage < totalPages - 1 ? '' : 'none';
+}
+
+function bdrRenderTable(rows, _skipPageSetup) {
+  if (!_skipPageSetup) { bdrCurrentRows = rows; bdrPage = 0; }
   const PLAT_COLORS = { instagram: '#e1306c', tiktok: '#010101', youtube: '#ff0000', x: '#1da1f2' };
   const PLAT_LABEL  = { instagram: 'IG', tiktok: 'TT', youtube: 'YT', x: 'X' };
 
@@ -6584,10 +6803,10 @@ function bdrRenderTable(rows) {
     const typeVal      = bdrGetType(m.handle, m.platforms[0]||'').replace(/"/g,'&quot;');
     const llmMeta    = bdrGetLLMMeta(m.handle, m.platforms[0]||'');
     const TIER_STYLE = {
-      1: { label: 'T1 Priority',   bg: '#edf7f1', color: 'var(--green)',  border: 'var(--green)' },
-      2: { label: 'T2 Strong',     bg: '#eef4fc', color: 'var(--blue)',   border: 'var(--blue)'  },
-      3: { label: 'T3 Watch',      bg: '#fef8ec', color: 'var(--amber)',  border: 'var(--amber)' },
-      4: { label: 'T4 Non-food',   bg: '#fdf0ee', color: '#c0392b',       border: '#c0392b'      },
+      1: { label: 'T1',   bg: '#edf7f1', color: 'var(--green)',  border: 'var(--green)' },
+      2: { label: 'T2',     bg: '#eef4fc', color: 'var(--blue)',   border: 'var(--blue)'  },
+      3: { label: 'T3',      bg: '#fef8ec', color: 'var(--amber)',  border: 'var(--amber)' },
+      4: { label: 'T4',   bg: '#fdf0ee', color: '#c0392b',       border: '#c0392b'      },
     };
     const ts = TIER_STYLE[llmMeta.tier];
     const tierBadge  = ts
@@ -6663,10 +6882,10 @@ function bdrRenderTable(rows) {
           onchange="bdrSaveTier(this)"
           style="font-size:11px;padding:2px 6px;border:1px solid ${ts?.border||'var(--border)'};border-radius:6px;background:${ts?.bg||'var(--white)'};color:${ts?.color||'var(--text)'};font-weight:${ts?'700':'400'}">
           <option value="">— tier —</option>
-          <option value="1"${llmMeta.tier===1?' selected':''}>T1 Priority</option>
-          <option value="2"${llmMeta.tier===2?' selected':''}>T2 Strong</option>
-          <option value="3"${llmMeta.tier===3?' selected':''}>T3 Watch</option>
-          <option value="4"${llmMeta.tier===4?' selected':''}>T4 Non-food</option>
+          <option value="1"${llmMeta.tier===1?' selected':''}>T1</option>
+          <option value="2"${llmMeta.tier===2?' selected':''}>T2</option>
+          <option value="3"${llmMeta.tier===3?' selected':''}>T3</option>
+          <option value="4"${llmMeta.tier===4?' selected':''}>T4</option>
         </select>
       </td>
       <td style="max-width:200px">${reasonHtml}</td>
@@ -6680,6 +6899,7 @@ function bdrSaveType(input) {
   const platform = input.dataset.platform;
   bdrSetType(handle, platform, input.value);
   bdrPatchClassificationDB([{ handle, platform, influencer_type: input.value || null }]);
+  bdrUpdateOverview();
 }
 
 function bdrSaveTier(select) {
@@ -6701,6 +6921,7 @@ function bdrSaveTier(select) {
   select.style.borderColor = ts?.border || 'var(--border)';
   select.style.fontWeight  = ts ? '700' : '400';
   bdrPatchClassificationDB([{ handle, platform, influencer_tier: tier }]);
+  bdrUpdateOverview();
 }
 
 async function bdrPatchClassificationDB(patches) {
@@ -6728,8 +6949,10 @@ function bdrProfileUrl(r) {
 }
 
 function bdrExportCsv() {
-  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
-  const q   = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
+  const src      = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
+  const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
+  const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
   let merged = bdrMergeByHandle(src);
   if (bdrPlatform !== 'all') merged = merged.filter(m => m.platforms.some(p => p.includes(bdrPlatform)));
   if (q) merged = merged.filter(m =>
@@ -6737,6 +6960,14 @@ function bdrExportCsv() {
     (m.full_name||'').toLowerCase().includes(q) ||
     (m.bio||'').toLowerCase().includes(q)
   );
+  if (tierFilt) merged = merged.filter(m => {
+    const tier = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier;
+    return tierFilt === 'none' ? !tier : String(tier) === tierFilt;
+  });
+  if (typeFilt) merged = merged.filter(m => {
+    const type = bdrGetType(m.handle, m.platforms?.[0] || '');
+    return typeFilt === 'none' ? !type : type === typeFilt;
+  });
   // Flatten back to individual rows for CSV export (one row per platform)
   const rows = merged.flatMap(m => m._rows);
 
