@@ -2480,7 +2480,7 @@ function switchMainTab(tab) {
   if (tab === 'coverage')  loadCoverage();
   if (tab === 'enrich')    loadEnrichTab();
   if (tab === 'bdresults') { bdrUpdateModelSel(); loadBdResults(); }
-  if (tab === 'insights')  { loadBdResults(); bdrInsightsRender(); }
+  if (tab === 'insights')  { if (!bdrLoaded) loadBdResults(); else bdrInsightsRender(); }
   localStorage.setItem('activeMainTab', tab);
 }
 
@@ -3992,7 +3992,7 @@ function closeProfileCard() {
         <button class="btn-sm" id="bdrClassifyBtn" onclick="bdrClassifyVisible()" title="Run AI classification on visible rows">✨ AI Classify</button>
         <button class="btn-sm" id="bdrClassifyTestBtn" onclick="bdrClassifyVisible(10)" title="Test: classify first 10 rows only" style="opacity:.7">✨ Test (10)</button>
         <button class="btn-sm" id="bdrReenrichBtn" onclick="bdrReenrichMissing()" title="Re-fetch missing engagement rate, followers, bio for saved profiles">🔄 Re-enrich missing</button>
-        <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrApplyFilter()" style="width:210px">
+        <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrSearchDebounced()" style="width:210px">
       </div>
     </div>
 
@@ -6091,27 +6091,35 @@ let bdrSortCol = 'followers';
 let bdrSortDir = 'desc';
 
 const BDR_TYPE_KEY = 'bd_type_labels';
+const BDR_LLM_KEY  = 'bd_llm_meta';
+
+// In-memory caches — parsed once from localStorage, invalidated on write
+let _bdrTypesCache  = null;
+let _bdrLLMCache    = null;
 
 function bdrGetTypes() {
-  try { return JSON.parse(localStorage.getItem(BDR_TYPE_KEY) || '{}'); } catch (_) { return {}; }
+  if (_bdrTypesCache) return _bdrTypesCache;
+  try { _bdrTypesCache = JSON.parse(localStorage.getItem(BDR_TYPE_KEY) || '{}'); } catch (_) { _bdrTypesCache = {}; }
+  return _bdrTypesCache;
 }
 
 function bdrSetType(handle, platform, value) {
   const types = bdrGetTypes();
   const key = `${platform}:${handle}`;
-  if (value.trim()) types[key] = value.trim();
+  if (value && value.trim()) types[key] = value.trim();
   else delete types[key];
   localStorage.setItem(BDR_TYPE_KEY, JSON.stringify(types));
+  _bdrTypesCache = types;
 }
 
 function bdrGetType(handle, platform) {
   return bdrGetTypes()[`${platform}:${handle}`] || '';
 }
 
-const BDR_LLM_KEY = 'bd_llm_meta';
-
 function bdrGetAllLLMMeta() {
-  try { return JSON.parse(localStorage.getItem(BDR_LLM_KEY) || '{}'); } catch (_) { return {}; }
+  if (_bdrLLMCache) return _bdrLLMCache;
+  try { _bdrLLMCache = JSON.parse(localStorage.getItem(BDR_LLM_KEY) || '{}'); } catch (_) { _bdrLLMCache = {}; }
+  return _bdrLLMCache;
 }
 
 function bdrGetLLMMeta(handle, platform) {
@@ -6122,6 +6130,7 @@ function bdrSetLLMMeta(handle, platform, tier, tier_reason, reason) {
   const all = bdrGetAllLLMMeta();
   all[`${platform}:${handle}`] = { tier, tier_reason, reason };
   localStorage.setItem(BDR_LLM_KEY, JSON.stringify(all));
+  _bdrLLMCache = all;
 }
 
 function bdrUpdateModelSel() {
@@ -6201,7 +6210,10 @@ async function bdrClassifyVisible(limit) {
 
 // ── BD Results: re-apply current filter rules ──────────────────────────
 
+// Merge cache — keyed by array reference so it's invalidated automatically when bdrMatchingData is reassigned
+const _bdrMergeCache = new WeakMap();
 function bdrMergeByHandle(rows) {
+  if (_bdrMergeCache.has(rows)) return _bdrMergeCache.get(rows);
   const byHandle = new Map();
   for (const r of rows) {
     const key = (r.handle || '').toLowerCase();
@@ -6253,6 +6265,8 @@ function bdrMergeByHandle(rows) {
       _rows:           uniqueRows,
     };
   });
+  _bdrMergeCache.set(rows, result);
+  return result;
 }
 
 // Converts a DB snake_case row to the shape bdPassesFilters() expects
@@ -6394,6 +6408,8 @@ async function loadBdResults(forceRefresh) {
     });
     localStorage.setItem(BDR_TYPE_KEY, JSON.stringify(types));
     localStorage.setItem(BDR_LLM_KEY,  JSON.stringify(llmAll));
+    _bdrTypesCache = types;
+    _bdrLLMCache   = llmAll;
     bdrLoaded = true;
     if (bdPresets.length) bdRenderPresets('');  // already loaded — just populate the dropdown
     else bdFetchPresets('');                    // not loaded yet — fetch and then populate
@@ -6786,6 +6802,12 @@ function bdrUpdateSortIndicators() {
       el.style.color = '';
     }
   }
+}
+
+let _bdrSearchTimer = null;
+function bdrSearchDebounced() {
+  clearTimeout(_bdrSearchTimer);
+  _bdrSearchTimer = setTimeout(bdrApplyFilter, 200);
 }
 
 function bdrApplyFilter() {
