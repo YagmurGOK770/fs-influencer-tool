@@ -4153,7 +4153,7 @@ function closeProfileCard() {
           </select>
         </div>
       </div>
-      <div id="insSelBar" style="display:none;padding:8px 16px;background:var(--green-bg);border-bottom:1px solid var(--green-border);display:none;align-items:center;justify-content:space-between;gap:8px">
+      <div id="insSelBar" style="display:none;padding:8px 16px;background:var(--green-bg);border-bottom:1px solid var(--green-border);align-items:center;justify-content:space-between;gap:8px">
         <span id="insSelCount" style="font-size:12px;font-weight:700;color:var(--green)">0 selected</span>
         <div style="display:flex;gap:6px">
           <button id="insAddOutreachBtn" onclick="insAddToOutreach()" style="background:var(--green);color:#fff;border:none;border-radius:7px;padding:5px 14px;font-size:12px;font-weight:700;cursor:pointer">Add to Outreach</button>
@@ -6955,13 +6955,13 @@ async function insAddToOutreach() {
 // Silently load outreach data (no spinner, no table render) so Overview can
 // show tracked indicators without requiring the user to visit Outreach first.
 async function insPreloadOutreach() {
-  if (_outreachData.length) return false; // already loaded
+  if (_outreachLoaded) return false; // already fetched (even if empty)
   try {
     const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
       body: JSON.stringify({ action: 'outreach-list' }),
     });
-    if (resp.ok) { const d = await resp.json(); _outreachData = d.data || []; return true; }
+    if (resp.ok) { const d = await resp.json(); _outreachData = d.data || []; _outreachLoaded = true; return true; }
   } catch (_) {}
   return false;
 }
@@ -7648,7 +7648,8 @@ function bdrExportCsv() {
 
 // ── Outreach tab ──────────────────────────────────────────────────────────────
 
-let _outreachData = [];       // cached list from DB
+let _outreachData = [];        // cached list from DB
+let _outreachLoaded = false;   // true once fetched at least once (even if empty)
 let _outreachEditHandle = null; // null = add mode, string = edit mode
 
 async function loadOutreach() {
@@ -7662,6 +7663,7 @@ async function loadOutreach() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     _outreachData = data.data || [];
+    _outreachLoaded = true;
     outreachRender();
   } catch (e) {
     document.getElementById('outreachTbody').innerHTML =
