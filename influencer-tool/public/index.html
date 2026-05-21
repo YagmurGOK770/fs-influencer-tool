@@ -351,10 +351,10 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
       <div class="nav-title">Influencer <span>Agent</span></div>
     </div>
     <div class="nav-tabs">
-      <button class="nav-tab active" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
-      <button class="nav-tab" id="tabEnrichBtn" onclick="switchMainTab('enrich')">BrightData Enrich</button>
-      <button class="nav-tab" id="tabBdResultsBtn" onclick="switchMainTab('bdresults')">BD Results</button>
-      <button class="nav-tab" id="tabInsightsBtn" onclick="switchMainTab('insights')">Insights</button>
+      <button class="nav-tab" id="tabInsightsBtn" onclick="switchMainTab('insights')">Overview</button>
+      <button class="nav-tab" id="tabEnrichBtn" onclick="switchMainTab('enrich')">Search &amp; Enrich</button>
+      <button class="nav-tab" id="tabBdResultsBtn" onclick="switchMainTab('bdresults')">Results</button>
+      <button class="nav-tab" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
     </div>
   </div>
   <div class="nav-right">
@@ -2468,7 +2468,7 @@ async function unbanInfluencer(handle) {
 // ── Main tab switching ──
 function switchMainTab(tab) {
   // Redirect removed tabs to coverage
-  if (tab === 'dash' || tab === 'changes' || tab === 'history') tab = 'coverage';
+  if (tab === 'dash' || tab === 'changes' || tab === 'history') tab = 'insights';
   document.getElementById('mainCoverage').style.display  = tab === 'coverage'  ? '' : 'none';
   document.getElementById('mainEnrich').style.display    = tab === 'enrich'    ? '' : 'none';
   document.getElementById('mainBdResults').style.display = tab === 'bdresults' ? '' : 'none';
@@ -3062,7 +3062,7 @@ function eExportXlsx() {
 document.addEventListener('DOMContentLoaded', () => {
   bdrUpdateModelSel();
   const savedTab = localStorage.getItem('activeMainTab');
-  switchMainTab(savedTab || 'coverage');
+  switchMainTab(savedTab || 'insights');
 });
 
 // ── Coverage tab ──────────────────────────────────────────────────────────
@@ -6508,7 +6508,13 @@ function insDimValue(m, dim) {
   if (dim === 'tier')      return insTierLabel(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier || 0);
   if (dim === 'type')      return bdrGetType(m.handle, m.platforms?.[0]||'') || '(none)';
   if (dim === 'followers') return insFollowersBucket(m.followers);
-  if (dim === 'er')        return insErBucket(m.engagement_rate);
+  if (dim === 'er') {
+    const isYT = m.platforms?.some(p => p.includes('youtube'));
+    const erV = isYT
+      ? (Number(m.avg_likes) > 0 && Number(m.followers) > 0 ? Number(m.avg_likes) / Number(m.followers) * 100 : null)
+      : (m.engagement_rate != null ? Number(m.engagement_rate) : null);
+    return insErBucket(erV);
+  }
   return '?';
 }
 
@@ -6545,8 +6551,13 @@ function bdrInsightsRender() {
 
   // --- Stat cards ---
   const totalFollowers = rows.reduce((s,m) => s + (Number(m.followers)||0), 0);
-  const erRows = rows.filter(m => m.engagement_rate != null && Number(m.engagement_rate) > 0);
-  const avgEr  = erRows.length ? (erRows.reduce((s,m) => s + Number(m.engagement_rate), 0) / erRows.length) : 0;
+  const erOf = m => {
+    const isYT = m.platforms?.some(p => p.includes('youtube'));
+    if (isYT) { const av = Number(m.avg_likes), fl = Number(m.followers); return (av > 0 && fl > 0) ? Math.round((av / fl) * 10000) / 100 : null; }
+    const v = Number(m.engagement_rate); return (v > 0 && v <= 200) ? v : null;
+  };
+  const erRows = rows.map(m => erOf(m)).filter(v => v != null);
+  const avgEr  = erRows.length ? erRows.reduce((s, v) => s + v, 0) / erRows.length : 0;
   const t1count = rows.filter(m => (bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === 1).length;
   const typedCount = rows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'')).length;
   document.getElementById('insStatCards').innerHTML = [
@@ -6602,9 +6613,18 @@ function bdrInsightsRender() {
       return { v: avg, display: bdFormatCompact(Math.round(avg)) };
     }
     if (sortBy === 'er') {
-      const valid = profiles.filter(m => m.engagement_rate != null && Number(m.engagement_rate) > 0);
+      const erOf = m => {
+        const isYT = m.platforms?.some(p => p.includes('youtube'));
+        if (isYT) {
+          const av = Number(m.avg_likes), fl = Number(m.followers);
+          return (av > 0 && fl > 0) ? Math.round((av / fl) * 10000) / 100 : null;
+        }
+        const v = Number(m.engagement_rate);
+        return (v > 0 && v <= 200) ? v : null;
+      };
+      const valid = profiles.map(m => ({ m, v: erOf(m) })).filter(x => x.v != null);
       if (!valid.length) return { v: 0, display: '—' };
-      const avg = valid.reduce((s,m) => s + Number(m.engagement_rate), 0) / valid.length;
+      const avg = valid.reduce((s, x) => s + x.v, 0) / valid.length;
       return { v: avg, display: avg.toFixed(1) + '%' };
     }
     return { v: 0, display: '—' };
@@ -6660,20 +6680,32 @@ function bdrInsightsRender() {
   let topRows = [...rows];
   if (topTier) topRows = topRows.filter(m => String(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === topTier);
   if (topType) topRows = topRows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'') === topType);
+  const topErOf = m => {
+    const isYT = m.platforms?.some(p => p.includes('youtube'));
+    if (isYT) { const av = Number(m.avg_likes), fl = Number(m.followers); return (av > 0 && fl > 0) ? av / fl * 100 : 0; }
+    const v = Number(m.engagement_rate); return (v > 0 && v <= 200) ? v : 0;
+  };
   topRows.sort((a,b) => topSort === 'er'
-    ? (Number(b.engagement_rate)||0) - (Number(a.engagement_rate)||0)
+    ? topErOf(b) - topErOf(a)
     : (Number(b.followers)||0) - (Number(a.followers)||0));
   topRows = topRows.slice(0, 30);
 
-  const PLAT_COLOR = { instagram:'#e1306c', tiktok:'#222', youtube:'#ff0000', x:'#1da1f2' };
-  const PLAT_LABEL = { instagram:'IG', tiktok:'TT', youtube:'YT', x:'X' };
-  const TIER_BG    = { 1:'#edf7f1', 2:'#eef4fc', 3:'#fef8ec', 4:'#fdf0ee' };
+  const TIER_BG = { 1:'#edf7f1', 2:'#eef4fc', 3:'#fef8ec', 4:'#fdf0ee' };
+  const INS_PLAT_SVG = {
+    instagram: `<svg viewBox="0 0 20 20" width="13" height="13" xmlns="http://www.w3.org/2000/svg"><rect x="2.5" y="2.5" width="15" height="15" rx="4.5" fill="none" stroke="white" stroke-width="1.8"/><circle cx="10" cy="10" r="3.8" fill="none" stroke="white" stroke-width="1.8"/><circle cx="14.8" cy="5.2" r="1.1" fill="white"/></svg>`,
+    tiktok:    `<svg viewBox="0 0 20 20" width="12" height="12" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M13.4 2v1.6a3.3 3.3 0 0 0 3.3 2.8v2.2a5.6 5.6 0 0 1-3.3-1.1V13a4.4 4.4 0 1 1-2.2-3.8v2.4a2.1 2.1 0 1 0 1.1 1.9V2h1.1z"/></svg>`,
+    youtube:   `<svg viewBox="0 0 20 20" width="14" height="14" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M7.5 5.5l7 4.5-7 4.5z"/></svg>`,
+    x:         `<svg viewBox="0 0 20 20" width="12" height="12" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M13.8 3h2.4L11 8.8l5.9 8.2H13l-3.4-4.5-3.9 4.5H3.3l5.5-6.3L3 3h4l3.1 4.1L13.8 3zM13 15.6h1.3L7.1 4.4H5.7z"/></svg>`,
+  };
+  const INS_PLAT_BG = {
+    instagram: 'linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%)',
+    tiktok: '#010101', youtube: '#ff0000', x: '#000000',
+  };
 
   document.getElementById('insTopList').innerHTML = topRows.length
     ? `<table style="width:100%;border-collapse:collapse">
         <thead><tr style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em">
           <th style="padding:6px 8px;text-align:left">Handle</th>
-          <th style="padding:6px 8px;text-align:left">Platforms</th>
           <th style="padding:6px 8px;text-align:right">Followers</th>
           <th style="padding:6px 8px;text-align:right">ER%</th>
           <th style="padding:6px 8px;text-align:left">Tier</th>
@@ -6682,16 +6714,31 @@ function bdrInsightsRender() {
         <tbody>${topRows.map((m,i) => {
           const tier = bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier || 0;
           const type = bdrGetType(m.handle, m.platforms?.[0]||'') || '—';
-          const er   = m.engagement_rate != null ? Number(m.engagement_rate).toFixed(1)+'%' : '—';
-          const platPills = m.platforms.map(p => {
-            const pKey = Object.keys(PLAT_COLOR).find(k => p.includes(k)) || '';
-            return pKey ? `<span style="font-size:10px;font-weight:700;color:${PLAT_COLOR[pKey]};background:${PLAT_COLOR[pKey]}18;border-radius:100px;padding:1px 6px;border:1px solid ${PLAT_COLOR[pKey]}40">${PLAT_LABEL[pKey]}</span>` : '';
-          }).filter(Boolean).join(' ');
+          const isInsYT = m.platforms?.some(p => p.includes('youtube'));
+          const erVal2 = isInsYT
+            ? (Number(m.avg_likes) > 0 && Number(m.followers) > 0 ? Math.round((Number(m.avg_likes) / Number(m.followers)) * 10000) / 100 : null)
+            : (m.engagement_rate != null ? Number(m.engagement_rate) : null);
+          const er = erVal2 != null ? erVal2.toFixed(1)+'%' : '—';
+          const h = (m.handle || '').replace(/^@/, '');
+          const platIconLinks = m.platforms.map(p => {
+            const row = m._rows?.find(r => (r.platform || r.raw_platform || '').toLowerCase().includes(p));
+            let platUrl = row?.profile_url || '';
+            if (!platUrl) {
+              if (p.includes('instagram'))    platUrl = `https://www.instagram.com/${h}/`;
+              else if (p.includes('tiktok'))  platUrl = `https://www.tiktok.com/@${h}`;
+              else if (p.includes('youtube')) platUrl = `https://www.youtube.com/@${h}`;
+              else if (p.includes('x'))       platUrl = `https://x.com/${h}`;
+            }
+            if (!platUrl) return '';
+            const pKey = Object.keys(INS_PLAT_BG).find(k => p.includes(k)) || '';
+            const bg  = pKey ? `background:${INS_PLAT_BG[pKey]}` : 'background:#888';
+            const ico = INS_PLAT_SVG[pKey] || `<span style="font-size:9px;font-weight:700;color:#fff">${p.slice(0,2).toUpperCase()}</span>`;
+            return `<a href="${platUrl}" target="_blank" rel="noopener" title="Open ${p} profile" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;${bg};text-decoration:none;flex-shrink:0;margin-left:4px">${ico}</a>`;
+          }).filter(Boolean).join('');
           const tierBadge = tier ? `<span style="font-size:10px;font-weight:700;background:${TIER_BG[tier]};color:${insTierColor(tier)};border-radius:100px;padding:2px 8px">T${tier}</span>` : '—';
           const rowBg = i % 2 === 0 ? '' : 'background:var(--surface)';
           return `<tr style="font-size:12px;${rowBg}">
-            <td style="padding:6px 8px;font-weight:600">@${m.handle}</td>
-            <td style="padding:6px 8px">${platPills}</td>
+            <td style="padding:6px 8px;font-weight:600">@${m.handle}${platIconLinks}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
             <td style="padding:6px 8px">${tierBadge}</td>
@@ -7030,7 +7077,9 @@ function bdrRenderTable(rows, _skipPageSetup) {
           : `<span style="font-size:11px">${bdFormatCompact(avgNum)}</span>`)
       : `<span style="color:var(--muted2);font-size:10px">${isYTrow ? 'n/a' : '—'}</span>`;
 
-    const erVal = m.engagement_rate != null ? Number(m.engagement_rate) : null;
+    const erVal = isYTrow
+      ? (avgNum > 0 && Number(m.followers) > 0 ? Math.round((avgNum / Number(m.followers)) * 10000) / 100 : null)
+      : (m.engagement_rate != null ? Number(m.engagement_rate) : null);
     const er = erVal != null
       ? `<span title="${isYTrow ? 'View rate: avg views per video ÷ subscribers' : 'Engagement rate'}">${erVal.toFixed(1)}%</span>`
       : '—';
@@ -7191,9 +7240,9 @@ async function bdrReenrichMissing() {
         const data = await resp.json();
         for (const e of (data.results || [])) {
           if (!e.enriched) { done++; continue; }
-          const subs     = e.followers ? parseFloat(String(e.followers).replace(/[^0-9.KMBkmb]/g, '')) : 0;
+          const subs     = e.followers  ? bdParseCompact(String(e.followers))  : 0;
           const views    = e.totalViews ? parseInt(String(e.totalViews).replace(/,/g, ''), 10) : 0;
-          const videos   = e.postCount  ? parseInt(String(e.postCount).replace(/[^0-9]/g, ''), 10) : 0;
+          const videos   = e.postCount  ? bdParseCompact(String(e.postCount).replace(/\s*videos?/i, '')) : 0;
           const avgViewsRaw = videos > 0 && views > 0 ? Math.round(views / videos) : null;
           const avgViews = avgViewsRaw != null && avgViewsRaw <= 2147483647 ? avgViewsRaw : null;
           const er       = avgViewsRaw && subs > 0 ? Math.round((avgViewsRaw / subs) * 10000) / 100 : null;
