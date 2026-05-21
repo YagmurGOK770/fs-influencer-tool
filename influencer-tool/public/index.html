@@ -3984,6 +3984,9 @@ function closeProfileCard() {
         <select id="bdrFilterType" onchange="bdrApplyFilter()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);max-width:200px">
           <option value="">All Types</option>
         </select>
+        <select id="bdrFilterLang" onchange="bdrApplyFilter()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="">All Languages</option>
+        </select>
         <span style="width:1px;height:20px;background:var(--border)"></span>
         <button class="btn-sm" onclick="bdBulkToggleBadges('bdrTbody', this)">⊞ Expand all</button>
         <select id="bdrClassifyProviderSel" onchange="bdrUpdateModelSel()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
@@ -7072,6 +7075,9 @@ async function bdrDetectAllLanguages() {
 }
 
 async function bdrDetectOneLang(handle, platform) {
+  // Find the ? button for this handle and show loading state
+  const btn = [...document.querySelectorAll(`#bdrTbody button[onclick*="bdrDetectOneLang('${handle}'"]`)][0];
+  if (btn) { btn.textContent = '…'; btn.disabled = true; }
   try {
     const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
@@ -7082,29 +7088,46 @@ async function bdrDetectOneLang(handle, platform) {
       if (d.language) {
         bdrMatchingData.forEach(r => { if (r.handle === handle) r.language = d.language; });
         bdrApplyFilter();
+        return;
       }
+      // No language detected — show reason in button tooltip
+      const reason = d.reason === 'no_text' ? 'No bio or captions stored — enrich first' : (d.reason || 'Unknown');
+      if (btn) { btn.textContent = '✗'; btn.disabled = false; btn.title = reason; btn.style.color = 'var(--amber)'; }
+      console.warn(`[detectOneLang] @${handle}: ${reason}`);
+    } else {
+      const d = await resp.json().catch(() => ({}));
+      if (btn) { btn.textContent = '✗'; btn.disabled = false; btn.title = d.error || `HTTP ${resp.status}`; btn.style.color = 'var(--red)'; }
     }
-  } catch (e) { console.warn('[detectOneLang]', handle, e.message); }
+  } catch (e) {
+    if (btn) { btn.textContent = '✗'; btn.disabled = false; btn.title = e.message; btn.style.color = 'var(--red)'; }
+    console.warn('[detectOneLang]', handle, e.message);
+  }
 }
 
 function bdrRefreshFilterDropdowns(filteredRows) {
   const TIER_LABELS = { 1:'T1', 2:'T2', 3:'T3', 4:'T4', 0:'No tier' };
   const tierSel = document.getElementById('bdrFilterTier');
   const typeSel = document.getElementById('bdrFilterType');
+  const langSel = document.getElementById('bdrFilterLang');
   if (!tierSel || !typeSel) return;
 
   const prevTier = tierSel.value;
   const prevType = typeSel.value;
+  const prevLang = langSel?.value || '';
 
-  // Count tiers and types in the currently-visible (post-filter) rows
+  // Count tiers, types and languages in the currently-visible (post-filter) rows
   const tierCounts = {};
   const typeCounts = {};
+  const langCounts = {};
   filteredRows.forEach(m => {
     const t = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier || 0;
     tierCounts[t] = (tierCounts[t] || 0) + 1;
     const ty = bdrGetType(m.handle, m.platforms?.[0] || '') || '';
     if (ty) typeCounts[ty] = (typeCounts[ty] || 0) + 1;
     else    typeCounts['(none)'] = (typeCounts['(none)'] || 0) + 1;
+    const lang = m.language || '';
+    if (lang) langCounts[lang] = (langCounts[lang] || 0) + 1;
+    else      langCounts['(none)'] = (langCounts['(none)'] || 0) + 1;
   });
 
   // Rebuild tier dropdown — fixed order 1,2,3,4,0; only show tiers that exist
@@ -7138,6 +7161,30 @@ function bdrRefreshFilterDropdowns(filteredRows) {
   }
   if ([...typeSel.options].some(o => o.value === prevType)) typeSel.value = prevType;
   else typeSel.value = '';
+
+  // Rebuild language dropdown — EN first, then alphabetical, (none) last
+  if (langSel) {
+    langSel.innerHTML = '<option value="">All Languages</option>';
+    const LANG_NAMES = { en:'English', tr:'Turkish', es:'Spanish', fr:'French', de:'German', it:'Italian', nl:'Dutch', pt:'Portuguese', ar:'Arabic', ja:'Japanese', ko:'Korean', zh:'Chinese' };
+    const named = Object.entries(langCounts).filter(([k]) => k !== '(none)').sort((a, b) => {
+      if (a[0] === 'en') return -1; if (b[0] === 'en') return 1;
+      return a[0].localeCompare(b[0]);
+    });
+    named.forEach(([k, n]) => {
+      const opt = document.createElement('option');
+      opt.value = k;
+      opt.textContent = `${(LANG_NAMES[k] || k.toUpperCase())} (${n})`;
+      langSel.appendChild(opt);
+    });
+    if (langCounts['(none)']) {
+      const opt = document.createElement('option');
+      opt.value = 'none';
+      opt.textContent = `Not detected (${langCounts['(none)']})`;
+      langSel.appendChild(opt);
+    }
+    if ([...langSel.options].some(o => o.value === prevLang)) langSel.value = prevLang;
+    else langSel.value = '';
+  }
 }
 
 function bdrSetView(mode) {
@@ -7170,7 +7217,7 @@ function bdrSetSort(col) {
 }
 
 function bdrUpdateSortIndicators() {
-  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','location','type','fetched_at'];
+  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','location','type','fetched_at','language'];
   for (const c of sortable) {
     const el = document.getElementById('bdrSrt-' + c);
     if (!el) continue;
@@ -7197,6 +7244,7 @@ function bdrApplyFilter() {
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
   const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
   const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
+  const langFilt = (document.getElementById('bdrFilterLang')?.value || '');
 
   let merged = bdrMergeByHandle(src);
 
@@ -7224,6 +7272,9 @@ function bdrApplyFilter() {
       return typeFilt === 'none' ? !type : type === typeFilt;
     });
   }
+  if (langFilt) {
+    merged = merged.filter(m => langFilt === 'none' ? !m.language : m.language === langFilt);
+  }
 
   if (bdrSortCol) {
     merged = [...merged].sort((a, b) => {
@@ -7239,6 +7290,7 @@ function bdrApplyFilter() {
         case 'type':            av=bdrGetType(a.handle,'').toLowerCase(); bv=bdrGetType(b.handle,'').toLowerCase(); break;
         case 'llm_tier':        av=bdrGetLLMMeta(a.handle,a.platforms?.[0]||'').tier||99; bv=bdrGetLLMMeta(b.handle,b.platforms?.[0]||'').tier||99; break;
         case 'fetched_at':      av=a.fetched_at||'';               bv=b.fetched_at||'';               break;
+        case 'language':        av=a.language||'zzz';              bv=b.language||'zzz';              break;
         default:                av=''; bv='';
       }
       if (av < bv) return bdrSortDir === 'asc' ? -1 : 1;
