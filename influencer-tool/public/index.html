@@ -5246,7 +5246,7 @@ function bdCurrentFilterState() {
     topMode: document.getElementById('bdFltTopMode')?.value || 'AND',
     groups: bdFilterGroups.map(g => ({
       mode: g.mode,
-      rules: g.rules.map(({ field, op, value }) => ({ field, op, value })),
+      rules: g.rules.map(({ field, op, value, minPosts }) => ({ field, op, value, ...(minPosts ? { minPosts } : {}) })),
     })),
   };
 }
