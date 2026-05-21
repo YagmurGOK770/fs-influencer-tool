@@ -6955,8 +6955,9 @@ async function bdrReenrichMissing() {
           const subs     = e.followers ? parseFloat(String(e.followers).replace(/[^0-9.KMBkmb]/g, '')) : 0;
           const views    = e.totalViews ? parseInt(String(e.totalViews).replace(/,/g, ''), 10) : 0;
           const videos   = e.postCount  ? parseInt(String(e.postCount).replace(/[^0-9]/g, ''), 10) : 0;
-          const avgViews = videos > 0 && views > 0 ? Math.round(views / videos) : null;
-          const er       = avgViews && subs > 0 ? Math.round((avgViews / subs) * 10000) / 100 : null;
+          const avgViewsRaw = videos > 0 && views > 0 ? Math.round(views / videos) : null;
+          const avgViews = avgViewsRaw != null && avgViewsRaw <= 2147483647 ? avgViewsRaw : null;
+          const er       = avgViewsRaw && subs > 0 ? Math.round((avgViewsRaw / subs) * 10000) / 100 : null;
           patches.push({
             handle:          e.handle,
             platform:        'youtube',
