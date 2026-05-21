@@ -1467,7 +1467,7 @@ async function ttApifyScanPosts(profiles, onProgress) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         profiles: usernames,
-        resultsPerPage: 20,
+        resultsPerPage: 10,
         shouldDownloadVideos: false,
         shouldDownloadCovers: false,
         shouldDownloadSubtitles: false,
