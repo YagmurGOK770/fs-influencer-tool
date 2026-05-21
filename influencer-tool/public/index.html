@@ -6860,6 +6860,12 @@ function bdrInsightsRender() {
     tiktok: '#010101', youtube: '#ff0000', x: '#000000',
   };
 
+  const TIER_STYLE = {
+    1: { bg:'#edf7f1', color:'var(--green)',  border:'var(--green)'  },
+    2: { bg:'#eef4fc', color:'var(--blue)',   border:'var(--blue)'   },
+    3: { bg:'#fef8ec', color:'var(--amber)',  border:'var(--amber)'  },
+    4: { bg:'#fdf0ee', color:'#c0392b',       border:'#c0392b'       },
+  };
   const trackedHandles = new Set(_outreachData.map(r => r.handle));
   document.getElementById('insTopList').innerHTML = topRows.length
     ? `<table style="width:100%;border-collapse:collapse">
@@ -6870,9 +6876,11 @@ function bdrInsightsRender() {
           <th style="padding:6px 8px;text-align:right">ER%</th>
           <th style="padding:6px 8px;text-align:left">Tier</th>
           <th style="padding:6px 8px;text-align:left">Type</th>
+          <th style="padding:6px 8px;width:28px"></th>
         </tr></thead>
         <tbody>${topRows.map((m,i) => {
-          const tier = bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier || 0;
+          const llmMeta = bdrGetLLMMeta(m.handle, m.platforms?.[0]||'');
+          const tier = llmMeta.tier || 0;
           const type = bdrGetType(m.handle, m.platforms?.[0]||'') || '—';
           const isInsYT = m.platforms?.some(p => p.includes('youtube'));
           const erVal2 = isInsYT
@@ -6899,15 +6907,25 @@ function bdrInsightsRender() {
             const ico = INS_PLAT_SVG[pKey] || `<span style="font-size:9px;font-weight:700;color:#fff">${p.slice(0,2).toUpperCase()}</span>`;
             return `<a href="${platUrl}" target="_blank" rel="noopener" title="Open ${p} profile" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;${bg};text-decoration:none;flex-shrink:0;margin-left:4px">${ico}</a>`;
           }).filter(Boolean).join('');
-          const tierBadge = tier ? `<span style="font-size:10px;font-weight:700;background:${TIER_BG[tier]};color:${insTierColor(tier)};border-radius:100px;padding:2px 8px">T${tier}</span>` : '—';
+          const ts = tier ? TIER_STYLE[tier] : null;
+          const tierSelect = `<select data-handle="${h}" data-platform="${m.platforms?.[0]||''}"
+            onchange="bdrSaveTier(this)"
+            style="font-size:11px;padding:2px 6px;border:1px solid ${ts?.border||'var(--border)'};border-radius:6px;background:${ts?.bg||'var(--white)'};color:${ts?.color||'var(--text)'};font-weight:${ts?'700':'400'};cursor:pointer">
+            <option value="">— tier —</option>
+            <option value="1"${tier===1?' selected':''}>T1</option>
+            <option value="2"${tier===2?' selected':''}>T2</option>
+            <option value="3"${tier===3?' selected':''}>T3</option>
+            <option value="4"${tier===4?' selected':''}>T4</option>
+          </select>`;
           const rowBg = i % 2 === 0 ? '' : 'background:var(--surface)';
           return `<tr style="font-size:12px;${rowBg}">
             ${checkCell}
             <td style="padding:6px 8px;font-weight:600">@${m.handle}${platIconLinks}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
-            <td style="padding:6px 8px">${tierBadge}</td>
+            <td style="padding:6px 8px">${tierSelect}</td>
             <td style="padding:6px 8px;color:var(--muted)">${type}</td>
+            <td style="padding:6px 8px;text-align:right"><button onclick="insExcludeProfile('${h}')" title="Move to excluded" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
           </tr>`;
         }).join('')}</tbody>
       </table>`
@@ -6940,23 +6958,57 @@ async function insAddToOutreach() {
   const btn = document.getElementById('insAddOutreachBtn');
   btn.disabled = true; btn.textContent = `Adding ${handles.length}…`;
 
-  let added = 0;
+  let added = 0; let lastErr = '';
   for (const handle of handles) {
     try {
       const resp = await fetch('/api/db-save', {
         method: 'POST', headers: getApiHeaders(),
         body: JSON.stringify({ action: 'outreach-save', handle }),
       });
-      if (resp.ok) { added++; _outreachData.push({ handle }); }
-    } catch (e) { console.warn('[insAddToOutreach]', handle, e.message); }
+      if (resp.ok) {
+        const d = await resp.json();
+        added++;
+        const saved = d.data || { handle };
+        const existing = _outreachData.findIndex(r => r.handle === saved.handle);
+        if (existing >= 0) _outreachData[existing] = saved; else _outreachData.push(saved);
+      } else {
+        const d = await resp.json().catch(() => ({}));
+        lastErr = d.error || `HTTP ${resp.status}`;
+        console.warn('[insAddToOutreach]', handle, lastErr);
+      }
+    } catch (e) { lastErr = e.message; console.warn('[insAddToOutreach]', handle, e.message); }
   }
 
-  btn.textContent = `✓ ${added} added`;
-  setTimeout(() => {
-    btn.textContent = 'Add to Outreach';
-    btn.disabled = false;
-    bdrInsightsRender(); // re-render to flip checkboxes → ✓ Tracked
-  }, 1500);
+  if (added > 0) {
+    btn.textContent = `✓ ${added} added`;
+    setTimeout(() => {
+      btn.textContent = 'Add to Outreach'; btn.disabled = false;
+      bdrInsightsRender();
+    }, 1500);
+  } else {
+    btn.style.background = 'var(--red)'; btn.style.color = '#fff';
+    btn.textContent = `✗ Failed${lastErr ? ': ' + lastErr.slice(0, 60) : ''}`;
+    setTimeout(() => {
+      btn.style.background = ''; btn.style.color = '';
+      btn.textContent = 'Add to Outreach'; btn.disabled = false;
+    }, 4000);
+  }
+}
+
+async function insExcludeProfile(handle) {
+  if (!confirm(`Move @${handle} to excluded?`)) return;
+  const rows = bdrMatchingData.filter(r => r.handle === handle);
+  if (!rows.length) return;
+  // Reassign array so WeakMap-keyed merge cache is invalidated automatically
+  bdrMatchingData = bdrMatchingData.filter(r => r.handle !== handle);
+  bdrExcludedData = [...bdrExcludedData, ...rows];
+  bdrInsightsRender();
+  try {
+    await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: rows }),
+    });
+  } catch (e) { console.warn('[insExclude]', e.message); }
 }
 
 // Silently load outreach data (no spinner, no table render) so Overview can
