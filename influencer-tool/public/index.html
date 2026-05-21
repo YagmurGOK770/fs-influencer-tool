@@ -351,10 +351,7 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
       <div class="nav-title">Influencer <span>Agent</span></div>
     </div>
     <div class="nav-tabs">
-      <button class="nav-tab active" id="tabDashBtn" onclick="switchMainTab('dash')">Dashboard</button>
-      <button class="nav-tab" id="tabChangesBtn" onclick="switchMainTab('changes')">Change Log <span class="badge" id="changesBadge" style="display:none">0</span></button>
-      <button class="nav-tab" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
-      <button class="nav-tab" id="tabHistoryBtn" onclick="switchMainTab('history')">Search History</button>
+      <button class="nav-tab active" id="tabCoverageBtn" onclick="switchMainTab('coverage')">Coverage</button>
       <button class="nav-tab" id="tabEnrichBtn" onclick="switchMainTab('enrich')">BrightData Enrich</button>
       <button class="nav-tab" id="tabBdResultsBtn" onclick="switchMainTab('bdresults')">BD Results</button>
       <button class="nav-tab" id="tabInsightsBtn" onclick="switchMainTab('insights')">Insights</button>
@@ -367,7 +364,8 @@ tbody tr.isbanned td:nth-child(2){border-left:3px solid var(--red)}
     </div>
   </div>
 </nav>
-<div id="mainDash">
+<!-- DISABLED: Dashboard tab removed (not in use) -->
+<!-- <div id="mainDash">
 <div class="page">
   <div class="stats">
     <div class="stat-card">
@@ -2470,23 +2468,17 @@ async function unbanInfluencer(handle) {
 
 // ── Main tab switching ──
 function switchMainTab(tab) {
-  document.getElementById('mainDash').style.display    = tab === 'dash'     ? '' : 'none';
-  document.getElementById('mainChanges').style.display = tab === 'changes'  ? '' : 'none';
-  document.getElementById('mainCoverage').style.display= tab === 'coverage' ? '' : 'none';
-  document.getElementById('mainHistory').style.display = tab === 'history'  ? '' : 'none';
-  document.getElementById('mainEnrich').style.display     = tab === 'enrich'    ? '' : 'none';
-  document.getElementById('mainBdResults').style.display  = tab === 'bdresults' ? '' : 'none';
-  document.getElementById('mainInsights').style.display   = tab === 'insights'  ? '' : 'none';
-  document.getElementById('tabDashBtn').classList.toggle('active',      tab === 'dash');
-  document.getElementById('tabChangesBtn').classList.toggle('active',   tab === 'changes');
+  // Redirect removed tabs to coverage
+  if (tab === 'dash' || tab === 'changes' || tab === 'history') tab = 'coverage';
+  document.getElementById('mainCoverage').style.display  = tab === 'coverage'  ? '' : 'none';
+  document.getElementById('mainEnrich').style.display    = tab === 'enrich'    ? '' : 'none';
+  document.getElementById('mainBdResults').style.display = tab === 'bdresults' ? '' : 'none';
+  document.getElementById('mainInsights').style.display  = tab === 'insights'  ? '' : 'none';
   document.getElementById('tabCoverageBtn').classList.toggle('active',  tab === 'coverage');
-  document.getElementById('tabHistoryBtn').classList.toggle('active',   tab === 'history');
   document.getElementById('tabEnrichBtn').classList.toggle('active',    tab === 'enrich');
   document.getElementById('tabBdResultsBtn').classList.toggle('active', tab === 'bdresults');
   document.getElementById('tabInsightsBtn').classList.toggle('active',  tab === 'insights');
-  if (tab === 'changes')   loadChanges();
   if (tab === 'coverage')  loadCoverage();
-  if (tab === 'history')   loadSearchHistory();
   if (tab === 'enrich')    loadEnrichTab();
   if (tab === 'bdresults') { bdrUpdateModelSel(); loadBdResults(); }
   if (tab === 'insights')  { loadBdResults(); bdrInsightsRender(); }
@@ -2502,13 +2494,11 @@ async function loadChanges() {
     const data = await resp.json();
     renderChanges(data.influencers || []);
 
-    // Update badge
+    // Update badge (element removed — guard against null)
     const badge = document.getElementById('changesBadge');
-    if (data.total > 0) {
-      badge.textContent = data.total;
-      badge.style.display = '';
-    } else {
-      badge.style.display = 'none';
+    if (badge) {
+      if (data.total > 0) { badge.textContent = data.total; badge.style.display = ''; }
+      else badge.style.display = 'none';
     }
   } catch (e) {
     container.innerHTML = `<div style="padding:2rem;text-align:center;color:var(--red);font-size:13px">Failed to load changes: ${e.message}</div>`;
@@ -2800,7 +2790,7 @@ async function eInit() {
     if (cr.ok) {
       const cd = await cr.json();
       const badge = document.getElementById('changesBadge');
-      if (cd.total > 0) { badge.textContent = cd.total; badge.style.display = ''; }
+      if (badge && cd.total > 0) { badge.textContent = cd.total; badge.style.display = ''; }
     }
   } catch (e) { /* silent */ }
 }
@@ -3071,10 +3061,9 @@ function eExportXlsx() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  eInit();
   bdrUpdateModelSel();
   const savedTab = localStorage.getItem('activeMainTab');
-  if (savedTab) switchMainTab(savedTab);
+  switchMainTab(savedTab || 'coverage');
 });
 
 // ── Coverage tab ──────────────────────────────────────────────────────────
@@ -3575,10 +3564,10 @@ function closeProfileCard() {
   <button onclick="event.stopPropagation();restoreSearchModal()" title="Expand" style="background:none;border:none;font-size:14px;cursor:pointer;color:var(--muted);padding:0;flex-shrink:0">⌃</button>
 </div>
 
-</div><!-- #mainDash -->
+</div> --><!-- #mainDash DISABLED -->
 
-<!-- Change Log page -->
-<div id="mainChanges" style="display:none">
+<!-- DISABLED: Change Log tab removed (not in use) -->
+<!-- <div id="mainChanges" style="display:none">
   <div class="cl-page">
     <div class="cl-toolbar">
       <div>
@@ -3595,7 +3584,7 @@ function closeProfileCard() {
       </div>
     </div>
   </div>
-</div>
+</div> --><!-- #mainChanges DISABLED -->
 
 <datalist id="bucketList"></datalist>
 
@@ -5928,10 +5917,9 @@ async function bdScanPosts() {
 }
 </script>
 
-<!-- ── Search History tab ──────────────────────────────────────── -->
-<div id="mainHistory" style="display:none">
+<!-- DISABLED: Search History tab removed (not in use) -->
+<!-- <div id="mainHistory" style="display:none">
   <div class="cov-page">
-
     <div class="cl-toolbar" style="margin-bottom:20px">
       <div>
         <div class="cl-toolbar-title">Search History</div>
@@ -5939,13 +5927,11 @@ async function bdScanPosts() {
       </div>
       <button class="btn-sm" onclick="loadSearchHistory()">↻ Refresh</button>
     </div>
-
     <div id="historyContent">
       <div style="padding:2rem;text-align:center;color:var(--muted);font-size:13px">Loading…</div>
     </div>
-
   </div>
-</div>
+</div> -->
 
 <script>
 async function loadSearchHistory() {
