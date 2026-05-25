@@ -75,7 +75,7 @@ function stripAt(h) {
 }
 
 // ── Instagram ──────────────────────────────────────────────────────────────
-async function verifyInstagram(username) {
+export async function verifyInstagram(username) {
   try {
     const resp = await bdFetch(
       `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
@@ -113,7 +113,84 @@ async function verifyInstagram(username) {
 // cookieRaw: optional TikTok session cookie string (sent via BrightData Web Unlocker
 // with "Custom headers & cookies" enabled — allows TikTok to see a logged-in session
 // instead of an anonymous bot request, which results in proper HTML being served).
-async function verifyTikTok(username, cookieRaw) {
+// Batch TikTok verifier via Apify. One Apify run covers many usernames — much
+// cheaper than per-call BrightData (which returns empty bodies for TT without
+// a session cookie). Returns a Map keyed by lowercase handle.
+//
+// Requires APIFY_API_TOKEN in .env.local.
+export async function verifyTikTokBatch(handles) {
+  const token = process.env.APIFY_API_TOKEN;
+  const result = new Map();
+  const usernames = [...new Set(handles.map(h => String(h).toLowerCase().replace(/^@/, '').trim()).filter(Boolean))];
+  if (!usernames.length) return result;
+  if (!token) {
+    console.warn('[tt-verify-batch] APIFY_API_TOKEN not set — marking all as no_apify_token');
+    for (const h of usernames) result.set(h, { ok: false, reason: 'no_apify_token' });
+    return result;
+  }
+  try {
+    const runResp = await fetch(
+      `https://api.apify.com/v2/acts/clockworks~tiktok-scraper/runs?token=${token}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profiles: usernames,
+          resultsPerPage: 1, // we only need to know the user exists + author metadata
+          shouldDownloadVideos: false,
+          shouldDownloadCovers: false,
+          shouldDownloadSubtitles: false,
+          shouldDownloadSlideshowImages: false,
+        }),
+      }
+    );
+    const runData = await runResp.json();
+    const runId = runData?.data?.id;
+    const datasetId = runData?.data?.defaultDatasetId;
+    if (!runId) throw new Error(`apify_start_failed: ${JSON.stringify(runData).slice(0, 200)}`);
+    console.log(`[tt-verify-batch] Apify run ${runId} started for ${usernames.length} handles`);
+
+    const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT']);
+    let finalStatus = 'UNKNOWN';
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const sResp = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
+      const sData = await sResp.json();
+      finalStatus = sData?.data?.status;
+      if (finalStatus === 'SUCCEEDED') break;
+      if (TERMINAL.has(finalStatus)) throw new Error(`apify_${finalStatus.toLowerCase()}: ${sData?.data?.statusMessage || ''}`);
+    }
+    if (finalStatus !== 'SUCCEEDED') throw new Error('apify_timeout');
+
+    const itemsResp = await fetch(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&clean=true`);
+    const items = await itemsResp.json();
+    for (const item of items) {
+      const meta = item.authorMeta || {};
+      const handle = (meta.name || item.author?.uniqueId || '').toLowerCase();
+      if (!handle || result.has(handle)) continue;
+      result.set(handle, {
+        ok: true,
+        followers:  String(meta.fans ?? meta.followerCount ?? ''),
+        bio:        meta.signature || '',
+        fullName:   meta.nickName || meta.nickname || '',
+        isPrivate:  !!meta.privateAccount,
+        isVerified: !!meta.verified,
+        postCount:  String(meta.video ?? meta.videoCount ?? ''),
+      });
+    }
+    // Mark not-found handles
+    for (const h of usernames) {
+      if (!result.has(h)) result.set(h, { ok: false, reason: 'not_found' });
+    }
+    console.log(`[tt-verify-batch] ${usernames.length} → found ${[...result.values()].filter(v => v.ok).length}`);
+  } catch (e) {
+    console.warn('[tt-verify-batch] failed:', e.message);
+    for (const h of usernames) if (!result.has(h)) result.set(h, { ok: false, reason: e.message });
+  }
+  return result;
+}
+
+export async function verifyTikTok(username, cookieRaw) {
   const ttHeaders = {
     'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'accept-language': 'en-US,en;q=0.9',
@@ -203,7 +280,7 @@ async function verifyTikTok(username, cookieRaw) {
 
 // ── YouTube ────────────────────────────────────────────────────────────────
 // Public — fetched directly, no proxy needed
-async function verifyYouTube(username) {
+export async function verifyYouTube(username) {
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 12000);
@@ -243,7 +320,7 @@ async function verifyYouTube(username) {
 }
 
 // ── X / Twitter ────────────────────────────────────────────────────────────
-async function verifyX(username) {
+export async function verifyX(username) {
   try {
     const variables = encodeURIComponent(JSON.stringify({ screen_name: username, withSafetyModeUserFields: true }));
     const features  = encodeURIComponent(JSON.stringify({

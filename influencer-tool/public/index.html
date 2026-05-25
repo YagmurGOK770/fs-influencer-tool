@@ -3834,6 +3834,16 @@ function closeProfileCard() {
             📝 Scan recent posts
           </button>
           <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px">💾 Save filtered results to DB</button>
+          <button id="bdSaveLifestyleBtn" onclick="bdSaveAllToLifestyle()" type="button"
+            style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)"
+            title="Save ALL search results (no filter) to lifestyle_bloggers table">
+            💾 Save all to LifestyleBloggers
+          </button>
+          <label style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text);display:inline-flex;align-items:center;gap:4px"
+            title="Import a previously-exported JSON file into lifestyle_bloggers">
+            📂 Import JSON
+            <input type="file" accept=".json,application/json" onchange="bdImportJsonToLifestyle(this)" style="display:none">
+          </label>
           <button onclick="bdExportJSON()" type="button"
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)"
             title="Download all results as a JSON backup file">
@@ -3841,6 +3851,7 @@ function closeProfileCard() {
           </button>
         </div>
       </div>
+      <div id="bdLifestyleImportStatus" style="font-size:11.5px;color:var(--muted);padding:4px 12px"></div>
       <div id="bdExclHint" style="display:none;padding:8px 12px;margin-bottom:8px;background:#fef8ec;border:1px solid #f5c9a8;border-radius:6px;font-size:11.5px;color:#92400e">
         Reviewing profiles that did <strong>not</strong> match your filters. Use <strong>Save to review table</strong> to keep them for later analysis (they're stored separately from your main results).
       </div>
@@ -3969,6 +3980,11 @@ function closeProfileCard() {
           style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)">
           ✕ Filtered out <span id="bdrExclCount" style="font-weight:500;opacity:.8">0</span>
         </button>
+        <button id="bdrViewLifestyleBtn" onclick="bdrSetView('lifestyle')" type="button"
+          style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)"
+          title="Raw search results saved separately (no filter applied)">
+          🌿 Lifestyle <span id="bdrLifestyleCount" style="font-weight:500;opacity:.8">0</span>
+        </button>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <button class="pfill active" id="bdrPfAll" onclick="bdrSetPlatform('all',this)">All <span class="fcount" id="bdrPcAll">0</span></button>
@@ -4053,7 +4069,11 @@ function closeProfileCard() {
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <button class="btn-sm" id="bdrDetectLangBtn" onclick="bdrDetectAllLanguages()">🌐 Detect Language</button>
+          <button class="btn-sm" onclick="bdrRecoverLangFromLog()" title="Paste raw terminal text — extracts every '@handle → lang' line and saves to DB">📥 Recover Lang</button>
           <span id="bdrDetectLangStatus" style="font-size:11px;color:var(--muted);display:none"></span>
+          <button class="btn-sm" id="bdrFindPlatformsBtn" onclick="bdrFindOtherPlatforms()" title="Scan all profiles (matching first, then filtered out) for accounts on other platforms — 100 at a time">🔎 Find Other Platforms</button>
+          <button class="btn-sm" id="bdrFindPlatformsLogBtn" onclick="bdrViewFindPlatformsLog()" title="View disk log of all discoveries (survives DB save failures)">📂 Log</button>
+          <span id="bdrFindPlatformsStatus" style="font-size:11px;color:var(--muted);display:none"></span>
           <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
         </div>
       </div>
@@ -4727,6 +4747,8 @@ const BD_FIELD_OPS = {
   postLocation:   [['contains', 'contains'], ['does not contain', 'does not contain']],
   verified:       [['is', 'is'], ['is not', 'is not']],
   language:       [['is', 'is'], ['is not', 'is not']],
+  ukBased:        [['is', 'is'], ['is not', 'is not']],
+  foodFocus:      [['is', 'is'], ['is not', 'is not']],
 };
 
 const BD_FIELD_LABELS = {
@@ -4743,10 +4765,16 @@ const BD_FIELD_LABELS = {
   postLocation:   'Post location (tag)',
   verified:       'Verified',
   language:       'Language',
+  ukBased:        'UK-based (AI)',
+  foodFocus:      'Food focus (AI)',
 };
 
 function bdDefaultOpFor(field) { return BD_FIELD_OPS[field][0][0]; }
-function bdDefaultValueFor(field) { return field === 'verified' ? 'true' : field === 'language' ? 'en' : ''; }
+function bdDefaultValueFor(field) {
+  if (field === 'verified' || field === 'ukBased' || field === 'foodFocus') return 'true';
+  if (field === 'language') return 'en';
+  return '';
+}
 
 function bdNewRule(initial) {
   return { id: ++bdRuleSeq, field: 'bio', op: 'contains', value: '', ...(initial || {}) };
@@ -4851,6 +4879,18 @@ function bdRenderFilterGroups() {
           <option value="true"  ${rule.value === 'true'  ? 'selected' : ''}>verified</option>
           <option value="false" ${rule.value === 'false' ? 'selected' : ''}>not verified</option>
         </select>`;
+      } else if (rule.field === 'ukBased') {
+        valueInput = `<select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:100px">
+          <option value="true"  ${rule.value === 'true'  ? 'selected' : ''}>true</option>
+          <option value="false" ${rule.value === 'false' ? 'selected' : ''}>false</option>
+        </select>`;
+      } else if (rule.field === 'foodFocus') {
+        valueInput = `<select onchange="bdUpdateRule(${group.id}, ${rule.id}, 'value', this.value)"
+          style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);min-width:100px">
+          <option value="true"  ${rule.value === 'true'  ? 'selected' : ''}>true</option>
+          <option value="false" ${rule.value === 'false' ? 'selected' : ''}>false</option>
+        </select>`;
       } else if (rule.field === 'followers' || rule.field === 'avgLikes' || rule.field === 'avgComments') {
         valueInput = `<input type="text" value="${rule.value || ''}"
           placeholder="e.g. 10000 or 10k or 1M"
@@ -4937,7 +4977,8 @@ function bdWordMatch(text, needle) {
 
 function bdEvaluateRule(p, rule) {
   const { field, op, value } = rule;
-  if (field !== 'verified' && (value == null || value === '')) return true;
+  const BOOL_FIELDS = { verified: 1, ukBased: 1, foodFocus: 1 };
+  if (!BOOL_FIELDS[field] && (value == null || value === '')) return true;
 
   const plat = (p.rawPlatform || '').toLowerCase();
 
@@ -4959,6 +5000,19 @@ function bdEvaluateRule(p, rule) {
   if (field === 'verified') {
     const want = value === 'true';
     return op === 'is' ? !!p.isVerified === want : !!p.isVerified !== want;
+  }
+  if (field === 'ukBased') {
+    // Tri-state: true / false / null (unclassified).
+    // 'is true'  → only matches profiles explicitly marked true (null skipped — won't pass).
+    // 'is not true' → matches false OR null (so unclassified profiles aren't auto-excluded by the negation).
+    const want = value === 'true';
+    if (op === 'is')     return p.ukBased === want;
+    /* is not */         return p.ukBased !== want;
+  }
+  if (field === 'foodFocus') {
+    const want = value === 'true';
+    if (op === 'is')     return p.foodFocus === want;
+    /* is not */         return p.foodFocus !== want;
   }
   if (field === 'language') {
     if (value === 'none') return op === 'is' ? !p.language : !!p.language;
@@ -4996,7 +5050,7 @@ function bdEvaluateRule(p, rule) {
 }
 
 function bdEvaluateGroup(profile, group) {
-  const active = group.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
+  const active = group.rules.filter(r => r.field === 'verified' || r.field === 'ukBased' || r.field === 'foodFocus' || (r.value != null && r.value !== ''));
   if (!active.length) return true; // empty group passes through
   const results = active.map(r => bdEvaluateRule(profile, r));
   return group.mode === 'AND' ? results.every(Boolean) : results.some(Boolean);
@@ -5017,13 +5071,14 @@ function bdMatchedConditionLabels(profile) {
     bio: 'Bio', name: 'Full name', location: 'Location (bio)',
     matchedKeyword: 'Keyword', postContent: 'Post content', postLocation: 'Post location (tag)',
     followers: 'Followers', engagementRate: 'Engagement %', avgLikes: 'Avg likes',
-    avgComments: 'Avg comments', hashtagPosts: 'Tag posts', verified: 'Verified', language: 'Language'
+    avgComments: 'Avg comments', hashtagPosts: 'Tag posts', verified: 'Verified', language: 'Language',
+    ukBased: 'UK-based (AI)', foodFocus: 'Food focus (AI)'
   };
   const NUMERIC = { followers: 1, engagementRate: 1, avgLikes: 1, avgComments: 1, hashtagPosts: 1 };
   const matched = [];
   for (let gi = 0; gi < bdFilterGroups.length; gi++) {
     const group = bdFilterGroups[gi];
-    const active = group.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== ''));
+    const active = group.rules.filter(r => r.field === 'verified' || r.field === 'ukBased' || r.field === 'foodFocus' || (r.value != null && r.value !== ''));
     for (const rule of active) {
       const fieldLabel = FIELD_LABEL[rule.field] || rule.field;
       const push = value => matched.push({ fieldLabel, value, groupIdx: gi });
@@ -5263,7 +5318,7 @@ function bdUpdateFilterSummary() {
   const sum = document.getElementById('bdFltSummary');
   if (!sum) return;
   const groups = bdFilterGroups.length;
-  const rules  = bdFilterGroups.reduce((n, g) => n + g.rules.filter(r => r.field === 'verified' || (r.value != null && r.value !== '')).length, 0);
+  const rules  = bdFilterGroups.reduce((n, g) => n + g.rules.filter(r => r.field === 'verified' || r.field === 'ukBased' || r.field === 'foodFocus' || (r.value != null && r.value !== '')).length, 0);
   const top    = document.getElementById('bdFltTopMode')?.value || 'AND';
   sum.textContent = `· ${groups} group${groups===1?'':'s'} · ${rules} active rule${rules===1?'':'s'} · ${top==='AND'?'ALL':'ANY'} match`;
 }
@@ -5881,6 +5936,91 @@ async function bdSaveFiltered() {
   }
 }
 
+// Save ALL current search results to lifestyle_bloggers — bypasses filter gate.
+// Use when you want to keep a raw bucket of hashtag-search output for later review.
+async function bdSaveAllToLifestyle() {
+  if (!Array.isArray(bdAllResults) || !bdAllResults.length) {
+    setBdStatus('No search results in memory. Run a search first.', 'red');
+    return;
+  }
+  if (!confirm(`Save all ${bdAllResults.length} profiles to lifestyle_bloggers? (Bypasses your filter rules)`)) return;
+  const toSave = bdAllResults.map(r => ({ ...r, rawPlatform: bdPlatform }));
+  const btn = document.getElementById('bdSaveLifestyleBtn');
+  const original = btn?.textContent || '';
+  if (btn) { btn.disabled = true; }
+  const BATCH = 300;
+  let totalSaved = 0;
+  try {
+    for (let i = 0; i < toSave.length; i += BATCH) {
+      const chunk = toSave.slice(i, i + BATCH);
+      if (btn) btn.textContent = `⏳ Saving… ${Math.min(i + BATCH, toSave.length)}/${toSave.length}`;
+      const resp = await fetch('/api/db-save', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'brightdata', profiles: chunk, target: 'lifestyle' }),
+      });
+      let data;
+      try { data = await resp.json(); } catch (_) { throw new Error('Server returned non-JSON (payload too large?)'); }
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      totalSaved += data.saved ?? 0;
+    }
+    setBdStatus(`✓ Saved ${totalSaved} profiles to lifestyle_bloggers.`, 'green');
+  } catch (e) {
+    setBdStatus(`Save error: ${e.message}`, 'red');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original || '💾 Save all to LifestyleBloggers'; }
+  }
+}
+
+// Import a previously-exported JSON file into lifestyle_bloggers.
+// JSON should be an array of profile objects (same shape as bdExportJSON output).
+async function bdImportJsonToLifestyle(fileInput) {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  const status = document.getElementById('bdLifestyleImportStatus');
+  if (status) status.textContent = `Parsing ${file.name}…`;
+  let profiles;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    profiles = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.profiles) ? parsed.profiles : null);
+    if (!profiles) throw new Error('Expected a JSON array of profiles');
+  } catch (e) {
+    if (status) status.textContent = `❌ Parse failed: ${e.message}`;
+    fileInput.value = '';
+    return;
+  }
+  if (!profiles.length) {
+    if (status) status.textContent = '❌ File contains no profiles';
+    fileInput.value = '';
+    return;
+  }
+  if (!confirm(`Import ${profiles.length} profiles from "${file.name}" into lifestyle_bloggers?`)) {
+    fileInput.value = '';
+    return;
+  }
+  const toSave = profiles.map(r => ({ ...r, rawPlatform: r.rawPlatform || r.platform || 'instagram' }));
+  const BATCH = 300;
+  let totalSaved = 0;
+  try {
+    for (let i = 0; i < toSave.length; i += BATCH) {
+      const chunk = toSave.slice(i, i + BATCH);
+      if (status) status.textContent = `⏳ Saving ${Math.min(i + BATCH, toSave.length)}/${toSave.length}…`;
+      const resp = await fetch('/api/db-save', {
+        method: 'POST', headers: getApiHeaders(),
+        body: JSON.stringify({ action: 'brightdata', profiles: chunk, target: 'lifestyle' }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      totalSaved += data.saved ?? 0;
+    }
+    if (status) status.textContent = `✓ Imported ${totalSaved} profiles into lifestyle_bloggers.`;
+  } catch (e) {
+    if (status) status.textContent = `❌ Import failed: ${e.message}`;
+  } finally {
+    fileInput.value = '';
+  }
+}
+
 async function bdAutoSaveToDB(profiles, target) {
   // Silent background upsert — batched to stay under Vercel body limit
   const BATCH = 300;
@@ -6263,6 +6403,8 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [], byKeywo
 // ── BD Results tab ────────────────────────────────────────────────────────
 
 let bdrMatchingData = [];
+let bdrLifestyleData = [];
+let bdrLifestyleLoaded = false;
 let bdrExcludedData = [];
 let bdrViewMode = 'matching';
 let bdrPlatform = 'all';
@@ -6306,11 +6448,32 @@ function bdrGetLLMMeta(handle, platform) {
   return bdrGetAllLLMMeta()[`${platform}:${handle}`] || {};
 }
 
-function bdrSetLLMMeta(handle, platform, tier, tier_reason, reason) {
+function bdrSetLLMMeta(handle, platform, tier, tier_reason, reason, uk_based, food_focus) {
   const all = bdrGetAllLLMMeta();
-  all[`${platform}:${handle}`] = { tier, tier_reason, reason };
-  localStorage.setItem(BDR_LLM_KEY, JSON.stringify(all));
+  // Preserve uk_based/food_focus if not explicitly passed so callers from the old signature don't clear them
+  const existing = all[`${platform}:${handle}`] || {};
+  const slim = {
+    tier,
+    tier_reason: (tier_reason || '').slice(0, 200),
+    reason:      (reason      || '').slice(0, 120),
+    uk_based:    uk_based   !== undefined ? uk_based   : existing.uk_based,
+    food_focus:  food_focus !== undefined ? food_focus : existing.food_focus,
+  };
+  all[`${platform}:${handle}`] = slim;
   _bdrLLMCache = all;
+  try {
+    localStorage.setItem(BDR_LLM_KEY, JSON.stringify(all));
+  } catch (e) {
+    // Quota exceeded — drop localStorage backup, keep in-memory cache so the
+    // current session still works. Data is also persisted to DB on classify save.
+    if (e?.name === 'QuotaExceededError' || /quota/i.test(e?.message || '')) {
+      try { localStorage.removeItem(BDR_LLM_KEY); } catch {}
+      console.warn('[bdr-llm-meta] localStorage quota exceeded — falling back to in-memory only. ' +
+                   'Refresh the page after a classify run to reload from DB.');
+    } else {
+      throw e;
+    }
+  }
 }
 
 function bdrUpdateModelSel() {
@@ -6323,11 +6486,25 @@ function bdrUpdateModelSel() {
 async function bdrClassifyVisible(limit) {
   const isTest = !!limit;
   const btn = document.getElementById(isTest ? 'bdrClassifyTestBtn' : 'bdrClassifyBtn');
-  const rows = isTest ? bdrCurrentRows.slice(0, limit) : bdrCurrentRows;
-  if (!rows || !rows.length) return;
+  if (!bdrCurrentRows || !bdrCurrentRows.length) return;
+
+  // Skip rows that already have BOTH a tier AND a uk_based verdict. Profiles
+  // classified before uk_based existed will still run so they get the new field.
+  const unclassified = bdrCurrentRows.filter(m => {
+    const meta = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '');
+    return !meta.tier || meta.uk_based == null;
+  });
+  const skipped = bdrCurrentRows.length - unclassified.length;
+  const rows = isTest ? unclassified.slice(0, limit) : unclassified;
+  if (!rows.length) {
+    alert(`All ${bdrCurrentRows.length} visible profile${bdrCurrentRows.length === 1 ? ' is' : 's are'} already classified. Nothing to do.`);
+    return;
+  }
 
   btn.disabled = true;
-  btn.textContent = `⏳ Classifying 0/${rows.length}…`;
+  btn.textContent = skipped
+    ? `⏳ Classifying 0/${rows.length} (skipped ${skipped})…`
+    : `⏳ Classifying 0/${rows.length}…`;
 
   const provider = document.getElementById('bdrClassifyProviderSel')?.value || 'anthropic';
   const model    = document.getElementById('bdrClassifyModelSel')?.value    || 'claude-haiku-4-5-20251001';
@@ -6362,21 +6539,27 @@ async function bdrClassifyVisible(limit) {
       const patches = [];
       for (const r of results) {
         if (r.type) bdrSetType(r.handle, r.platform, r.type);
-        if (r.tier || r.reason) bdrSetLLMMeta(r.handle, r.platform, r.tier, r.tier_reason, r.reason);
+        if (r.tier || r.reason || r.uk_based != null || r.food_focus != null) {
+          bdrSetLLMMeta(r.handle, r.platform, r.tier, r.tier_reason, r.reason, r.uk_based, r.food_focus);
+        }
         patches.push({
           handle:           r.handle,
           platform:         r.platform,
           influencer_type:  r.type        || null,
           influencer_tier:  r.tier        ?? null,
           tier_reason:      r.tier_reason || null,
+          uk_based:         r.uk_based    ?? null,
+          food_focus:       r.food_focus  ?? null,
         });
       }
       // Fire-and-forget save to DB
       bdrPatchClassificationDB(patches);
       done += batch.length;
-      btn.textContent = `⏳ Classifying ${done}/${profiles.length}…`;
+      btn.textContent = skipped
+        ? `⏳ Classifying ${done}/${profiles.length} (skipped ${skipped})…`
+        : `⏳ Classifying ${done}/${profiles.length}…`;
     }
-    btn.textContent = `✅ Done (${done})`;
+    btn.textContent = skipped ? `✅ Done (${done}, skipped ${skipped})` : `✅ Done (${done})`;
     // Re-render table with updated types
     bdrRenderTable(rows);
   } catch (e) {
@@ -6419,11 +6602,23 @@ function bdrMergeByHandle(rows) {
     const allLocations = [...new Set(platformRows.flatMap(r => Array.isArray(r.post_locations) ? r.post_locations : []))];
     const allKeywords  = [...new Set(platformRows.flatMap(r => Array.isArray(r.matched_keywords) ? r.matched_keywords : []))];
     const platforms    = uniqueRows.map(r => (r.platform||r.raw_platform||'').toLowerCase());
+    // Find first non-empty value across uniqueRows (sorted by followers desc).
+    // Used for fields that are person-attributes rather than platform-attributes (location, country, bio).
+    // Why: primary.location/bio can be empty when the platform with the most followers (e.g. IG)
+    // doesn't return that field, while another platform (e.g. YT) has it. Filtering against an
+    // empty value would exclude profiles that are actually identifiable across platforms.
+    const firstNonEmpty = (key) => {
+      for (const r of uniqueRows) {
+        const v = r[key];
+        if (v != null && String(v).trim() !== '') return v;
+      }
+      return '';
+    };
     return {
       handle:          primary.handle,
       full_name:       primary.full_name || '',
-      bio:             primary.bio || '',
-      location:        primary.location || primary.country || '',
+      bio:             primary.bio || firstNonEmpty('bio') || '',
+      location:        firstNonEmpty('location') || firstNonEmpty('country') || '',
       is_verified:     platformRows.some(r => r.is_verified),
       engagement_rate: primary.engagement_rate,
       avg_likes:       primary.avg_likes,
@@ -6443,6 +6638,18 @@ function bdrMergeByHandle(rows) {
       fetched_at:      platformRows.map(r=>r.fetched_at||'').sort().reverse()[0],
       profile_url:     primary.profile_url,
       language:        platformRows.map(r=>r.language).find(l=>!!l) || null,
+      // uk_based / food_focus are LLM-classified person-attributes — true if ANY
+      // platform row was marked true, false only if all rows are explicitly false,
+      // null otherwise (unclassified).
+      uk_based:        platformRows.some(r => r.uk_based   === true)  ? true
+                       : platformRows.some(r => r.uk_based   === false) ? false : null,
+      food_focus:      platformRows.some(r => r.food_focus === true)  ? true
+                       : platformRows.some(r => r.food_focus === false) ? false : null,
+      // Relevancy is a manual override — if ANY platform row is marked irrelevant,
+      // the whole creator is treated as irrelevant (filter rules can't bring them back).
+      relevancy:       platformRows.some(r => r.relevancy === 'irrelevant') ? 'irrelevant'
+                       : platformRows.some(r => r.relevancy === 'relevant') ? 'relevant'
+                       : null,
       _rows:           uniqueRows,
     };
   });
@@ -6452,10 +6659,16 @@ function bdrMergeByHandle(rows) {
 
 // Converts a DB snake_case row to the shape bdPassesFilters() expects
 function bdrToFilterShape(row) {
+  // For multi-platform profiles, check bios from EVERY platform — not just primary.
+  // Otherwise filters that match platform-specific bio content (e.g. "Welcome to my YouTube channel")
+  // fail after find-other-platforms adds a different primary.
+  const allBios = Array.isArray(row._rows)
+    ? row._rows.map(r => r.bio).filter(Boolean).join(' \n ')
+    : (row.bio || '');
   return {
     handle:          row.handle          || '',
     followers:       row.followers       || '',
-    bio:             row.bio             || '',
+    bio:             allBios || row.bio || '',
     fullName:        row.full_name       || '',
     location:        row.location        || (row.country||''),
     isVerified:      row.is_verified     || false,
@@ -6467,6 +6680,8 @@ function bdrToFilterShape(row) {
     matchedKeywords: Array.isArray(row.matched_keywords) ? row.matched_keywords : [],
     rawPlatform:     Array.isArray(row.platforms) ? row.platforms.join(',') : (row.raw_platform||row.platform||''),
     language:        row.language || null,
+    ukBased:         row.uk_based   === true ? true : row.uk_based   === false ? false : null,
+    foodFocus:       row.food_focus === true ? true : row.food_focus === false ? false : null,
   };
 }
 
@@ -6478,7 +6693,7 @@ function bdrAutoApply() {
   if (!allRawRows.length) return;
 
   const hasActiveRules = bdFilterGroups.some(g =>
-    g.rules.some(r => r.field === 'verified' || (r.value != null && r.value !== ''))
+    g.rules.some(r => r.field === 'verified' || r.field === 'ukBased' || r.field === 'foodFocus' || (r.value != null && r.value !== ''))
   );
   if (!hasActiveRules) {
     document.getElementById('bdrReclassifyBanner').style.display = 'none';
@@ -6486,8 +6701,9 @@ function bdrAutoApply() {
   }
 
   const mergedAll      = bdrMergeByHandle(allRawRows);
-  const passedMerged   = mergedAll.filter(m => bdPassesFilters(bdrToFilterShape(m)));
-  const failedMerged   = mergedAll.filter(m => !bdPassesFilters(bdrToFilterShape(m)));
+  // Irrelevant overrides filter logic — these always go to excluded regardless of rules.
+  const passedMerged   = mergedAll.filter(m => m.relevancy !== 'irrelevant' && bdPassesFilters(bdrToFilterShape(m)));
+  const failedMerged   = mergedAll.filter(m => m.relevancy === 'irrelevant' || !bdPassesFilters(bdrToFilterShape(m)));
 
   const newMatching = passedMerged.flatMap(m => m._rows);
   const newExcluded = failedMerged.flatMap(m => m._rows);
@@ -6583,13 +6799,31 @@ async function loadBdResults(forceRefresh) {
       if (!r.handle || !r.platform) return;
       const key = `${r.platform}:${r.handle}`;
       if (r.influencer_type)  types[key]  = r.influencer_type;
-      if (r.influencer_tier != null) {
+      if (r.influencer_tier != null || r.uk_based != null || r.food_focus != null) {
         const existing = llmAll[key] || {};
-        llmAll[key] = { ...existing, tier: Number(r.influencer_tier), tier_reason: r.tier_reason || existing.tier_reason || '' };
+        llmAll[key] = {
+          ...existing,
+          tier:        r.influencer_tier != null ? Number(r.influencer_tier) : existing.tier,
+          tier_reason: r.tier_reason || existing.tier_reason || '',
+          uk_based:    r.uk_based   != null ? !!r.uk_based   : existing.uk_based,
+          food_focus:  r.food_focus != null ? !!r.food_focus : existing.food_focus,
+        };
       }
     });
-    localStorage.setItem(BDR_TYPE_KEY, JSON.stringify(types));
-    localStorage.setItem(BDR_LLM_KEY,  JSON.stringify(llmAll));
+    // localStorage may overflow with 10k+ classifications; in-memory cache is the
+    // source of truth for the session. On quota errors, clear the stored key so
+    // we don't crash subsequent reads, but keep the in-memory copy.
+    const safeSet = (key, value) => {
+      try { localStorage.setItem(key, JSON.stringify(value)); }
+      catch (e) {
+        if (e?.name === 'QuotaExceededError' || /quota/i.test(e?.message || '')) {
+          try { localStorage.removeItem(key); } catch {}
+          console.warn(`[bdr] ${key} exceeded localStorage quota — keeping in-memory cache only.`);
+        } else { throw e; }
+      }
+    };
+    safeSet(BDR_TYPE_KEY, types);
+    safeSet(BDR_LLM_KEY, llmAll);
     _bdrTypesCache = types;
     _bdrLLMCache   = llmAll;
     bdrLoaded = true;
@@ -6624,7 +6858,7 @@ function bdrUpdateStats() {
     return p === 'x' || p === 'twitter' || p.includes('x / twitter');
   }).reduce((s,r,_,a) => { s.add(r.handle); return s; }, new Set()).size;
 
-  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const pc = plat => plat === 'all'
     ? new Set(src.map(r => r.handle)).size
     : platHandles(src, plat);
@@ -6635,6 +6869,13 @@ function bdrUpdateStats() {
   document.getElementById('bdrPcX').textContent   = pc('x');
   document.getElementById('bdrMatchCount').textContent = uniqMatch;
   document.getElementById('bdrExclCount').textContent  = uniqExcl;
+  const lifeCountEl = document.getElementById('bdrLifestyleCount');
+  if (lifeCountEl) {
+    const uniqLifestyle = bdrLifestyleLoaded
+      ? new Set(bdrLifestyleData.map(r => r.handle).filter(Boolean)).size
+      : 0;
+    lifeCountEl.textContent = bdrLifestyleLoaded ? String(uniqLifestyle) : '–';
+  }
   bdrInsightsRender();
 }
 
@@ -6951,7 +7192,7 @@ function bdrInsightsRender() {
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
             <td style="padding:6px 8px">${tierSelect}</td>
             <td style="padding:6px 8px;color:var(--muted)">${type}</td>
-            <td style="padding:6px 8px;text-align:right"><button onclick="insExcludeProfile('${h}')" title="Move to excluded" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
+            <td style="padding:6px 8px;text-align:right"><button onclick="insExcludeProfile('${h}')" title="Mark as irrelevant — permanently excluded regardless of filter rules" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
           </tr>`;
         }).join('')}</tbody>
       </table>`
@@ -7022,9 +7263,11 @@ async function insAddToOutreach() {
 }
 
 async function insExcludeProfile(handle) {
-  if (!confirm(`Move @${handle} to excluded?`)) return;
+  if (!confirm(`Mark @${handle} as irrelevant?\n\nThey'll be excluded from matching even if your filters would otherwise include them.`)) return;
   const rows = bdrMatchingData.filter(r => r.handle === handle);
   if (!rows.length) return;
+  // Tag each row as irrelevant — the reclassify upsert will persist this column.
+  rows.forEach(r => { r.relevancy = 'irrelevant'; });
   // Reassign array so WeakMap-keyed merge cache is invalidated automatically
   bdrMatchingData = bdrMatchingData.filter(r => r.handle !== handle);
   bdrExcludedData = [...bdrExcludedData, ...rows];
@@ -7035,6 +7278,26 @@ async function insExcludeProfile(handle) {
       body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: rows }),
     });
   } catch (e) { console.warn('[insExclude]', e.message); }
+}
+
+// Restore a previously-marked-irrelevant profile so filter rules apply normally.
+async function insRestoreProfile(handle) {
+  if (!confirm(`Restore @${handle}? Filter rules will determine if they end up in matching.`)) return;
+  const allRows = [...bdrMatchingData, ...bdrExcludedData].filter(r => r.handle === handle);
+  if (!allRows.length) return;
+  allRows.forEach(r => { r.relevancy = null; });
+  // Reassign arrays so WeakMap-keyed merge cache is invalidated and the new
+  // relevancy value is picked up on the next merge.
+  bdrMatchingData = [...bdrMatchingData];
+  bdrExcludedData = [...bdrExcludedData];
+  bdrInsightsRender();
+  try {
+    await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: allRows }),
+    });
+  } catch (e) { console.warn('[insRestore]', e.message); }
+  bdrAutoApply();
 }
 
 // Silently load outreach data (no spinner, no table render) so Overview can
@@ -7058,7 +7321,8 @@ let _bdrLangRunning = false;
 
 async function bdrDetectAllLanguages() {
   if (_bdrLangRunning) return;
-  const merged = bdrMergeByHandle(bdrMatchingData);
+  const srcData = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const merged = bdrMergeByHandle(srcData);
   const todo = merged.filter(m => !m.language);
   if (!todo.length) { alert('All profiles already have a language detected.'); return; }
 
@@ -7078,7 +7342,7 @@ async function bdrDetectAllLanguages() {
       });
       if (resp.ok) {
         const d = await resp.json();
-        if (d.language) bdrMatchingData.forEach(r => { if (r.handle === m.handle) r.language = d.language; });
+        if (d.language) srcData.forEach(r => { if (r.handle === m.handle) r.language = d.language; });
       }
     } catch (e) { console.warn('[detectLang]', m.handle, e.message); }
     done++;
@@ -7104,13 +7368,23 @@ async function bdrDetectOneLang(handle, platform) {
       const d = await resp.json();
       if (d.language) {
         bdrMatchingData.forEach(r => { if (r.handle === handle) r.language = d.language; });
+        bdrExcludedData.forEach(r => { if (r.handle === handle) r.language = d.language; });
         bdrApplyFilter();
         return;
       }
       // No language detected — show reason in button tooltip
-      const reason = d.reason === 'no_text' ? 'No bio or captions stored — enrich first' : (d.reason || 'Unknown');
+      let reason = d.reason === 'no_text' ? 'No bio or captions stored — enrich first' : (d.reason || 'Unknown');
+      if (d.diag) {
+        const dg = d.diag;
+        reason += `\n\nDB snapshot:`
+          + `\n• rows found: ${dg.rows_found}`
+          + `\n• platforms: ${(dg.platforms || []).join(', ') || '(none)'}`
+          + `\n• bio lengths: ${(dg.bio_lengths || []).join(', ') || '(none)'}`
+          + `\n• caption counts: ${(dg.caption_counts || []).join(', ') || '(none)'}`
+          + `\n• YouTube API key: ${dg.yt_api_key ? 'set' : 'NOT set'}`;
+      }
       if (btn) { btn.textContent = '✗'; btn.disabled = false; btn.title = reason; btn.style.color = 'var(--amber)'; }
-      console.warn(`[detectOneLang] @${handle}: ${reason}`);
+      console.warn(`[detectOneLang] @${handle}: ${d.reason || 'unknown'}`, d.diag || '');
     } else {
       const d = await resp.json().catch(() => ({}));
       if (btn) { btn.textContent = '✗'; btn.disabled = false; btn.title = d.error || `HTTP ${resp.status}`; btn.style.color = 'var(--red)'; }
@@ -7118,6 +7392,227 @@ async function bdrDetectOneLang(handle, platform) {
   } catch (e) {
     if (btn) { btn.textContent = '✗'; btn.disabled = false; btn.title = e.message; btn.style.color = 'var(--red)'; }
     console.warn('[detectOneLang]', handle, e.message);
+  }
+}
+
+async function bdrRecoverLangFromLog() {
+  // Build a small overlay with a textarea so the user can paste large logs
+  const old = document.getElementById('bdrRecoverLangOverlay');
+  if (old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'bdrRecoverLangOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:20px;max-width:720px;width:90%;max-height:80vh;display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:15px;font-weight:700">Recover Language Detections from Terminal Log</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.5">
+        Paste raw terminal text containing lines like:<br/>
+        <code style="background:#f4f4f4;padding:2px 6px;border-radius:4px">[detect-lang] @handle → en (db_captions, text=123ch)</code><br/><br/>
+        Every <code>@handle → lang</code> pair will be saved to whichever table contains that handle (only fills blanks — won't overwrite existing values).
+      </div>
+      <textarea id="bdrRecoverLangTextarea" placeholder="Paste full terminal output here…" style="flex:1;min-height:300px;padding:10px;border:1px solid var(--border);border-radius:8px;font-family:monospace;font-size:11px;resize:vertical"></textarea>
+      <div id="bdrRecoverLangResult" style="font-size:12px;color:var(--muted);white-space:pre-wrap;max-height:120px;overflow:auto"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-sm" onclick="document.getElementById('bdrRecoverLangOverlay').remove()">Cancel</button>
+        <button class="btn-sm" id="bdrRecoverLangSubmit" onclick="bdrRecoverLangSubmit()" style="background:var(--green);color:#fff;border-color:var(--green)">Parse & Save</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('bdrRecoverLangTextarea')?.focus(), 50);
+}
+
+async function bdrRecoverLangSubmit() {
+  const textarea = document.getElementById('bdrRecoverLangTextarea');
+  const resultDiv = document.getElementById('bdrRecoverLangResult');
+  const btn = document.getElementById('bdrRecoverLangSubmit');
+  const logText = textarea.value;
+  if (!logText.trim()) { resultDiv.textContent = 'Please paste some terminal text first.'; return; }
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  resultDiv.textContent = `Parsing ${logText.length.toLocaleString()} chars…`;
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'bulk-set-language-from-log', logText }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      resultDiv.textContent = `❌ Error: ${data.error || 'HTTP ' + resp.status}`;
+      btn.disabled = false; btn.textContent = 'Parse & Save';
+      return;
+    }
+    resultDiv.textContent =
+      `✓ Parsed ${data.parsed} unique @handle→lang pairs.\n` +
+      `  • Updated in brightdata_profiles:          ${data.updated_matching || 0}\n` +
+      `  • Updated in brightdata_excluded_profiles: ${data.updated_excluded || 0}\n` +
+      (data.errors?.length ? `  • Errors (${data.errors.length}):\n     ${data.errors.slice(0, 5).join('\n     ')}\n` : '') +
+      `\nRecovery log saved to:\n${data.recoveryLogPath}`;
+    btn.textContent = '✓ Done — close';
+    btn.onclick = async () => {
+      document.getElementById('bdrRecoverLangOverlay').remove();
+      if ((data.updated_matching || 0) + (data.updated_excluded || 0) > 0) await loadBdResults(true);
+    };
+    btn.disabled = false;
+  } catch (e) {
+    resultDiv.textContent = `❌ Request failed: ${e.message}`;
+    btn.disabled = false; btn.textContent = 'Parse & Save';
+  }
+}
+
+let _bdrFindPlatformsRunning = false;
+
+async function bdrFindOtherPlatforms() {
+  if (_bdrFindPlatformsRunning) return;
+
+  const matchMerged = bdrMergeByHandle(bdrMatchingData);
+  const exclMerged  = bdrMergeByHandle(bdrExcludedData);
+  const totalProfiles = matchMerged.length + exclMerged.length;
+  if (!totalProfiles) { alert('No profiles loaded yet.'); return; }
+
+  // Rough cost estimate — assume avg 2 missing platforms per profile, ~$0.0015 per BD call
+  const estCost = (totalProfiles * 2 * 0.0015).toFixed(2);
+  const ok = confirm(
+    `This will scan ${totalProfiles} unique creators (${matchMerged.length} matching + ${exclMerged.length} filtered out) ` +
+    `for accounts on other platforms.\n\n` +
+    `• Processes 100 at a time, saving to DB after each batch\n` +
+    `• Starts with matching, then filtered out\n` +
+    `• Uses Bright Data — rough cost estimate: $${estCost}\n\n` +
+    `Continue?`
+  );
+  if (!ok) return;
+
+  const btn = document.getElementById('bdrFindPlatformsBtn');
+  const status = document.getElementById('bdrFindPlatformsStatus');
+  btn.disabled = true;
+  status.style.display = '';
+  _bdrFindPlatformsRunning = true;
+
+  const BATCH = 100;
+  const startedAt = new Date().toISOString();
+  const runState = {
+    startedAt,
+    totalDiscovered: 0,
+    totalSaved: 0,
+    totalProcessed: 0,
+    breakdown: { saved: 0, name_mismatch: 0, verify_failed: 0, verify_exception: 0, save_failed: 0 },
+    allDiscoveries: [],     // every discovered candidate (even if save_failed)
+    allErrors: [],
+  };
+  const persist = () => { try { localStorage.setItem('bdr_find_platforms_last_run', JSON.stringify(runState)); } catch (_) {} };
+
+  async function runPhase(phaseLabel, merged, table) {
+    for (let i = 0; i < merged.length; i += BATCH) {
+      const chunk = merged.slice(i, i + BATCH);
+      const batch = chunk.map(m => ({
+        handle: m.handle,
+        full_name: m.full_name || '',
+        knownPlatforms: m.platforms || [],
+      }));
+      const br = runState.breakdown;
+      status.textContent = `${phaseLabel}: ${i}/${merged.length}… (found ${runState.totalDiscovered}, saved ${runState.totalSaved}, name_mismatch ${br.name_mismatch}, not_found ${br.verify_failed})`;
+      try {
+        const resp = await fetch('/api/db-save', {
+          method: 'POST', headers: getApiHeaders(),
+          body: JSON.stringify({ action: 'find-other-platforms', table, batch }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          runState.allErrors.push(`Batch ${i}: ${err.error || 'HTTP ' + resp.status}`);
+          console.warn('[find-platforms] batch failed', err);
+          persist();
+          continue;
+        }
+        const data = await resp.json();
+        runState.totalDiscovered += data.totalDiscovered || 0;
+        runState.totalSaved      += data.totalSaved      || 0;
+        runState.totalProcessed  += chunk.length;
+        for (const r of (data.results || [])) {
+          if (r.discovered.length) {
+            console.log(`[find-platforms] @${r.handle} discovered:`, r.discovered);
+            runState.allDiscoveries.push({ handle: r.handle, table, discovered: r.discovered });
+          }
+          for (const errMsg of (r.errors || [])) {
+            runState.allErrors.push(`@${r.handle}: ${errMsg}`);
+            // Tally breakdown from error suffix
+            if (errMsg.includes('name_mismatch')) runState.breakdown.name_mismatch++;
+            else if (errMsg.startsWith('save:'))  runState.breakdown.save_failed++;
+            else                                   runState.breakdown.verify_failed++;
+          }
+          runState.breakdown.saved += r.saved || 0;
+        }
+        persist();
+      } catch (e) {
+        runState.allErrors.push(`Batch ${i}: ${e.message}`);
+        console.warn('[find-platforms] batch error', e);
+        persist();
+      }
+    }
+  }
+
+  try {
+    if (matchMerged.length) await runPhase('Matching', matchMerged, 'brightdata_profiles');
+    if (exclMerged.length)  await runPhase('Filtered out', exclMerged, 'brightdata_excluded_profiles');
+
+    const br = runState.breakdown;
+    status.textContent = `✓ Done — processed ${runState.totalProcessed}, found ${runState.totalDiscovered}, saved ${runState.totalSaved} (name_mismatch ${br.name_mismatch}, verify_failed ${br.verify_failed}, save_failed ${br.save_failed})`;
+    console.log(`[find-platforms] complete.`, runState);
+    persist();
+
+    if (runState.totalSaved > 0) {
+      await loadBdResults(true);
+    } else if (runState.totalDiscovered > 0) {
+      alert(`Found ${runState.totalDiscovered} discoveries but ${runState.breakdown.save_failed} failed to save to DB. Open browser console or click 📂 Log to inspect.`);
+    }
+  } finally {
+    _bdrFindPlatformsRunning = false;
+    btn.disabled = false;
+    setTimeout(() => { if (status.textContent.startsWith('✓')) status.style.display = 'none'; }, 15000);
+  }
+}
+
+async function bdrViewFindPlatformsLog() {
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'find-other-platforms-log', limit: 2000 }),
+    });
+    if (!resp.ok) { alert('Log fetch failed: HTTP ' + resp.status); return; }
+    const data = await resp.json();
+    if (!data.exists) {
+      alert('No log file yet — run "Find Other Platforms" first.\n\nWhen it runs, every discovery is written to:\n' + data.path);
+      return;
+    }
+    const counts = data.counts || {};
+    const lines = [
+      `📂 ${data.path}`,
+      `Total entries: ${data.total}`,
+      ``,
+      `Outcome breakdown:`,
+      `  • discovered:       ${counts.discovered      || 0}`,
+      `  • saved:            ${counts.saved           || 0}`,
+      `  • name_mismatch:    ${counts.name_mismatch   || 0}`,
+      `  • verify_failed:    ${counts.verify_failed   || 0}`,
+      `  • verify_exception: ${counts.verify_exception|| 0}`,
+      `  • save_failed:      ${counts.save_failed     || 0}`,
+      ``,
+      `Last ${data.entries.length} entries (most recent first):`,
+      ``,
+    ];
+    const recent = [...data.entries].reverse().slice(0, 100);
+    for (const e of recent) {
+      const summary = `[${e.ts?.slice(11,19) || ''}] ${e.outcome}  @${e.sourceHandle || '?'} → ${e.platform || ''}@${e.candidateHandle || '-'}`
+        + (e.reason ? `  reason=${e.reason}` : '')
+        + (e.source ? `  src=${e.source}` : '')
+        + (e.dbError ? `  dbError=${e.dbError}` : '')
+        + (e.foundName ? `  found="${e.foundName}" vs source="${e.sourceName || ''}"` : '');
+      lines.push(summary);
+    }
+    // Show in a new tab as plain text so user can save/search it
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  } catch (e) {
+    alert('Log fetch error: ' + e.message);
   }
 }
 
@@ -7206,14 +7701,49 @@ function bdrRefreshFilterDropdowns(filteredRows) {
 
 function bdrSetView(mode) {
   bdrViewMode = mode;
-  const matchBtn = document.getElementById('bdrViewMatchBtn');
-  const exclBtn  = document.getElementById('bdrViewExclBtn');
-  matchBtn.style.background = mode === 'matching' ? 'var(--green-bg)' : 'var(--white)';
-  matchBtn.style.color      = mode === 'matching' ? 'var(--green)'    : 'var(--muted)';
-  exclBtn.style.background  = mode === 'excluded' ? '#fff5f0'         : 'var(--white)';
-  exclBtn.style.color       = mode === 'excluded' ? 'var(--orange)'   : 'var(--muted)';
+  const matchBtn     = document.getElementById('bdrViewMatchBtn');
+  const exclBtn      = document.getElementById('bdrViewExclBtn');
+  const lifestyleBtn = document.getElementById('bdrViewLifestyleBtn');
+  matchBtn.style.background     = mode === 'matching'  ? 'var(--green-bg)' : 'var(--white)';
+  matchBtn.style.color          = mode === 'matching'  ? 'var(--green)'    : 'var(--muted)';
+  exclBtn.style.background      = mode === 'excluded'  ? '#fff5f0'         : 'var(--white)';
+  exclBtn.style.color           = mode === 'excluded'  ? 'var(--orange)'   : 'var(--muted)';
+  if (lifestyleBtn) {
+    lifestyleBtn.style.background = mode === 'lifestyle' ? '#ecfdf5'        : 'var(--white)';
+    lifestyleBtn.style.color      = mode === 'lifestyle' ? '#059669'        : 'var(--muted)';
+  }
+  // Lazy-load lifestyle_bloggers the first time the user switches to it.
+  if (mode === 'lifestyle' && !bdrLifestyleLoaded) {
+    bdrLoadLifestyle();
+    return;
+  }
   bdrUpdateStats();
   bdrApplyFilter();
+}
+
+async function bdrLoadLifestyle() {
+  const btn = document.getElementById('bdrViewLifestyleBtn');
+  const countEl = document.getElementById('bdrLifestyleCount');
+  if (btn) btn.disabled = true;
+  if (countEl) countEl.textContent = '…';
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'lifestyle-load' }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    bdrLifestyleData = data.rows || [];
+    bdrLifestyleLoaded = true;
+    if (countEl) countEl.textContent = String(bdrLifestyleData.length);
+    bdrUpdateStats();
+    bdrApplyFilter();
+  } catch (e) {
+    if (countEl) countEl.textContent = '!';
+    alert('Failed to load lifestyle_bloggers: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function bdrSetPlatform(plat, el) {
@@ -7257,7 +7787,7 @@ function bdrSearchDebounced() {
 }
 
 function bdrApplyFilter() {
-  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
   const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
   const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
@@ -7607,8 +8137,12 @@ async function bdrReenrichMissing() {
   const btn = document.getElementById('bdrReenrichBtn');
   btn.disabled = true;
 
-  // Split matching profiles by platform, pick those missing ER or followers
-  const allMerged = bdrMergeByHandle(bdrMatchingData);
+  // Operate on the currently-viewed dataset (matching or lifestyle).
+  // Excluded view: don't enrich — those are deliberately not in the matching pipeline.
+  const sourceData = bdrViewMode === 'lifestyle' ? bdrLifestyleData
+                   : bdrViewMode === 'excluded'  ? bdrExcludedData
+                   : bdrMatchingData;
+  const allMerged = bdrMergeByHandle(sourceData);
   const needsEnrich = r => !r.engagement_rate || !r.followers;
 
   const ytProfiles = allMerged
@@ -7621,7 +8155,7 @@ async function bdrReenrichMissing() {
       return [{ handle: m.handle, profileUrl }];
     });
 
-  const igProfiles = bdrMatchingData
+  const igProfiles = sourceData
     .filter(r => (r.platform||'').includes('instagram') && needsEnrich(r) && r.pk)
     .map(r => ({ handle: r.handle, pk: r.pk }));
 
@@ -7724,8 +8258,13 @@ async function bdrReenrichMissing() {
         method: 'POST', headers: getApiHeaders(),
         body: JSON.stringify({ action: 'patch-profile', patches }),
       });
-      // Refresh data to show updated values
-      await loadBdResults(true);
+      // Refresh the dataset we were enriching so updated values surface in the UI
+      if (bdrViewMode === 'lifestyle') {
+        bdrLifestyleLoaded = false;
+        await bdrLoadLifestyle();
+      } else {
+        await loadBdResults(true);
+      }
     } catch (e) { console.warn('[bdr-reenrich] patch error:', e.message); }
   }
 
@@ -7789,7 +8328,7 @@ function bdrProfileUrl(r) {
 }
 
 function bdrExportCsv() {
-  const src      = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src      = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
   const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
   const typeFilt = (document.getElementById('bdrFilterType')?.value || '');

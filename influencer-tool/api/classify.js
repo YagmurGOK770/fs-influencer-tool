@@ -89,7 +89,7 @@ function parseResult(text) {
 async function classifyWithClaude(client, model, profile) {
   const msg = await client.messages.create({
     model,
-    max_tokens: 200,
+    max_tokens: 300,
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: USER_PROMPT(profile) }],
   });
@@ -104,7 +104,7 @@ async function classifyWithOpenAI(model, profile) {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      max_completion_tokens: 200,
+      max_completion_tokens: 300,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user',   content: USER_PROMPT(profile) },
@@ -124,7 +124,7 @@ async function classifyWithGemini(model, profile) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: SYSTEM_PROMPT + '\n\n' + USER_PROMPT(profile) }] }],
-      generationConfig: { maxOutputTokens: 200 },
+      generationConfig: { maxOutputTokens: 300 },
     }),
   });
   const data = await resp.json();
@@ -140,7 +140,7 @@ async function classifyWithGrok(model, profile) {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      max_tokens: 150,
+      max_tokens: 250,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user',   content: USER_PROMPT(profile) },
@@ -189,10 +189,12 @@ export default async function handler(req, res) {
       tier,
       tier_reason,
       reason:      llm.reason      || '',
+      uk_based:    llm.uk_based    === true ? true : llm.uk_based === false ? false : null,
+      food_focus:  llm.food_focus  === true ? true : llm.food_focus  === false ? false : null,
     };
   }
 
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 10;
   const results = [];
   for (let i = 0; i < profiles.length; i += CONCURRENCY) {
     const batch = profiles.slice(i, i + CONCURRENCY);
