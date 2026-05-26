@@ -3969,6 +3969,19 @@ function closeProfileCard() {
       </div>
     </div>
 
+    <!-- Dataset switcher: each dataset has its own matching/excluded tables -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Dataset:</span>
+      <button id="bdrDsFoodBtn" onclick="bdrSetDataset('food')" type="button"
+        style="padding:6px 14px;border:1px solid var(--border);border-radius:100px;background:#fdf0ee;color:#c0392b;font-size:12px;font-weight:700;cursor:pointer">
+        🍔 Food Bloggers
+      </button>
+      <button id="bdrDsLifestyleBtn" onclick="bdrSetDataset('lifestyle')" type="button"
+        style="padding:6px 14px;border:1px solid var(--border);border-radius:100px;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer">
+        🌿 Lifestyle Bloggers
+      </button>
+    </div>
+
     <!-- Toolbar: view toggle + platform pills + search -->
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)">
@@ -3979,11 +3992,6 @@ function closeProfileCard() {
         <button id="bdrViewExclBtn" onclick="bdrSetView('excluded')" type="button"
           style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)">
           ✕ Filtered out <span id="bdrExclCount" style="font-weight:500;opacity:.8">0</span>
-        </button>
-        <button id="bdrViewLifestyleBtn" onclick="bdrSetView('lifestyle')" type="button"
-          style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)"
-          title="Raw search results saved separately (no filter applied)">
-          🌿 Lifestyle <span id="bdrLifestyleCount" style="font-weight:500;opacity:.8">0</span>
         </button>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
@@ -6403,6 +6411,11 @@ function renderSearchHistory({ runs = [], byModel = [], byPlatform = [], byKeywo
 // ── BD Results tab ────────────────────────────────────────────────────────
 
 let bdrMatchingData = [];
+// Per-dataset cache so switching between Food/Lifestyle doesn't re-fetch.
+// Each entry holds the matching+excluded arrays for that dataset.
+let bdrDataset = 'food';
+const _bdrDatasetCache = { food: null, lifestyle: null };
+// Kept for backwards compat with any remaining references — superseded by dataset switch.
 let bdrLifestyleData = [];
 let bdrLifestyleLoaded = false;
 let bdrExcludedData = [];
@@ -6752,7 +6765,7 @@ async function bdrSaveReclassify() {
       btn.textContent = `⏳ Saving… ${Math.min((i + 1) * CHUNK, matching.length + excluded.length)}/${matching.length + excluded.length}`;
       const resp = await fetch('/api/db-save', {
         method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ action: 'brightdata-reclassify', matching: mChunk, excluded: eChunk }),
+        body: JSON.stringify({ action: 'brightdata-reclassify', matching: mChunk, excluded: eChunk, dataset: bdrDataset }),
       });
       let data;
       try { data = await resp.json(); } catch (_) { throw new Error('Server returned non-JSON (payload too large?)'); }
@@ -6777,20 +6790,24 @@ function bdrDiscardReclassify() {
   loadBdResults(true); // reload from DB to restore original state
 }
 
-async function loadBdResults(forceRefresh) {
-  if (bdrLoaded && !forceRefresh) { bdrApplyFilter(); return; }
+async function loadBdResults(forceRefresh, dataset) {
+  const ds = dataset || bdrDataset;
+  if (bdrLoaded && !forceRefresh && ds === bdrDataset) { bdrApplyFilter(); return; }
   document.getElementById('bdrLoading').style.display = '';
   document.getElementById('bdrEmpty').style.display = 'none';
   document.getElementById('bdrTableWrap').style.display = 'none';
   try {
     const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata-load' }),
+      body: JSON.stringify({ action: 'brightdata-load', dataset: ds }),
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
+    bdrDataset = ds;
     bdrMatchingData = data.matching || [];
     bdrExcludedData = data.excluded || [];
+    // Cache so switching back doesn't re-fetch
+    _bdrDatasetCache[ds] = { matching: bdrMatchingData, excluded: bdrExcludedData };
     // Seed localStorage from DB values so tiers/types are visible on any device
     const allDbRows = [...bdrMatchingData, ...bdrExcludedData];
     const types = bdrGetTypes();
@@ -6858,7 +6875,7 @@ function bdrUpdateStats() {
     return p === 'x' || p === 'twitter' || p.includes('x / twitter');
   }).reduce((s,r,_,a) => { s.add(r.handle); return s; }, new Set()).size;
 
-  const src = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const pc = plat => plat === 'all'
     ? new Set(src.map(r => r.handle)).size
     : platHandles(src, plat);
@@ -6869,13 +6886,6 @@ function bdrUpdateStats() {
   document.getElementById('bdrPcX').textContent   = pc('x');
   document.getElementById('bdrMatchCount').textContent = uniqMatch;
   document.getElementById('bdrExclCount').textContent  = uniqExcl;
-  const lifeCountEl = document.getElementById('bdrLifestyleCount');
-  if (lifeCountEl) {
-    const uniqLifestyle = bdrLifestyleLoaded
-      ? new Set(bdrLifestyleData.map(r => r.handle).filter(Boolean)).size
-      : 0;
-    lifeCountEl.textContent = bdrLifestyleLoaded ? String(uniqLifestyle) : '–';
-  }
   bdrInsightsRender();
 }
 
@@ -7275,7 +7285,7 @@ async function insExcludeProfile(handle) {
   try {
     await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: rows }),
+      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: rows, dataset: bdrDataset }),
     });
   } catch (e) { console.warn('[insExclude]', e.message); }
 }
@@ -7294,7 +7304,7 @@ async function insRestoreProfile(handle) {
   try {
     await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: allRows }),
+      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: allRows, dataset: bdrDataset }),
     });
   } catch (e) { console.warn('[insRestore]', e.message); }
   bdrAutoApply();
@@ -7321,7 +7331,7 @@ let _bdrLangRunning = false;
 
 async function bdrDetectAllLanguages() {
   if (_bdrLangRunning) return;
-  const srcData = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const srcData = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const merged = bdrMergeByHandle(srcData);
   const todo = merged.filter(m => !m.language);
   if (!todo.length) { alert('All profiles already have a language detected.'); return; }
@@ -7549,9 +7559,14 @@ async function bdrFindOtherPlatforms() {
     }
   }
 
+  // Route to the active dataset's table pair so find-other-platforms writes to the correct tables.
+  const datasetTables = bdrDataset === 'lifestyle'
+    ? { matching: 'lifestyle_bloggers',  excluded: 'lifestyle_bloggers_excluded' }
+    : { matching: 'brightdata_profiles', excluded: 'brightdata_excluded_profiles' };
+
   try {
-    if (matchMerged.length) await runPhase('Matching', matchMerged, 'brightdata_profiles');
-    if (exclMerged.length)  await runPhase('Filtered out', exclMerged, 'brightdata_excluded_profiles');
+    if (matchMerged.length) await runPhase('Matching', matchMerged, datasetTables.matching);
+    if (exclMerged.length)  await runPhase('Filtered out', exclMerged, datasetTables.excluded);
 
     const br = runState.breakdown;
     status.textContent = `✓ Done — processed ${runState.totalProcessed}, found ${runState.totalDiscovered}, saved ${runState.totalSaved} (name_mismatch ${br.name_mismatch}, verify_failed ${br.verify_failed}, save_failed ${br.save_failed})`;
@@ -7559,7 +7574,9 @@ async function bdrFindOtherPlatforms() {
     persist();
 
     if (runState.totalSaved > 0) {
-      await loadBdResults(true);
+      _bdrDatasetCache[bdrDataset] = null;
+      bdrLoaded = false;
+      await loadBdResults(true, bdrDataset);
     } else if (runState.totalDiscovered > 0) {
       alert(`Found ${runState.totalDiscovered} discoveries but ${runState.breakdown.save_failed} failed to save to DB. Open browser console or click 📂 Log to inspect.`);
     }
@@ -7701,24 +7718,47 @@ function bdrRefreshFilterDropdowns(filteredRows) {
 
 function bdrSetView(mode) {
   bdrViewMode = mode;
-  const matchBtn     = document.getElementById('bdrViewMatchBtn');
-  const exclBtn      = document.getElementById('bdrViewExclBtn');
-  const lifestyleBtn = document.getElementById('bdrViewLifestyleBtn');
-  matchBtn.style.background     = mode === 'matching'  ? 'var(--green-bg)' : 'var(--white)';
-  matchBtn.style.color          = mode === 'matching'  ? 'var(--green)'    : 'var(--muted)';
-  exclBtn.style.background      = mode === 'excluded'  ? '#fff5f0'         : 'var(--white)';
-  exclBtn.style.color           = mode === 'excluded'  ? 'var(--orange)'   : 'var(--muted)';
-  if (lifestyleBtn) {
-    lifestyleBtn.style.background = mode === 'lifestyle' ? '#ecfdf5'        : 'var(--white)';
-    lifestyleBtn.style.color      = mode === 'lifestyle' ? '#059669'        : 'var(--muted)';
-  }
-  // Lazy-load lifestyle_bloggers the first time the user switches to it.
-  if (mode === 'lifestyle' && !bdrLifestyleLoaded) {
-    bdrLoadLifestyle();
-    return;
-  }
+  const matchBtn = document.getElementById('bdrViewMatchBtn');
+  const exclBtn  = document.getElementById('bdrViewExclBtn');
+  matchBtn.style.background = mode === 'matching' ? 'var(--green-bg)' : 'var(--white)';
+  matchBtn.style.color      = mode === 'matching' ? 'var(--green)'    : 'var(--muted)';
+  exclBtn.style.background  = mode === 'excluded' ? '#fff5f0'         : 'var(--white)';
+  exclBtn.style.color       = mode === 'excluded' ? 'var(--orange)'   : 'var(--muted)';
   bdrUpdateStats();
   bdrApplyFilter();
+}
+
+// Switch between Food Bloggers and Lifestyle Bloggers datasets. Each has its own
+// matching + excluded tables. Cached on first load so re-switching is instant.
+async function bdrSetDataset(dataset) {
+  if (dataset !== 'food' && dataset !== 'lifestyle') return;
+  if (dataset === bdrDataset && bdrLoaded) return;
+  // Stash current arrays before swap
+  if (bdrLoaded) {
+    _bdrDatasetCache[bdrDataset] = { matching: bdrMatchingData, excluded: bdrExcludedData };
+  }
+  // Update pill button styles
+  const foodBtn = document.getElementById('bdrDsFoodBtn');
+  const lifeBtn = document.getElementById('bdrDsLifestyleBtn');
+  if (foodBtn) {
+    foodBtn.style.background = dataset === 'food' ? '#fdf0ee' : 'var(--white)';
+    foodBtn.style.color      = dataset === 'food' ? '#c0392b' : 'var(--muted)';
+  }
+  if (lifeBtn) {
+    lifeBtn.style.background = dataset === 'lifestyle' ? '#ecfdf5' : 'var(--white)';
+    lifeBtn.style.color      = dataset === 'lifestyle' ? '#059669' : 'var(--muted)';
+  }
+  // Restore from cache or fetch fresh
+  if (_bdrDatasetCache[dataset]) {
+    bdrDataset = dataset;
+    bdrMatchingData = _bdrDatasetCache[dataset].matching;
+    bdrExcludedData = _bdrDatasetCache[dataset].excluded;
+    bdrUpdateStats();
+    bdrApplyFilter();
+  } else {
+    bdrLoaded = false; // force reload for the new dataset
+    await loadBdResults(true, dataset);
+  }
 }
 
 async function bdrLoadLifestyle() {
@@ -7787,7 +7827,7 @@ function bdrSearchDebounced() {
 }
 
 function bdrApplyFilter() {
-  const src = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
   const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
   const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
@@ -8137,11 +8177,8 @@ async function bdrReenrichMissing() {
   const btn = document.getElementById('bdrReenrichBtn');
   btn.disabled = true;
 
-  // Operate on the currently-viewed dataset (matching or lifestyle).
-  // Excluded view: don't enrich — those are deliberately not in the matching pipeline.
-  const sourceData = bdrViewMode === 'lifestyle' ? bdrLifestyleData
-                   : bdrViewMode === 'excluded'  ? bdrExcludedData
-                   : bdrMatchingData;
+  // Operate on the currently-viewed table within the active dataset.
+  const sourceData = bdrViewMode === 'excluded' ? bdrExcludedData : bdrMatchingData;
   const allMerged = bdrMergeByHandle(sourceData);
   const needsEnrich = r => !r.engagement_rate || !r.followers;
 
@@ -8258,13 +8295,10 @@ async function bdrReenrichMissing() {
         method: 'POST', headers: getApiHeaders(),
         body: JSON.stringify({ action: 'patch-profile', patches }),
       });
-      // Refresh the dataset we were enriching so updated values surface in the UI
-      if (bdrViewMode === 'lifestyle') {
-        bdrLifestyleLoaded = false;
-        await bdrLoadLifestyle();
-      } else {
-        await loadBdResults(true);
-      }
+      // Refresh the current dataset so updated values surface in the UI
+      _bdrDatasetCache[bdrDataset] = null;
+      bdrLoaded = false;
+      await loadBdResults(true, bdrDataset);
     } catch (e) { console.warn('[bdr-reenrich] patch error:', e.message); }
   }
 
@@ -8328,7 +8362,7 @@ function bdrProfileUrl(r) {
 }
 
 function bdrExportCsv() {
-  const src      = bdrViewMode === 'lifestyle' ? bdrLifestyleData : bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src      = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
   const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
   const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
