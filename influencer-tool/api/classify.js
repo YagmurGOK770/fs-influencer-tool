@@ -37,7 +37,16 @@ City Guide / Editorial — NOT a person. A brand, magazine, or tourism account (
 - If bio says "travel and food" check posts — if most posts are about food, pick a food type
 - If bio mentions "chef" casually but no restaurant, use "Home Cook & Recipe Creator"
 - food_focus=true means food is their PRIMARY content (50%+ of posts). Travel bloggers who visit restaurants are food_focus=false.
-- uk_based=true if bio/location/posts clearly indicate UK (London, Manchester, UK, England, etc.)
+
+UK DETECTION — be strict and conservative:
+- uk_based=true ONLY when there is explicit, unambiguous evidence the creator lives or primarily operates in the UK. Acceptable signals:
+    * location field names a UK place (London, Manchester, Birmingham, Edinburgh, Glasgow, UK, England, Scotland, Wales, Northern Ireland, GB, Britain, British, 🇬🇧, 🏴󠁧󠁢󠁥󠁮󠁧󠁿, etc.)
+    * bio explicitly says "based in {UK place}", "London-based", "UK chef", etc.
+    * posts repeatedly reference UK venues by name (multiple London restaurants, "in Manchester today", etc.)
+- uk_based=false ONLY when location or bio clearly indicates ANOTHER country (United States, Canada, Australia, Dubai, Singapore, NYC, LA, Paris, Berlin, Toronto, Sydney, etc.) OR posts are exclusively non-UK venues.
+- uk_based=null when there is no clear signal either way — DO NOT guess. An English-language food bio without geographic markers is NOT enough.
+- A single passing mention of a UK city in a caption is NOT enough to override an explicit non-UK location.
+
 - active_recently=true if post captions feel current (recent slang, recent venues, active posting cadence implied)
 </rules>
 
@@ -46,12 +55,15 @@ handle: ${p.handle}
 full_name: ${p.full_name || ''}
 platform: ${p.platform}
 followers: ${p.followers || ''}
+location: ${p.location || '(none stored)'}
 bio: ${p.bio || '(no bio)'}
 recent_posts: ${p.post_captions?.length ? p.post_captions.slice(0, 8).join(' | ') : '(no posts)'}
 </profile>
 
 Respond ONLY with this JSON, nothing else:
-{"type": "", "food_focus": true, "uk_based": true, "active_recently": true, "reason": ""}`;
+{"type": "", "food_focus": true, "uk_based": true, "active_recently": true, "reason": ""}
+- uk_based MUST be one of: true, false, or null (use null when unknown, not true)
+- food_focus MUST be one of: true, false, or null`;
 
 // Compute tier from LLM signals + numeric profile data
 function computeTier(llm, profile) {

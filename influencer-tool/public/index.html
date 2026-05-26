@@ -2483,7 +2483,11 @@ function switchMainTab(tab) {
   if (tab === 'coverage')  loadCoverage();
   if (tab === 'enrich')    loadEnrichTab();
   if (tab === 'bdresults') { bdrUpdateModelSel(); loadBdResults(); }
-  if (tab === 'insights')  { if (!bdrLoaded) loadBdResults(); else bdrInsightsRender(); }
+  if (tab === 'insights')  {
+    const afterLoad = () => bdrEnsureBothDatasetsLoaded().then(bdrInsightsRender).catch(() => bdrInsightsRender());
+    if (!bdrLoaded) loadBdResults().then(afterLoad);
+    else afterLoad();
+  }
   if (tab === 'outreach')  loadOutreach();
   localStorage.setItem('activeMainTab', tab);
 }
@@ -4155,7 +4159,10 @@ function closeProfileCard() {
     </div>
 
     <!-- Summary stat cards -->
-    <div id="insStatCards" class="cov-stats" style="margin-bottom:20px"></div>
+    <div id="insStatCards" class="cov-stats" style="margin-bottom:12px"></div>
+
+    <!-- Cross-dataset source split: Food only / Lifestyle only / In both -->
+    <div id="insSourceCards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px"></div>
 
     <!-- Cross-tab breakdown -->
     <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px">
@@ -6530,6 +6537,7 @@ async function bdrClassifyVisible(limit) {
     engagement_rate: m.engagement_rate || 0,
     platform_count:  m.platforms?.length || 1,
     bio:             m.bio || '',
+    location:        m.location || '',
     post_captions:   m.post_captions || [],
   }));
 
@@ -6900,10 +6908,63 @@ function insSetPlatform(plat, el) {
   bdrInsightsRender();
 }
 
+// Ensure both Food and Lifestyle datasets are in _bdrDatasetCache. Lazy-fetches
+// whichever side isn't loaded yet. Called from the Overview tab so we can show
+// a unified view across both DBs.
+async function bdrEnsureBothDatasetsLoaded() {
+  // Make sure the currently-active dataset is reflected in the cache (it might
+  // not be if bdrSetDataset hasn't been called this session).
+  if (!_bdrDatasetCache[bdrDataset]) {
+    _bdrDatasetCache[bdrDataset] = { matching: bdrMatchingData, excluded: bdrExcludedData };
+  }
+  const other = bdrDataset === 'food' ? 'lifestyle' : 'food';
+  if (_bdrDatasetCache[other]) return;
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'brightdata-load', dataset: other }),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    _bdrDatasetCache[other] = { matching: data.matching || [], excluded: data.excluded || [] };
+  } catch (e) {
+    console.warn('[bdr] failed to preload', other, 'dataset:', e.message);
+  }
+}
+
+// Pull every row from all 4 tables, tagging each with its dataset of origin.
+// Used by the Overview to compute a unified, dedup'd view with source labels.
+function bdrGetAllRowsTagged() {
+  // Sync the active dataset into the cache so the snapshot is current.
+  _bdrDatasetCache[bdrDataset] = { matching: bdrMatchingData, excluded: bdrExcludedData };
+  const food = _bdrDatasetCache.food      || { matching: [], excluded: [] };
+  const life = _bdrDatasetCache.lifestyle || { matching: [], excluded: [] };
+  const tagged = [];
+  for (const r of food.matching) tagged.push({ ...r, _dataset: 'food',      _status: 'matching' });
+  for (const r of food.excluded) tagged.push({ ...r, _dataset: 'food',      _status: 'excluded' });
+  for (const r of life.matching) tagged.push({ ...r, _dataset: 'lifestyle', _status: 'matching' });
+  for (const r of life.excluded) tagged.push({ ...r, _dataset: 'lifestyle', _status: 'excluded' });
+  return tagged;
+}
+
 function insGetRows() {
-  const merged = bdrMergeByHandle(bdrMatchingData);
-  if (insPlatform === 'all') return merged;
-  return merged.filter(m => m.platforms.some(p => p.includes(insPlatform)));
+  // Merge across BOTH datasets — one row per handle. Source is decided from the
+  // MATCHING tables only (excluded rows still inform bio/captions/etc. via merge,
+  // but they don't count toward "this creator belongs to dataset X"). Profiles
+  // that exist only in excluded tables (no matching anywhere) are filtered out
+  // of the Overview entirely — Overview is for the kept set.
+  const tagged = bdrGetAllRowsTagged();
+  const merged = bdrMergeByHandle(tagged);
+  const out = [];
+  for (const m of merged) {
+    const inFoodMatching = m._rows?.some(r => r._dataset === 'food'      && r._status === 'matching') || false;
+    const inLifeMatching = m._rows?.some(r => r._dataset === 'lifestyle' && r._status === 'matching') || false;
+    if (!inFoodMatching && !inLifeMatching) continue; // not in any matching table — skip from Overview
+    m.source = inFoodMatching && inLifeMatching ? 'both' : inFoodMatching ? 'food' : 'lifestyle';
+    out.push(m);
+  }
+  if (insPlatform === 'all') return out;
+  return out.filter(m => m.platforms.some(p => p.includes(insPlatform)));
 }
 
 function insTierLabel(tier) {
@@ -6964,8 +7025,12 @@ function bdrInsightsRender() {
   insPreloadOutreach().then(wasLoaded => { if (wasLoaded) bdrInsightsRender(); }).catch(() => {});
   const rows = insGetRows();
 
-  // Update platform pill counts
-  const allM = bdrMergeByHandle(bdrMatchingData);
+  // Update platform pill counts — reflect the unified (food + lifestyle) merged set
+  // so what you see in the pill matches what the rest of the Overview is showing.
+  const allM = (() => {
+    const merged = bdrMergeByHandle(bdrGetAllRowsTagged());
+    return merged;
+  })();
   document.getElementById('insPcAll').textContent = allM.length;
   ['instagram','tiktok','youtube','x'].forEach(p => {
     const id = { instagram:'insPcIg', tiktok:'insPcTt', youtube:'insPcYt', x:'insPcX' }[p];
@@ -6974,6 +7039,7 @@ function bdrInsightsRender() {
 
   if (!rows.length) {
     document.getElementById('insStatCards').innerHTML = '<span style="font-size:13px;color:var(--muted)">No data — run a search and save results first.</span>';
+    document.getElementById('insSourceCards').innerHTML = '';
     document.getElementById('insCrossTable').innerHTML = '';
     document.getElementById('insTopList').innerHTML = '';
     return;
@@ -6995,12 +7061,28 @@ function bdrInsightsRender() {
   const t1count = rows.filter(m => (bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === 1).length;
   const typedCount = rows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'')).length;
   document.getElementById('insStatCards').innerHTML = [
-    { num: rows.length,                    label: 'Creators' },
+    { num: rows.length,                     label: 'Creators (unique)' },
     { num: bdFormatCompact(totalFollowers), label: 'Total followers' },
-    { num: avgEr.toFixed(1) + '%',         label: 'Avg ER%' },
-    { num: t1count,                        label: 'T1 creators' },
-    { num: typedCount,                     label: 'Typed creators' },
+    { num: avgEr.toFixed(1) + '%',          label: 'Avg ER%' },
+    { num: t1count,                         label: 'T1 creators' },
+    { num: typedCount,                      label: 'Typed creators' },
   ].map(s => `<div class="cov-stat"><div class="cov-stat-num" style="font-size:22px">${s.num}</div><div class="cov-stat-label">${s.label}</div></div>`).join('');
+
+  // Cross-dataset split (matching-only): how many kept creators are food-only,
+  // lifestyle-only, or in both DBs' matching tables. Always 3 cards in one row.
+  const foodOnly  = rows.filter(m => m.source === 'food').length;
+  const lifeOnly  = rows.filter(m => m.source === 'lifestyle').length;
+  const inBoth    = rows.filter(m => m.source === 'both').length;
+  document.getElementById('insSourceCards').innerHTML = [
+    { num: foodOnly, label: '🍔 Food only',      color: '#c0392b', bg: '#fdf0ee', border: '#c0392b' },
+    { num: lifeOnly, label: '🌿 Lifestyle only', color: '#059669', bg: '#ecfdf5', border: '#059669' },
+    { num: inBoth,   label: '🍔🌿 In both DBs',  color: '#92400e', bg: '#fef3c7', border: '#f59e0b' },
+  ].map(s =>
+    `<div style="background:${s.bg};border:1px solid ${s.border}40;border-radius:10px;padding:12px 16px;text-align:center">
+       <div style="font-size:22px;font-weight:700;color:${s.color};font-family:var(--mono)">${s.num}</div>
+       <div style="font-size:11px;color:${s.color};opacity:.85;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">${s.label}</div>
+     </div>`
+  ).join('');
 
   // --- Cross-tab breakdown ---
   // Build cell map: { rowKey -> { colKey -> [profiles] } }
@@ -7197,7 +7279,13 @@ function bdrInsightsRender() {
           const rowBg = i % 2 === 0 ? '' : 'background:var(--surface)';
           return `<tr style="font-size:12px;${rowBg}">
             ${checkCell}
-            <td style="padding:6px 8px;font-weight:600">@${m.handle}${platIconLinks}</td>
+            <td style="padding:6px 8px;font-weight:600">@${m.handle}${platIconLinks}${
+              m.source === 'both'
+                ? `<span title="Present in both Food DB and Lifestyle DB" style="display:inline-block;font-size:9px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #f59e0b40;border-radius:100px;padding:1px 6px;margin-left:6px;vertical-align:middle">🍔🌿 Both</span>`
+              : m.source === 'lifestyle'
+                ? `<span title="In Lifestyle DB only" style="display:inline-block;font-size:9px;font-weight:700;background:#ecfdf5;color:#059669;border:1px solid #05966940;border-radius:100px;padding:1px 6px;margin-left:6px;vertical-align:middle">🌿 Lifestyle</span>`
+                : `<span title="In Food DB only" style="display:inline-block;font-size:9px;font-weight:700;background:#fdf0ee;color:#c0392b;border:1px solid #c0392b40;border-radius:100px;padding:1px 6px;margin-left:6px;vertical-align:middle">🍔 Food</span>`
+            }</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
             <td style="padding:6px 8px">${tierSelect}</td>
