@@ -1156,6 +1156,7 @@ function handleLink(handle, platform) {
 }
 
 function applyFilter() {
+  _invalidateDisplayCache();
   const q = searchQ.toLowerCase();
   filtered = allRows.filter(r => {
     if (activeFilter === 'new' && !r.isNew) return false;
@@ -1335,12 +1336,16 @@ function onSortClick(key) {
   renderPagination();
 }
 
+let _colFilterTimer = null;
 function onColFilterInput(key, value) {
   if (!value || !value.trim()) delete colFilters[key];
   else colFilters[key] = value.trim();
   currentPage = 1;
-  renderTable();
-  renderPagination();
+  clearTimeout(_colFilterTimer);
+  _colFilterTimer = setTimeout(() => {
+    renderTable();
+    renderPagination();
+  }, 180);
 }
 
 function matchTextFilter(value, filter) {
@@ -1372,20 +1377,39 @@ function matchNumberFilter(value, filter) {
   return true;
 }
 
+// Memoize getDisplayRows so the renderTable + renderPagination pair (and any
+// other paired callers) don't recompute the full filter+sort twice for the
+// same state. Key is built from a bumping epoch (advanced when filtered is
+// rebuilt) plus colFilters + sortState.
+let _displayEpoch = 0;
+let _displayCacheKey = null;
+let _displayCacheRows = null;
+function _displayKey() {
+  return _displayEpoch + '|' + JSON.stringify(colFilters) + '|' + sortState.key + '|' + sortState.dir;
+}
+function _invalidateDisplayCache() {
+  _displayEpoch++;
+  _displayCacheKey = null;
+  _displayCacheRows = null;
+}
+
 function getDisplayRows() {
+  const key = _displayKey();
+  if (key === _displayCacheKey && _displayCacheRows) return _displayCacheRows;
   let rows = filtered;
   // Apply per-column filters
   const activeKeys = Object.keys(colFilters);
   if (activeKeys.length) {
+    // Pre-resolve column meta so the inner row loop doesn't re-scan COLUMN_META per row.
+    const filterSpecs = activeKeys
+      .map(k => ({ key: k, meta: COLUMN_META.find(c => c.key === k), val: colFilters[k] }))
+      .filter(s => s.meta);
     rows = rows.filter(r => {
-      for (const key of activeKeys) {
-        const meta = COLUMN_META.find(c => c.key === key);
-        if (!meta) continue;
-        const filter = colFilters[key];
-        if (meta.type === 'number') {
-          if (!matchNumberFilter(r[key], filter)) return false;
+      for (const s of filterSpecs) {
+        if (s.meta.type === 'number') {
+          if (!matchNumberFilter(r[s.key], s.val)) return false;
         } else {
-          if (!matchTextFilter(r[key], filter)) return false;
+          if (!matchTextFilter(r[s.key], s.val)) return false;
         }
       }
       return true;
@@ -1403,6 +1427,8 @@ function getDisplayRows() {
       return String(va||'').localeCompare(String(vb||'')) * dir;
     });
   }
+  _displayCacheKey = key;
+  _displayCacheRows = rows;
   return rows;
 }
 
@@ -3217,7 +3243,7 @@ async function _submitCovInfluencers(influencers) {
     document.getElementById('covCsvInput').value = '';
     document.getElementById('covImportArea').style.display = 'none';
     document.getElementById('covShowImportBtn').style.display = 'inline-flex';
-    await loadCoverage();
+    await loadCoverage(true);
   } catch (e) {
     status.textContent = `⚠ ${e.message}`;
   }
@@ -3284,7 +3310,10 @@ function handleCovFile(file) {
   else reader.readAsText(file, 'UTF-8');
 }
 
-async function loadCoverage() {
+let _coverageLoaded = false;
+async function loadCoverage(forceRefresh) {
+  // Coverage doesn't change between tab switches — skip the round-trip if cached.
+  if (_coverageLoaded && !forceRefresh) return;
   document.getElementById('covStats').style.display = 'none';
   document.getElementById('covToolbar').style.display = 'none';
   document.getElementById('covTableWrap').style.display = 'none';
@@ -3298,6 +3327,7 @@ async function loadCoverage() {
     const data = await resp.json();
     if (!resp.ok) { alert('Coverage load failed: ' + data.error); return; }
 
+    _coverageLoaded = true;
     covAllRows = data.rows || [];
 
     if (!covAllRows.length) {
@@ -3604,7 +3634,7 @@ function closeProfileCard() {
         <div class="cl-toolbar-title">Coverage</div>
         <div class="cl-toolbar-sub">Your manual baseline vs what the tool has found — matched by name</div>
       </div>
-      <button class="btn-sm" onclick="loadCoverage()">↻ Refresh</button>
+      <button class="btn-sm" onclick="loadCoverage(true)">↻ Refresh</button>
     </div>
 
     <!-- Import area -->
@@ -4558,7 +4588,12 @@ const BD_CACHE_CHUNK = 'bd_cached_chunk_';
 const BD_CACHE_META  = 'bd_cached_meta';
 const BD_CHUNK_SIZE  = 500;
 
+let _enrichTabLoaded = false;
 function loadEnrichTab() {
+  // Only run the (expensive) restore-from-localStorage + initial render once.
+  // Subsequent tab switches just show the panel — its DOM/state are preserved.
+  if (_enrichTabLoaded) return;
+  _enrichTabLoaded = true;
   // Restore cookie pool (with legacy single-cookie migration)
   let saved = [];
   try { saved = JSON.parse(localStorage.getItem('bd_cookie_pool') || '[]'); } catch (_) {}
@@ -5245,8 +5280,12 @@ function bdApplyFilters() {
     document.getElementById('bdFltCount').textContent = '';
   }
   // Button visibility is managed by bdOnPlatformChange — no need to repeat here
-  // Always update BD Results tab if loaded — runs even when no Enrich search is active
-  if (typeof bdrLoaded !== 'undefined' && bdrLoaded) bdrAutoApply();
+  // Always update BD Results tab if loaded — runs even when no Enrich search is active.
+  // Defer to idle so the Enrich tab paints first; autoApply re-merges 10k+ BDR rows.
+  if (typeof bdrLoaded !== 'undefined' && bdrLoaded) {
+    clearTimeout(window._bdrAutoApplyTimer);
+    window._bdrAutoApplyTimer = setTimeout(bdrAutoApply, 0);
+  }
 }
 
 function bdSetView(mode) {
@@ -5549,19 +5588,9 @@ async function bdDeleteSelectedSearch() {
   }
 }
 
-function renderBdTable(rows) {
-  const wrap  = document.getElementById('bdTableWrap');
-  const empty = document.getElementById('bdEmpty');
-  const tbody = document.getElementById('bdTbody');
-  if (!rows.length) {
-    wrap.style.display = 'none';
-    empty.style.display = '';
-    empty.innerHTML = '<div style="font-size:2rem;margin-bottom:10px">🔍</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No profiles match your filters</div><div style="font-size:12.5px">Try relaxing the follower range or removing location/bio filters.</div>';
-    return;
-  }
-  wrap.style.display = '';
-  empty.style.display = 'none';
-  tbody.innerHTML = rows.map(r => {
+// Cancel token so a fresh renderBdTable call aborts the chunked-append of a prior one.
+let _bdRenderToken = 0;
+function _bdRowHtml(r) {
     const url = r.profileUrl || bdProfileUrlFor(r);
     const isYT = (r.rawPlatform || '').toLowerCase() === 'youtube';
     const avatarImg = (isYT && r.avatarUrl)
@@ -5618,7 +5647,39 @@ function renderBdTable(rows) {
       <td style="font-size:11px;color:var(--muted)">${r.location || r.country || '—'}</td>
       <td><span class="cov-badge found">✓ live</span></td>
     </tr>`;
-  }).join('');
+}
+
+function renderBdTable(rows) {
+  const wrap  = document.getElementById('bdTableWrap');
+  const empty = document.getElementById('bdEmpty');
+  const tbody = document.getElementById('bdTbody');
+  // Bump token — any in-flight chunked-render from a previous call sees this and stops.
+  const myToken = ++_bdRenderToken;
+  if (!rows.length) {
+    wrap.style.display = 'none';
+    empty.style.display = '';
+    empty.innerHTML = '<div style="font-size:2rem;margin-bottom:10px">🔍</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No profiles match your filters</div><div style="font-size:12.5px">Try relaxing the follower range or removing location/bio filters.</div>';
+    tbody.innerHTML = '';
+    return;
+  }
+  wrap.style.display = '';
+  empty.style.display = 'none';
+  // Render the first batch synchronously so the table appears instantly, then
+  // stream the rest in via rAF so the main thread can paint and stay responsive.
+  const FIRST = 100;
+  const CHUNK = 200;
+  tbody.innerHTML = rows.slice(0, FIRST).map(_bdRowHtml).join('');
+  if (rows.length <= FIRST) return;
+  let i = FIRST;
+  const appendNext = () => {
+    if (myToken !== _bdRenderToken) return; // a newer render took over
+    const slice = rows.slice(i, i + CHUNK);
+    if (!slice.length) return;
+    tbody.insertAdjacentHTML('beforeend', slice.map(_bdRowHtml).join(''));
+    i += CHUNK;
+    if (i < rows.length) requestAnimationFrame(appendNext);
+  };
+  requestAnimationFrame(appendNext);
 }
 
 // Format big numbers compactly: 1234 → 1.2K, 1234567 → 1.2M
@@ -6604,7 +6665,7 @@ function bdrMergeByHandle(rows) {
     if (!byHandle.has(key)) byHandle.set(key, []);
     byHandle.get(key).push(r);
   }
-  return Array.from(byHandle.values()).map(platformRows => {
+  const result = Array.from(byHandle.values()).map(platformRows => {
     // Sort by followers desc, then deduplicate by platform key (keep highest-followers row per platform)
     const sorted  = [...platformRows].sort((a,b) => bdParseCompact(b.followers) - bdParseCompact(a.followers));
     const seenPlat = new Set();
@@ -8504,7 +8565,9 @@ let _outreachData = [];        // cached list from DB
 let _outreachLoaded = false;   // true once fetched at least once (even if empty)
 let _outreachEditHandle = null; // null = add mode, string = edit mode
 
-async function loadOutreach() {
+async function loadOutreach(forceRefresh) {
+  // Tab switches re-call this — skip the network round-trip if already loaded.
+  if (_outreachLoaded && !forceRefresh) { outreachRender(); return; }
   document.getElementById('outreachTbody').innerHTML =
     '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted2);font-size:12px">Loading…</td></tr>';
   try {
@@ -8705,7 +8768,7 @@ async function outreachSave() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     outreachCloseForm();
-    await loadOutreach();
+    await loadOutreach(true);
   } catch (e) {
     alert('Save failed: ' + e.message);
   } finally {
@@ -8724,7 +8787,7 @@ async function outreachDelete() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     outreachCloseForm();
-    await loadOutreach();
+    await loadOutreach(true);
   } catch (e) {
     alert('Delete failed: ' + e.message);
   }
