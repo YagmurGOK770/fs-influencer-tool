@@ -201,11 +201,16 @@ async function fetchXOne(handle) {
     { from: user, maxItems: POSTS_PER_PROFILE, queryType: 'Latest' },
   );
   // A `from:<user>` timeline can include native retweets (authored by someone else) — drop them
-  // so we don't attribute other accounts' posts/metrics to this influencer.
+  // so we don't attribute other accounts' posts/metrics to this influencer. Also dedupe by tweet id:
+  // the actor sometimes returns the same tweet twice (pinned/pagination overlap), which would both
+  // skew the median and break the upsert (can't touch the same conflict key twice in one batch).
+  const seenIds = new Set();
   const mine = items.filter(it => {
     const isRetweet = !!it.retweeted_tweet || /^RT @/.test(it.text || '');
     const authorOk = !it.author?.userName || lc(it.author.userName) === lc(user);
-    return !isRetweet && authorOk;
+    if (isRetweet || !authorOk) return false;
+    if (it.id != null) { if (seenIds.has(it.id)) return false; seenIds.add(it.id); }
+    return true;
   });
   // kaito ignores maxItems and returns a full page (~40); enforce the "recent N" contract
   // (queryType 'Latest' is newest-first) to keep cost/consistency in line with other platforms.

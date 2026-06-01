@@ -158,7 +158,12 @@ function loadAttemptedFromLog() {
 
 // ── 2. persist one person's posts + refresh aggregates ──────────────────────
 async function persistPerson(person, posts) {
-  const rows = posts.map(p => postToRow(person.handle, person.platform, p)).filter(r => r.post_id);
+  // Dedupe by post_id — some scrapers (notably the X actor) return the same post twice in one
+  // result set; a single upsert batch can't touch the same (handle,platform,post_id) row twice
+  // ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+  const byId = new Map();
+  for (const p of posts) { const r = postToRow(person.handle, person.platform, p); if (r.post_id) byId.set(r.post_id, r); }
+  const rows = [...byId.values()];
   if (rows.length) {
     for (let i = 0; i < rows.length; i += 300) {
       const { error } = await supabase.from('profile_posts')

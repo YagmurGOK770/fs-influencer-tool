@@ -1250,7 +1250,11 @@ async function handleBdScanPosts(req, res) {
           const h = lc(prof.handle);
           const posts = map.get(h) || [];
           if (supabase && posts.length) {
-            const rows = posts.map(p => postToRow(h, plat, p)).filter(r => r.post_id);
+            // Dedupe by post_id — the X actor can return the same post twice, and a single upsert
+            // batch can't touch the same (handle,platform,post_id) row twice.
+            const byId = new Map();
+            for (const p of posts) { const r = postToRow(h, plat, p); if (r.post_id) byId.set(r.post_id, r); }
+            const rows = [...byId.values()];
             if (rows.length) {
               const { error } = await supabase.from('profile_posts').upsert(rows, { onConflict: 'handle,platform,post_id' });
               if (error) console.log(`[scan-posts] profile_posts upsert ${h}: ${error.message}`);
