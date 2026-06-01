@@ -274,6 +274,7 @@ function iso8601ToSec(d) {
 // supply keys from separate projects via YOUTUBE_API_KEY, YOUTUBE_API_KEY_2/_3/…, or a
 // comma-separated YOUTUBE_API_KEYS. We rotate to the next key when one reports quotaExceeded.
 let _ytKeys = null, _ytIdx = 0;
+const _ytExhausted = new Set();   // key indices that returned quotaExceeded this run — skipped permanently
 function ytKeyPool() {
   if (_ytKeys) return _ytKeys;
   const list = [];
@@ -285,19 +286,24 @@ function ytKeyPool() {
   return _ytKeys;
 }
 
-// GET a YouTube Data API path (without key). Rotates across the key pool on quotaExceeded; throws
-// quotaExceeded only when ALL keys are exhausted (so the caller leaves the handle to retry).
+// GET a YouTube Data API path (without key). Tries each NON-exhausted key (starting from the last
+// good one); a key that reports quota is marked exhausted and skipped for the rest of the run, so an
+// exhausted key never aborts the run while a fresh key still has quota. Throws "quotaExceeded (all
+// keys)" only when every key is out — and propagates non-quota errors (e.g. playlistNotFound) so the
+// per-channel caller can decide. Safe under concurrency: exhaustion is sticky per key index.
 async function ytFetch(pathAndQuery) {
   const keys = ytKeyPool();
   if (!keys.length) throw new Error('YOUTUBE_API_KEY not configured');
-  for (let tries = 0; tries < keys.length; tries++) {
-    const j = await (await fetch(`${YT_API}/${pathAndQuery}&key=${keys[_ytIdx % keys.length]}`)).json();
-    if (!j.error) return j;
+  for (let off = 0; off < keys.length; off++) {
+    const idx = (_ytIdx + off) % keys.length;
+    if (_ytExhausted.has(idx)) continue;
+    const j = await (await fetch(`${YT_API}/${pathAndQuery}&key=${keys[idx]}`)).json();
+    if (!j.error) { _ytIdx = idx; return j; }            // stick with this working key
     const reason = j.error?.errors?.[0]?.reason || j.error.message || '';
-    if (/quota/i.test(reason) && keys.length > 1) { _ytIdx++; continue; } // exhausted this key — try next
-    throw new Error(`YouTube API: ${reason}`);
+    if (/quota/i.test(reason)) { _ytExhausted.add(idx); continue; } // this key is out — try another
+    throw new Error(`YouTube API: ${reason}`);           // non-quota (e.g. playlistNotFound)
   }
-  throw new Error('YouTube API: quotaExceeded'); // every key is out of quota
+  throw new Error('YouTube API: quotaExceeded (all keys)');
 }
 
 // Resolve a YouTube channel to its uploads playlist using profileUrl (preferred) or handle.
@@ -318,9 +324,15 @@ async function resolveYouTubeUploads(handle, profileUrl) {
 
 async function fetchYouTubeOne(handle, profileUrl) {
   if (!ytKeyPool().length) throw new Error('YOUTUBE_API_KEY not configured');
-  const uploads = await resolveYouTubeUploads(handle, profileUrl);
-  if (!uploads) return [];
-  const pl = await ytFetch(`playlistItems?part=contentDetails&maxResults=${POSTS_PER_PROFILE}&playlistId=${uploads}`);
+  let uploads, pl;
+  try {
+    uploads = await resolveYouTubeUploads(handle, profileUrl);
+    if (!uploads) return [];
+    pl = await ytFetch(`playlistItems?part=contentDetails&maxResults=${POSTS_PER_PROFILE}&playlistId=${uploads}`);
+  } catch (e) {
+    if (isHardLimit(e)) throw e;            // all keys out of quota → let the fetcher stop + retry later
+    return [];                              // permanent per-channel issue (playlistNotFound, channel gone…) → no videos, done
+  }
   const ids = (pl.items || []).map(i => i.contentDetails?.videoId).filter(Boolean);
   if (!ids.length) return [];
   const vids = await ytFetch(`videos?part=statistics,contentDetails,snippet&id=${ids.join(',')}`);
