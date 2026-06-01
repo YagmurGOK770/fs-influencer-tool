@@ -3524,6 +3524,74 @@ function closeProfileCard() {
   if (ss) ss.src = '';
 }
 
+// ── Recent-posts modal (rich per-post data from profile_posts) ──────────────
+async function bdrViewPosts(handle, platform) {
+  const h = (handle || '').replace(/^@/, '');
+  document.getElementById('pmTitle').textContent = '@' + h;
+  document.getElementById('pmSub').textContent = 'Loading recent posts…';
+  document.getElementById('pmBody').innerHTML = '<div style="padding:48px;text-align:center;color:#9ca3af;font-size:13px">Loading…</div>';
+  document.getElementById('postsModal').style.display = 'flex';
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'load-posts', handle: h, platform: platform || undefined }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error || resp.statusText);
+    renderPostsModal(h, data.posts || []);
+  } catch (e) {
+    document.getElementById('pmSub').textContent = '';
+    document.getElementById('pmBody').innerHTML =
+      `<div style="padding:48px;text-align:center;color:#dc2626;font-size:13px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+function closePostsModal() {
+  document.getElementById('postsModal').style.display = 'none';
+  document.getElementById('pmBody').innerHTML = '';
+}
+
+function renderPostsModal(handle, posts) {
+  const sub  = document.getElementById('pmSub');
+  const body = document.getElementById('pmBody');
+  if (!posts.length) {
+    sub.textContent = '';
+    body.innerHTML = '<div style="padding:48px;text-align:center;color:#9ca3af;font-size:13px;line-height:1.6">No enriched posts yet for this creator.<br>Run <strong>Scan recent posts</strong> (or the batch enrichment) to populate them.</div>';
+    return;
+  }
+  const plat = posts[0].platform || '';
+  const avg = (k) => { const v = posts.map(p => p[k]).filter(x => x != null); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null; };
+  const avgV = avg('views'), avgL = avg('likes');
+  sub.textContent = `${plat} · ${posts.length} posts`
+    + (avgV != null ? ` · avg ▶ ${bdFormatCompact(avgV)}` : '')
+    + (avgL != null ? ` · avg ♥ ${bdFormatCompact(avgL)}` : '');
+
+  const stat = (icon, val) => val == null ? '' :
+    `<span style="display:inline-flex;align-items:center;gap:2px;margin-right:7px;white-space:nowrap">${icon} ${bdFormatCompact(Number(val))}</span>`;
+
+  body.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">' +
+    posts.map(p => {
+      const shortBadge = p.is_short ? '<span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.7);color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:100px">SHORT</span>' : '';
+      const thumb = p.thumbnail_url
+        ? `<div style="position:relative;width:100%;aspect-ratio:1/1;background:#000;overflow:hidden"><img src="${p.thumbnail_url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">${shortBadge}</div>`
+        : `<div style="position:relative;width:100%;aspect-ratio:1/1;background:#eef0f3;display:flex;align-items:center;justify-content:center;color:#c5cad1;font-size:26px">${p.type === 'tweet' ? '𝕏' : '▶'}${shortBadge}</div>`;
+      const date = p.posted_at ? new Date(p.posted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
+      const cap = (p.caption || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const capShort = cap.slice(0, 90) + (cap.length > 90 ? '…' : '');
+      const stats = stat('▶', p.views) + stat('♥', p.likes) + stat('💬', p.comments) + stat('🔖', p.saves) + stat('↗', p.shares);
+      const url = (p.post_url || '').replace(/'/g, '%27');
+      const clickable = url ? `onclick="window.open('${url}','_blank','noopener')" style="cursor:pointer;` : 'style="';
+      return `<div ${clickable}background:#fff;border:1px solid #e5e7eb;border-radius:9px;overflow:hidden;display:flex;flex-direction:column">
+        ${thumb}
+        <div style="padding:7px 8px;display:flex;flex-direction:column;gap:4px;min-height:0">
+          <div style="font-size:10.5px;color:#374151;font-weight:600;display:flex;flex-wrap:wrap">${stats || '<span style="color:#c5cad1;font-weight:400">no metrics</span>'}</div>
+          <div style="font-size:10px;color:#9ca3af">${date}</div>
+          <div style="font-size:10.5px;color:#4b5563;line-height:1.35">${capShort}</div>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+}
+
 </script>
 <!-- Profile card modal -->
 <div id="profileCardModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9998;align-items:center;justify-content:center;padding:1rem" onclick="if(event.target===this)closeProfileCard()">
@@ -3550,6 +3618,20 @@ function closeProfileCard() {
       </div>
       <div id="pcDetails" style="flex:1;overflow-y:auto;padding:16px;min-width:0"></div>
     </div>
+  </div>
+</div>
+
+<!-- Recent posts modal (per-post engagement from profile_posts) -->
+<div id="postsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9998;align-items:center;justify-content:center;padding:1rem" onclick="if(event.target===this)closePostsModal()">
+  <div style="background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.25);width:920px;max-width:96vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:14px 18px;border-bottom:1px solid #e5e7eb;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div>
+        <div id="pmTitle" style="font-weight:700;font-size:15px;color:#111"></div>
+        <div id="pmSub" style="font-size:11px;color:#9ca3af;margin-top:2px"></div>
+      </div>
+      <button onclick="closePostsModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:#9ca3af;line-height:1;padding:0 4px">×</button>
+    </div>
+    <div id="pmBody" style="flex:1;overflow-y:auto;padding:14px;background:#f9fafb"></div>
   </div>
 </div>
 
@@ -8144,9 +8226,12 @@ function bdrRenderTable(rows, _skipPageSetup) {
     const postsRowId = `bdrp-${(m.handle||'').replace(/[^a-z0-9]/gi,'_')}`;
     const postsBtnId = postsRowId + '-btn';
 
-    const postsCell = captions.length
-      ? `<button id="${postsBtnId}" onclick="bdrTogglePosts('${postsRowId}')" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:100px;background:var(--white);cursor:pointer;color:var(--text);white-space:nowrap">📝 ${captions.length} ▾</button>`
-      : '<span style="color:var(--muted2)">—</span>';
+    const captionsBtn = captions.length
+      ? `<button id="${postsBtnId}" onclick="bdrTogglePosts('${postsRowId}')" title="Show post captions inline" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:100px;background:var(--white);cursor:pointer;color:var(--text);white-space:nowrap">📝 ${captions.length} ▾</button>`
+      : '';
+    // Opens the rich posts modal (full per-post engagement from profile_posts)
+    const viewPostsBtn = `<button onclick="bdrViewPosts('${safeHandle}','${m.platforms[0]||''}')" title="View recent posts with engagement, thumbnails &amp; links" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:100px;background:var(--white);cursor:pointer;color:var(--text);white-space:nowrap;margin-left:4px">🖼 Posts</button>`;
+    const postsCell = (captionsBtn + viewPostsBtn) || '<span style="color:var(--muted2)">—</span>';
 
     const postsExpandHtml = captions.length ? `
     <tr id="${postsRowId}" style="display:none">
