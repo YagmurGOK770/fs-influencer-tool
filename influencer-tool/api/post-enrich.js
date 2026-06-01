@@ -270,15 +270,38 @@ function iso8601ToSec(d) {
   return (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0);
 }
 
-async function ytJson(url) {
-  const r = await fetch(url);
-  const j = await r.json();
-  if (j.error) throw new Error(`YouTube API: ${j.error?.errors?.[0]?.reason || j.error.message}`);
-  return j;
+// YouTube Data API quota is PER GCP PROJECT (10k units/day). To get more throughput in one day,
+// supply keys from separate projects via YOUTUBE_API_KEY, YOUTUBE_API_KEY_2/_3/…, or a
+// comma-separated YOUTUBE_API_KEYS. We rotate to the next key when one reports quotaExceeded.
+let _ytKeys = null, _ytIdx = 0;
+function ytKeyPool() {
+  if (_ytKeys) return _ytKeys;
+  const list = [];
+  for (const k of ['YOUTUBE_API_KEY', 'YOUTUBE_API_KEY_2', 'YOUTUBE_API_KEY_3', 'YOUTUBE_API_KEY_4', 'YOUTUBE_API_KEY_5']) {
+    if (process.env[k]) list.push(process.env[k].trim());
+  }
+  if (process.env.YOUTUBE_API_KEYS) list.push(...process.env.YOUTUBE_API_KEYS.split(',').map(s => s.trim()).filter(Boolean));
+  _ytKeys = [...new Set(list.filter(Boolean))];
+  return _ytKeys;
+}
+
+// GET a YouTube Data API path (without key). Rotates across the key pool on quotaExceeded; throws
+// quotaExceeded only when ALL keys are exhausted (so the caller leaves the handle to retry).
+async function ytFetch(pathAndQuery) {
+  const keys = ytKeyPool();
+  if (!keys.length) throw new Error('YOUTUBE_API_KEY not configured');
+  for (let tries = 0; tries < keys.length; tries++) {
+    const j = await (await fetch(`${YT_API}/${pathAndQuery}&key=${keys[_ytIdx % keys.length]}`)).json();
+    if (!j.error) return j;
+    const reason = j.error?.errors?.[0]?.reason || j.error.message || '';
+    if (/quota/i.test(reason) && keys.length > 1) { _ytIdx++; continue; } // exhausted this key — try next
+    throw new Error(`YouTube API: ${reason}`);
+  }
+  throw new Error('YouTube API: quotaExceeded'); // every key is out of quota
 }
 
 // Resolve a YouTube channel to its uploads playlist using profileUrl (preferred) or handle.
-async function resolveYouTubeUploads(handle, profileUrl, key) {
+async function resolveYouTubeUploads(handle, profileUrl) {
   let qs = null;
   const url = String(profileUrl || '');
   const chanMatch = url.match(/\/channel\/(UC[\w-]+)/);
@@ -289,19 +312,18 @@ async function resolveYouTubeUploads(handle, profileUrl, key) {
     if (h) qs = `forHandle=${encodeURIComponent(h)}`;
   }
   if (!qs) return null;
-  const ch = await ytJson(`${YT_API}/channels?part=contentDetails&${qs}&key=${key}`);
+  const ch = await ytFetch(`channels?part=contentDetails&${qs}`);
   return ch.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || null;
 }
 
 async function fetchYouTubeOne(handle, profileUrl) {
-  const key = process.env.YOUTUBE_API_KEY;
-  if (!key) throw new Error('YOUTUBE_API_KEY not configured');
-  const uploads = await resolveYouTubeUploads(handle, profileUrl, key);
+  if (!ytKeyPool().length) throw new Error('YOUTUBE_API_KEY not configured');
+  const uploads = await resolveYouTubeUploads(handle, profileUrl);
   if (!uploads) return [];
-  const pl = await ytJson(`${YT_API}/playlistItems?part=contentDetails&maxResults=${POSTS_PER_PROFILE}&playlistId=${uploads}&key=${key}`);
+  const pl = await ytFetch(`playlistItems?part=contentDetails&maxResults=${POSTS_PER_PROFILE}&playlistId=${uploads}`);
   const ids = (pl.items || []).map(i => i.contentDetails?.videoId).filter(Boolean);
   if (!ids.length) return [];
-  const vids = await ytJson(`${YT_API}/videos?part=statistics,contentDetails,snippet&id=${ids.join(',')}&key=${key}`);
+  const vids = await ytFetch(`videos?part=statistics,contentDetails,snippet&id=${ids.join(',')}`);
   return (vids.items || []).map(v => ({
     postId: v.id,
     url: `https://www.youtube.com/watch?v=${v.id}`,
