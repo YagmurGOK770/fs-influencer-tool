@@ -18,6 +18,10 @@ const YT_API = 'https://www.googleapis.com/youtube/v3';
 
 export const POSTS_PER_PROFILE = 30;
 
+// Short-form video threshold. YouTube Shorts max out at 3 min; the Data API has no isShort
+// field, so we derive it from duration. Also flags TikToks / IG reels of similar length.
+const SHORT_MAX_SEC = 180;
+
 const num = (v) => {
   if (v == null || v === '') return null;
   const n = Number(v);
@@ -348,6 +352,7 @@ export function postToRow(handle, platform, post) {
     tagged_users: post.taggedUsers,
     music: post.music,
     duration_sec: post.durationSec,
+    is_short: post.durationSec != null && post.durationSec <= SHORT_MAX_SEC,
     thumbnail_url: post.thumbnailUrl,
     media_urls: post.mediaUrls,
     raw: post.raw,

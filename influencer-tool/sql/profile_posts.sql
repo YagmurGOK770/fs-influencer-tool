@@ -24,10 +24,14 @@ create table if not exists profile_posts (
   duration_sec  integer,                         -- video/tiktok/youtube
   thumbnail_url text,
   media_urls    jsonb,
+  is_short      boolean,                          -- short-form video (duration <= 180s): YouTube Shorts, short TikToks/reels
   raw           jsonb,                            -- full source payload, future-proofing
   fetched_at    timestamptz default now(),
   unique (handle, platform, post_id)
 );
+
+-- For tables created before is_short was added:
+alter table profile_posts add column if not exists is_short boolean;
 
 create index if not exists profile_posts_handle_platform_idx
   on profile_posts (handle, platform);
