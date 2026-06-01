@@ -3749,17 +3749,6 @@ function closeProfileCard() {
           onchange="bdSearchStartSlot = Number(this.value)"></select>
         <button class="btn-sm" onclick="bdClear()" style="white-space:nowrap">✕ Clear</button>
       </div>
-      <!-- Instagram session cookie pool — rotate between accounts to spread API load -->
-      <div id="bdIgCookieSection" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Session Cookies</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-size:11px;color:var(--muted)">Keywords rotate between accounts · DevTools (F12) → Network → instagram.com → Cookie header</span>
-            <button class="btn-sm" id="bdAddCookieBtn" onclick="bdAddCookieSlot()">+ Add account</button>
-          </div>
-        </div>
-        <div id="bdCookiePool" style="display:flex;flex-direction:column;gap:6px"></div>
-      </div>
       <!-- TikTok session cookie (single — used via BrightData Web Unlocker custom headers) -->
       <div id="bdTtCookieSection" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -3769,17 +3758,6 @@ function closeProfileCard() {
         <textarea id="bdTtCookie" rows="2" placeholder="Paste your TikTok cookie string here (sessionid=...; tt_csrf_token=...; ...)"
           style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:monospace;resize:vertical"
           oninput="localStorage.setItem('tt_session_cookie', this.value.trim())"></textarea>
-      </div>
-      <!-- X / Twitter session cookies (multi-account pool, same pattern as Instagram) -->
-      <div id="bdXCookieSection" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">X / Twitter Session Cookies</label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-size:11px;color:var(--muted)">Keywords rotate between accounts · DevTools (F12) → Network → x.com → Cookie header · Must include auth_token= and ct0=</span>
-            <button class="btn-sm" id="bdXAddCookieBtn" onclick="bdXAddCookieSlot()">+ Add account</button>
-          </div>
-        </div>
-        <div id="bdXCookiePool" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
     </div>
 
@@ -3855,10 +3833,6 @@ function closeProfileCard() {
           <button onclick="bdBulkToggleBadges('bdTbody', this)" type="button"
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
             ⊞ Expand all
-          </button>
-          <button id="bdReenrichBtn" onclick="bdReenrichMissing()" type="button"
-            style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
-            🔄 Re-enrich missing
           </button>
           <button id="bdYtEnrichBtn" onclick="bdEnrichYoutube()" type="button" style="display:none;font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
             🎬 Enrich YT channels
@@ -4406,6 +4380,7 @@ function bdMakeCookieSlot(idx, value) {
 
 function bdRenderCookiePool(values) {
   const pool = document.getElementById('bdCookiePool');
+  if (!pool) return;
   pool.innerHTML = '';
   (values.length ? values : ['']).forEach((v, i) => pool.appendChild(bdMakeCookieSlot(i, v)));
   bdUpdateCookieSlotUI();
@@ -4519,6 +4494,7 @@ function bdXMakeCookieSlot(idx, value) {
 
 function bdXRenderCookiePool(values) {
   const pool = document.getElementById('bdXCookiePool');
+  if (!pool) return;
   pool.innerHTML = '';
   const list = values.length ? values : [''];
   list.forEach((v, i) => pool.appendChild(bdXMakeCookieSlot(i, v)));
@@ -4568,20 +4544,15 @@ async function bdCountdown(seconds, msg) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function bdOnPlatformChange(platform) {
-  const igSection    = document.getElementById('bdIgCookieSection');
   const ttSection    = document.getElementById('bdTtCookieSection');
-  const xSection     = document.getElementById('bdXCookieSection');
   const startSel     = document.getElementById('bdStartSlotSel');
   const scanBtn      = document.getElementById('bdScanPostsBtn');
-  const reenrichBtn  = document.getElementById('bdReenrichBtn');
   const ytEnrichBtn  = document.getElementById('bdYtEnrichBtn');
-  if (igSection)   igSection.style.display   = platform === 'instagram' ? '' : 'none';
-  if (ttSection)   ttSection.style.display   = platform === 'tiktok'    ? '' : 'none';
-  if (xSection)    xSection.style.display    = 'none'; // X uses Apify — no cookie needed
-  if (startSel)    startSel.style.display    = platform === 'instagram' ? '' : 'none';
-  if (scanBtn)     scanBtn.style.display     = platform === 'instagram' ? '' : 'none';
-  if (reenrichBtn) reenrichBtn.style.display = platform === 'instagram' || platform === 'tiktok' ? '' : 'none';
-  if (ytEnrichBtn) ytEnrichBtn.style.display = platform === 'youtube'   ? '' : 'none';
+  if (ttSection)   ttSection.style.display   = platform === 'tiktok'  ? '' : 'none';
+  if (startSel)    startSel.style.display    = 'none'; // multi-account rotation retired
+  // Scan recent posts works for every platform now (Apify for IG/TikTok/X, Data API for YouTube)
+  if (scanBtn)     scanBtn.style.display     = '';
+  if (ytEnrichBtn) ytEnrichBtn.style.display = platform === 'youtube' ? '' : 'none';
 }
 
 const BD_CACHE_CHUNK = 'bd_cached_chunk_';
@@ -5895,12 +5866,6 @@ async function runBdSearch() {
         bdMarkCookieSlot(poolEntry.slotIdx, 'ready');
       }
 
-      // Inter-keyword pause only for Instagram with a single account — YouTube/TikTok/X use
-      // BrightData proxy which handles sessions transparently, so no pause needed there.
-      if (bdPlatform === 'instagram' && cookiePool.length <= 1 && i < keywords.length - 1) {
-        await bdCountdown(45, 'Pausing before next keyword to protect session (add more accounts to skip this)');
-      }
-
       // Merge into the running map — dedupe by lowercase handle, accumulate matchedKeywords
       for (const p of profiles) {
         const key = (p.handle || '').toLowerCase();
@@ -6122,73 +6087,6 @@ function bdExportJSON() {
   setBdStatus(`Exported ${bdAllResults.length} profiles to JSON.`, 'green');
 }
 
-async function bdReenrichMissing() {
-  const missing = bdAllResults.filter(p => !p.followers || p.followers === '');
-  if (!missing.length) { setBdStatus('All profiles already have follower data.', 'green'); return; }
-
-  const sessionCookies = bdGetCookiePoolAll().map(p => p.cookie);
-  if (!sessionCookies.length) { setBdStatus('Add at least one Instagram session cookie first.', 'red'); return; }
-
-  const btn = document.getElementById('bdReenrichBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Enriching…';
-  setBdStatus(`Re-enriching ${missing.length} profiles with missing data…`, '');
-
-  try {
-    const startResp = await fetch('/api/verify', {
-      method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'bd-reenrich', profiles: missing.map(p => ({ handle: p.handle, pk: p.pk })), sessionCookies }),
-    });
-    const startData = await startResp.json();
-    if (!startResp.ok || startData.error) throw new Error(startData.error || startResp.statusText);
-    const { scanId } = startData;
-
-    while (true) {
-      await new Promise(r => setTimeout(r, 1000));
-      const sResp = await fetch('/api/verify', {
-        method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ action: 'bd-search-status', searchId: scanId }),
-      });
-      const status = await sResp.json();
-      if (status.phase === 'enriching') {
-        btn.textContent = `⏳ ${status.current}/${status.total}`;
-        setBdStatus(`Re-enriching… ${status.current}/${status.total} done`, '');
-      }
-      if (status.phase === 'error') throw new Error(status.error);
-      if (status.phase === 'complete') {
-        if (status.blocked) {
-          document.getElementById('bdEnrichBlockedWarn').style.display = '';
-          setBdStatus('Session blocked during re-enrich — wait 1–2 hours and try again with a fresh cookie.', 'red');
-          break;
-        }
-        const byHandle = new Map(status.results.map(r => [r.handle.toLowerCase(), r]));
-        let enrichedCount = 0;
-        bdAllResults = bdAllResults.map(p => {
-          const r = byHandle.get((p.handle || '').toLowerCase());
-          if (!r || !r.enriched) return p;
-          enrichedCount++;
-          // Recalculate engagement rate with the now-known follower count
-          const followers = Number(r.followers) || 0;
-          const engagementRate = followers > 0
-            ? Math.round(((p.avgLikes + p.avgComments) / followers) * 10000) / 100
-            : p.engagementRate || 0;
-          return { ...p, ...r, engagementRate };
-        });
-        document.getElementById('bdEnrichBlockedWarn').style.display = 'none';
-        setBdStatus(`Re-enriched ${enrichedCount}/${missing.length} profiles. ${missing.length - enrichedCount} still missing (try again later).`, enrichedCount > 0 ? 'green' : 'red');
-        bdApplyFilters();
-        bdSaveCachedResults(null, bdPlatform);
-        break;
-      }
-    }
-  } catch (e) {
-    setBdStatus(`Re-enrich error: ${e.message}`, 'red');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '🔄 Re-enrich missing';
-  }
-}
-
 async function bdEnrichYoutube() {
   if (!bdAllResults.length) return;
   const profiles = bdAllResults.map(p => ({ handle: p.handle, profileUrl: p.profileUrl })).filter(p => p.handle);
@@ -6237,31 +6135,30 @@ async function bdEnrichYoutube() {
 async function bdScanPosts() {
   if (!bdAllResults.length) return;
 
-  const isTikTok = bdAllResults.every(p => p.rawPlatform === 'tiktok');
-  const sessionCookies = bdGetCookiePoolAll().map(p => p.cookie);
-  if (!isTikTok && !sessionCookies.length) {
-    setBdStatus('Add at least one Instagram session cookie first.', 'red'); return;
-  }
-
   const btn = document.getElementById('bdScanPostsBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Scanning…';
 
-  // For TikTok: include handle + rawPlatform (no pk needed — Apify uses handle)
-  // For Instagram: include handle + pk, filter out profiles missing pk
-  const toScan = isTikTok
-    ? bdAllResults.map(p => ({ handle: p.handle, rawPlatform: 'tiktok' }))
-    : bdAllResults.map(p => ({ handle: p.handle, pk: p.pk })).filter(p => p.pk);
-
-  if (!toScan.length) {
-    setBdStatus('No profiles with Instagram user IDs found — run a fresh search first.', 'red');
-    btn.disabled = false; btn.textContent = '📝 Scan recent posts'; return;
-  }
+  // No session cookies / pk needed — enrichment goes through Apify (IG/TikTok/X) and the
+  // YouTube Data API. Send handle + platform + profile URL so the server can route + resolve.
+  const toScan = bdAllResults.map(p => ({
+    handle: p.handle,
+    rawPlatform: p.rawPlatform || bdPlatform,
+    profileUrl: p.profileUrl || p.profile_url || null,
+    followers: p.followers,
+  }));
 
   try {
     const startResp = await fetch('/api/verify', {
       method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'bd-scan-posts', profiles: toScan, sessionCookies }),
+      body: JSON.stringify({
+        action: 'bd-scan-posts',
+        profiles: toScan,
+        platform: bdPlatform,
+        // No dataset/target: Search-tab results aren't bound to a specific source table
+        // (bdrDataset belongs to the separate Results tab). Posts still persist to profile_posts;
+        // source-row aggregate writeback is handled by the batch enrichment job.
+      }),
     });
     const startData = await startResp.json();
     if (!startResp.ok || startData.error) throw new Error(startData.error || startResp.statusText);
@@ -8341,11 +8238,8 @@ async function bdrReenrichMissing() {
       return [{ handle: m.handle, profileUrl }];
     });
 
-  const igProfiles = sourceData
-    .filter(r => (r.platform||'').includes('instagram') && needsEnrich(r) && r.pk)
-    .map(r => ({ handle: r.handle, pk: r.pk }));
-
-  const total = ytProfiles.length + igProfiles.length;
+  // Instagram follower backfill via cookies has been retired; YouTube uses the free Data API.
+  const total = ytProfiles.length;
   if (!total) {
     btn.disabled = false;
     btn.textContent = '✓ Nothing missing';
@@ -8389,52 +8283,6 @@ async function bdrReenrichMissing() {
         }
       }
     } catch (e) { console.warn('[bdr-reenrich] YT error:', e.message); }
-  }
-
-  // --- Instagram (needs session cookie) ---
-  if (igProfiles.length) {
-    const sessionCookies = (() => {
-      try { return JSON.parse(localStorage.getItem('bd_cookie_pool') || '[]').filter(Boolean); } catch (_) { return []; }
-    })();
-    if (!sessionCookies.length) {
-      console.warn('[bdr-reenrich] No Instagram session cookie — skipping IG profiles');
-    } else {
-      try {
-        const resp = await fetch('/api/verify', {
-          method: 'POST', headers: getApiHeaders(),
-          body: JSON.stringify({ action: 'bd-reenrich', profiles: igProfiles, sessionCookies }),
-        });
-        if (resp.ok) {
-          const { scanId } = await resp.json();
-          // Poll for completion
-          for (let attempt = 0; attempt < 60; attempt++) {
-            await new Promise(r => setTimeout(r, 3000));
-            const poll = await fetch('/api/verify', {
-              method: 'POST', headers: getApiHeaders(),
-              body: JSON.stringify({ action: 'bd-search-status', searchId: scanId }),
-            });
-            if (!poll.ok) break;
-            const st = await poll.json();
-            if (st.phase === 'complete') {
-              for (const e of (st.results || [])) {
-                if (!e.enriched) { done++; continue; }
-                patches.push({
-                  handle:     e.handle,
-                  platform:   'instagram',
-                  ...(e.followers ? { followers:  String(e.followers) } : {}),
-                  ...(e.fullName  ? { full_name:  e.fullName }          : {}),
-                  ...(e.bio       ? { bio:        e.bio }               : {}),
-                  ...(e.postCount ? { post_count: String(e.postCount) } : {}),
-                });
-                done++;
-                btn.textContent = `⏳ Enriching ${done}/${total}…`;
-              }
-              break;
-            }
-          }
-        }
-      } catch (e) { console.warn('[bdr-reenrich] IG error:', e.message); }
-    }
   }
 
   // --- Patch DB ---

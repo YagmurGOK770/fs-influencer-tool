@@ -8,6 +8,22 @@
 import { checkAuth } from './_auth.js';
 import { createClient } from '@supabase/supabase-js';
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
+import { fetchPostsForPlatform, postToRow, computeAggregates, runApifyActor } from './post-enrich.js';
+
+// Lazy Supabase client (service key) for server-side persistence of scanned posts.
+let _sb = null;
+function getSupabase() {
+  if (_sb) return _sb;
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  _sb = createClient(url, key);
+  return _sb;
+}
+const avgOf = (posts, key) => {
+  const v = posts.map(p => p[key]).filter(x => x != null && x >= 0);
+  return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null;
+};
 
 // ── BrightData Web Unlocker ────────────────────────────────────────────────
 // Routes a request through BrightData Web Unlocker and returns the response text.
@@ -387,9 +403,6 @@ export default async function handler(req, res) {
   if ((req.body || {}).action === 'bd-scan-posts') {
     return handleBdScanPosts(req, res);
   }
-  if ((req.body || {}).action === 'bd-reenrich') {
-    return handleBdReenrich(req, res);
-  }
   if ((req.body || {}).action === 'yt-enrich') {
     return handleYtEnrich(req, res);
   }
@@ -460,312 +473,63 @@ function updateProgress(searchId, patch) {
   searchProgress.set(searchId, { ...prev, ...patch, lastUpdate: Date.now() });
 }
 
-async function igHashtagSearch(keyword, sessionCookies, onProgress = () => {}) {
+async function igHashtagSearch(keyword, _sessionCookies, onProgress = () => {}) {
+  // Migrated off the multi-account cookie pool: discovery now uses the Apify Instagram
+  // scraper in hashtag mode. Follower counts are NOT fetched at discovery time (cheaper) —
+  // they get filled later by the enrichment / verify steps. Returns the same profile shape
+  // the BD Results UI already expects.
   const tag = keyword.replace(/^#/, '').toLowerCase().trim();
+  const RESULTS_LIMIT = 200; // hashtag posts to pull per search
 
-  // Accept a single cookie string or an array; filter empties
-  const cookies = (Array.isArray(sessionCookies) ? sessionCookies : [sessionCookies]).filter(Boolean);
-  if (!cookies.length) {
-    throw new Error('Instagram session cookie required. Paste your sessionid= cookie in the search panel.');
-  }
+  onProgress({ phase: 'searching', current: 0, total: RESULTS_LIMIT });
+  const items = await runApifyActor('apify/instagram-scraper', {
+    directUrls: [`https://www.instagram.com/explore/tags/${encodeURIComponent(tag)}/`],
+    resultsType: 'posts',
+    resultsLimit: RESULTS_LIMIT,
+    addParentData: false,
+  }, { onProgress: ({ itemCount }) => onProgress({ phase: 'searching', current: Math.min(itemCount, RESULTS_LIMIT), total: RESULTS_LIMIT }) });
 
-  const PAGES_PER_COOKIE = 3; // rotate to next account every N pagination pages
-  const MAX_PAGES        = 15;
-
-  function buildCookieHeader(raw) {
-    return raw.includes('sessionid=') ? raw : `sessionid=${raw}`;
-  }
-  function csrfFor(raw) {
-    const m = buildCookieHeader(raw).match(/csrftoken=([^;]+)/);
-    return m ? m[1].trim() : '';
-  }
-  // Which cookie to use for a given pagination page (1-based)
-  function cookieForPage(pageNum) {
-    return cookies[Math.floor((pageNum - 1) / PAGES_PER_COOKIE) % cookies.length];
-  }
-  // Which cookie to use for the i-th profile enrichment (0-based)
-  function cookieForEnrich(i) {
-    return cookies[i % cookies.length];
-  }
-
-  // Human-like jittered delay: returns a Promise that resolves after random ms in [minMs, maxMs]
-  const sleep = (minMs, maxMs) => new Promise(r => setTimeout(r, minMs + Math.random() * (maxMs - minMs)));
-
-  // Routing priority for cookie-authenticated calls:
-  //   1. BrightData residential proxy (BRIGHTDATA_PROXY_URL set) — raw TCP tunnel, cookies pass through intact
-  //   2. Direct fetch from local IP (fallback)
-  // NOTE: Web Unlocker is intentionally skipped here — it manages its own sessions and strips/overrides
-  // our cookie header, causing Instagram to see an unauthenticated request and return HTML.
-  const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
-  const proxyDispatcher = proxyUrl ? new ProxyAgent({
-    uri: proxyUrl,
-    requestTls: { rejectUnauthorized: false },
-    proxyTls:   { rejectUnauthorized: false },
-  }) : null;
-
-  if (proxyDispatcher) console.log('[ig-search] routing via BrightData residential proxy');
-  else                 console.log('[ig-search] routing direct (no proxy configured)');
-
-  let callCount = 0;
-
-  // Build request headers for a specific raw cookie string
-  const igHeaders = (cookieRaw, extraHeaders = {}) => ({
-    'x-ig-app-id': '936619743392459',
-    'x-csrftoken': csrfFor(cookieRaw),
-    'x-requested-with': 'XMLHttpRequest',
-    'accept': 'application/json',
-    'accept-language': 'en-US,en;q=0.9',
-    'referer': 'https://www.instagram.com/explore/tags/' + tag + '/',
-    'origin': 'https://www.instagram.com',
-    'sec-fetch-site': 'same-origin',
-    'sec-fetch-mode': 'cors',
-    'sec-fetch-dest': 'empty',
-    'cookie': buildCookieHeader(cookieRaw),
-    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    ...extraHeaders,
-  });
-
-  // opts.cookieRaw overrides which account's cookie is used for this call
-  async function igDirect(url, opts = {}) {
-    callCount++;
-    const cookieRaw = opts.cookieRaw || cookies[0];
-    const headers = igHeaders(cookieRaw, opts.headers || {});
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 30000);
-    const fetcher = proxyDispatcher ? undiciFetch : fetch;
-    try {
-      return await fetcher(url, {
-        method: opts.method || 'GET',
-        body: opts.body,
-        headers,
-        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
-        signal: ctrl.signal,
-      });
-    } finally { clearTimeout(t); }
-  }
-
-  // Step 1: fetch hashtag top posts via web_info
-  // Verified working: returns data.top.sections[].layout_content.medias[].media.user
-  // user fields: pk, username, full_name, is_verified (no follower_count here)
-  onProgress({ phase: 'fetching-page', page: 1, current: 0, total: 0, cookieIdx: 0 });
-  const infoResp = await igDirect(`https://www.instagram.com/api/v1/tags/web_info/?tag_name=${encodeURIComponent(tag)}`, { cookieRaw: cookieForPage(1) });
-  const infoText = await infoResp.text();
-  console.log(`[ig-search] web_info status=${infoResp.status} len=${infoText.length}`);
-
-  if (!infoResp.ok) throw new Error(`Instagram HTTP ${infoResp.status} — cookie may be expired`);
-  if (!infoText.trim()) throw new Error(`Instagram returned empty body — cookie may be invalid`);
-
-  let infoJson;
-  try { infoJson = JSON.parse(infoText); } catch (_) {
-    // Instagram serving HTML = IP/session blocked. Give a clear actionable message.
-    throw new Error(`Instagram is blocking requests from this session — wait 1–2 hours, refresh your session cookie, and try again`);
-  }
-
-  // Extract every media object (with user) from a section's layout_content.
-  // layout_content uses varying keys (medias, fill_items, one_by_two_item, etc.)
-  function extractMedias(layoutContent) {
-    const out = [];
-    for (const val of Object.values(layoutContent || {})) {
-      const items = Array.isArray(val) ? val : [val];
-      for (const item of items) {
-        const m = item?.media;
-        if (m?.user?.username) out.push(m);
-      }
-    }
-    return out;
-  }
-
-  const seen = new Set();
-  const userStubs = [];
-  // username → array of { likes, comments, taken_at } for posts that matched this hashtag
-  const userPosts = new Map();
-
-  function harvestSections(sections) {
-    let added = 0;
-    for (const section of sections || []) {
-      for (const m of extractMedias(section.layout_content)) {
-        const u = m.user;
-        if (!seen.has(u.username)) {
-          seen.add(u.username);
-          userStubs.push({ pk: u.pk || u.id, username: u.username, full_name: u.full_name || '', is_verified: !!(u.is_verified) });
-          added++;
-        }
-        const posts = userPosts.get(u.username) || [];
-        posts.push({
-          pk:       m.pk || m.id,
-          likes:    Number(m.like_count    ?? 0),
-          comments: Number(m.comment_count ?? 0),
-          taken_at: m.taken_at,
-          caption:  (m.caption?.text || '').slice(0, 800),
-          location: m.location?.name || '',
-        });
-        userPosts.set(u.username, posts);
-      }
-    }
-    return added;
-  }
-
-  // Page 1: from web_info top sections
-  const topRoot = infoJson?.data?.top || {};
-  harvestSections(topRoot.sections);
-  console.log(`[ig-search] page 1: ${userStubs.length} unique authors`);
-  onProgress({ phase: 'paginating', page: 1, current: userStubs.length, total: userStubs.length });
-
-  // Pages 2+: paginate via /api/v1/tags/{tag}/sections/ POST
-  // Rotate cookie every PAGES_PER_COOKIE pages to spread session load across accounts
-  let nextMaxId = topRoot.next_max_id;
-  let nextPage = topRoot.next_page;
-  let moreAvailable = !!topRoot.more_available;
-
-  let paginationStopReason = 'reached MAX_PAGES limit';
-  for (let p = 2; p <= MAX_PAGES && moreAvailable && nextMaxId; p++) {
-    const baseCookieIdx = Math.floor((p - 1) / PAGES_PER_COOKIE) % cookies.length;
-    onProgress({ phase: 'fetching-page', page: p, current: userStubs.length, total: userStubs.length, cookieIdx: baseCookieIdx });
-    await sleep(2000, 4000); // mimic scroll pause
-
-    const body = new URLSearchParams({
-      include_persistent: 'true',
-      max_id: nextMaxId,
-      page: String(nextPage ?? p - 1),
-      surface: 'grid',
-      tab: 'top',
-    }).toString();
-
-    // Try each cookie in round-robin order until one succeeds (handles 502/429 per account)
-    let r = null, pageCookieIdx = baseCookieIdx;
-    for (let attempt = 0; attempt < cookies.length; attempt++) {
-      pageCookieIdx = (baseCookieIdx + attempt) % cookies.length;
-      const acctTry = cookies.length > 1 ? ` [acct ${pageCookieIdx + 1}/${cookies.length}]` : '';
-      try {
-        r = await igDirect(`https://www.instagram.com/api/v1/tags/${encodeURIComponent(tag)}/sections/`, {
-          method: 'POST', body, cookieRaw: cookies[pageCookieIdx],
-          headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        });
-        if (r.ok) break; // success — use this response
-        console.log(`[ig-search] page ${p}${acctTry} HTTP ${r.status}${attempt < cookies.length - 1 ? ', retrying with next account…' : ', no more accounts to try'}`);
-        r = null;
-        if (attempt < cookies.length - 1) await sleep(1000, 2000);
-      } catch (e) {
-        console.log(`[ig-search] page ${p}${acctTry} error: ${e.message}${attempt < cookies.length - 1 ? ', retrying…' : ''}`);
-        r = null;
-      }
-    }
-
-    if (!r) { paginationStopReason = 'all accounts failed on page ' + p; break; }
-
-    const j = await r.json().catch(() => null);
-    if (!j) { console.log(`[ig-search] page ${p} non-JSON response, stopping`); paginationStopReason = 'non-JSON response'; break; }
-
-    const acctTag = cookies.length > 1 ? ` [acct ${pageCookieIdx + 1}/${cookies.length}]` : '';
-    const added = harvestSections(j.sections);
-    moreAvailable = !!j.more_available;
-    nextMaxId = j.next_max_id;
-    nextPage = j.next_page;
-    console.log(`[ig-search] page ${p}${acctTag}: +${added} new authors (total ${userStubs.length})`);
-    onProgress({ phase: 'paginating', page: p, current: userStubs.length, total: userStubs.length, cookieIdx: pageCookieIdx });
-    if (!moreAvailable) { paginationStopReason = 'Instagram more_available=false'; }
-    if (!nextMaxId)      { paginationStopReason = 'no next_max_id cursor'; }
-    if (added === 0)     { paginationStopReason = '0 new unique authors'; break; }
-  }
-
-  console.log(`[ig-search] pagination done — ${paginationStopReason} · ${userStubs.length} unique authors collected`);
-
-  if (userStubs.length === 0) return [];
-
-  // Step 2: enrich each author with follower_count + biography via /api/v1/users/{pk}/info/
-  // Sequential with 600-1400ms jittered delay (mimics human profile browsing)
-  // Rotates through cookie pool per profile to spread enrichment load across accounts
-  async function fetchProfile(stub, cookieRaw) {
-    try {
-      const r = await igDirect(`https://www.instagram.com/api/v1/users/${stub.pk}/info/`, { cookieRaw });
-      if (!r.ok) return null;
-      const bodyText = await r.text().catch(() => '');
-      let j;
-      try { j = JSON.parse(bodyText); } catch (_) {
-        // Instagram returned HTML — rate-limited or IP-blocked on this endpoint
-        return { __rateLimited: true };
-      }
-      const u = j?.user;
-      if (!u) return null;
-
-      const allPosts   = userPosts.get(stub.username) || [];
-      const postsCount = allPosts.length;
-      const totalLikes    = allPosts.reduce((s, p) => s + (p.likes    || 0), 0);
-      const totalComments = allPosts.reduce((s, p) => s + (p.comments || 0), 0);
-      const avgLikes    = postsCount ? Math.round(totalLikes    / postsCount) : 0;
-      const avgComments = postsCount ? Math.round(totalComments / postsCount) : 0;
-      const followers   = Number(u.follower_count) || 0;
-      const engagementRate = followers > 0
-        ? Math.round(((avgLikes + avgComments) / followers) * 10000) / 100
-        : 0;
-
-      // Aggregate post content for filtering
-      const postCaptions  = allPosts.map(p => p.caption).filter(Boolean);
-      const postLocations = [...new Set(allPosts.map(p => p.location).filter(Boolean))];
-
-      return {
-        handle:         u.username || stub.username,
-        pk:             String(stub.pk),
-        fullName:       u.full_name || stub.full_name,
-        followers:      String(u.follower_count ?? ''),
-        bio:            u.biography || '',
-        isVerified:     !!(u.is_verified ?? stub.is_verified),
-        postCount:      String(u.media_count ?? ''),
-        profileUrl:     `https://www.instagram.com/${stub.username}/`,
-        rawPlatform:    'instagram',
-        hashtagPosts:   postsCount,
-        avgLikes,
-        avgComments,
-        engagementRate,
-        postCaptions,
-        postLocations,
-      };
-    } catch (_) { return null; }
-  }
-
-  function stubProfile(s) {
-    const ap = userPosts.get(s.username) || [];
-    const pc = ap.length;
-    const tl = ap.reduce((sum, p) => sum + (p.likes    || 0), 0);
-    const tc = ap.reduce((sum, p) => sum + (p.comments || 0), 0);
-    return {
-      handle: s.username, pk: String(s.pk), fullName: s.full_name || '',
-      followers: '', bio: '', isVerified: !!s.is_verified, postCount: '',
-      profileUrl: `https://www.instagram.com/${s.username}/`,
-      rawPlatform: 'instagram', hashtagPosts: pc,
-      avgLikes: pc ? Math.round(tl / pc) : 0, avgComments: pc ? Math.round(tc / pc) : 0,
-      engagementRate: 0,
-      postCaptions: ap.map(p => p.caption).filter(Boolean),
-      postLocations: [...new Set(ap.map(p => p.location).filter(Boolean))],
-    };
+  // Group posts by owner → one candidate profile each, aggregating hashtag-post engagement.
+  const byOwner = new Map();
+  for (const it of items) {
+    const username = (it.ownerUsername || '').toLowerCase();
+    if (!username) continue;
+    if (!byOwner.has(username)) byOwner.set(username, { stub: it, posts: [] });
+    byOwner.get(username).posts.push({
+      likes:    Number(it.likesCount)    >= 0 ? Number(it.likesCount)    : 0,
+      comments: Number(it.commentsCount) >= 0 ? Number(it.commentsCount) : 0,
+      caption:  (it.caption || '').slice(0, 800),
+      location: it.locationName || '',
+    });
   }
 
   const profiles = [];
-  let rateLimitedCount = 0;
-  onProgress({ phase: 'enriching', current: 0, total: userStubs.length, cookieIdx: 0 });
-  for (let i = 0; i < userStubs.length; i++) {
-    const stub = userStubs[i];
-    const enrichCookieIdx = i % cookies.length;
-    const result = await fetchProfile(stub, cookieForEnrich(i));
-    if (result && !result.__rateLimited) {
-      profiles.push(result);
-    } else {
-      if (result?.__rateLimited) rateLimitedCount++;
-      if (rateLimitedCount >= 3 && i < 5) {
-        console.log(`[ig-search] enrichment blocked (HTML responses) — returning stubs only`);
-        onProgress({ phase: 'enriching', current: userStubs.length, total: userStubs.length, enrichmentBlocked: true });
-        for (let j = i; j < userStubs.length; j++) profiles.push(stubProfile(userStubs[j]));
-        break;
-      }
-      profiles.push(stubProfile(stub));
-    }
-    onProgress({ phase: 'enriching', current: i + 1, total: userStubs.length, cookieIdx: enrichCookieIdx });
-    if (i < userStubs.length - 1) await sleep(600, 1400);
-    if ((i + 1) % 20 === 0) console.log(`[ig-search] enriched ${i + 1}/${userStubs.length}`);
+  for (const [, { stub, posts }] of byOwner) {
+    const pc = posts.length;
+    const avgLikes    = pc ? Math.round(posts.reduce((s, p) => s + p.likes, 0)    / pc) : 0;
+    const avgComments = pc ? Math.round(posts.reduce((s, p) => s + p.comments, 0) / pc) : 0;
+    profiles.push({
+      handle:        stub.ownerUsername,
+      pk:            stub.ownerId ? String(stub.ownerId) : '',
+      fullName:      stub.ownerFullName || '',
+      followers:     '',          // not fetched at discovery (Apify hashtag-only)
+      bio:           '',
+      isVerified:    false,
+      postCount:     '',
+      profileUrl:    `https://www.instagram.com/${stub.ownerUsername}/`,
+      rawPlatform:   'instagram',
+      hashtagPosts:  pc,
+      avgLikes,
+      avgComments,
+      engagementRate: 0,          // needs follower count
+      postCaptions:  posts.map(p => p.caption).filter(Boolean),
+      postLocations: [...new Set(posts.map(p => p.location).filter(Boolean))],
+    });
   }
 
-  console.log(`[ig-search] #${tag} → ${profiles.length} profiles (${profiles.filter(p => p.followers).length} fully enriched, ${callCount} API calls)`);
-  return { profiles, callCount };
+  console.log(`[ig-search] #${tag} → ${profiles.length} profiles via Apify (${items.length} posts)`);
+  onProgress({ phase: 'enriching', current: profiles.length, total: profiles.length });
+  return { profiles, callCount: 1 };
 }
 
 // ── TikTok Research API ────────────────────────────────────────────────────
@@ -1429,289 +1193,99 @@ async function handleBdSearchStatus(req, res) {
   return res.status(200).json(p);
 }
 
-// ── Re-enrichment: fetch profile info for stubs missing followers/bio ──────
-async function handleBdReenrich(req, res) {
-  const { profiles, sessionCookie, sessionCookies } = req.body || {};
-  if (!Array.isArray(profiles) || !profiles.length)
-    return res.status(400).json({ error: 'profiles[] required' });
-  const cookies = Array.isArray(sessionCookies) && sessionCookies.length
-    ? sessionCookies.filter(Boolean)
-    : sessionCookie ? [sessionCookie] : [];
-  if (!cookies.length)
-    return res.status(400).json({ error: 'sessionCookie required' });
-
-  const scanId = `reenrich-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-  updateProgress(scanId, { phase: 'enriching', current: 0, total: profiles.length });
-  res.status(200).json({ scanId });
-
-  (async () => {
-    const sleep = (min, max) => new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
-    const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
-    const proxyDispatcher = proxyUrl ? new ProxyAgent({
-      uri: proxyUrl,
-      requestTls: { rejectUnauthorized: false },
-      proxyTls:   { rejectUnauthorized: false },
-    }) : null;
-
-    const igGet = (url, cookieRaw) => {
-      const cookieHeader = cookieRaw.includes('sessionid=') ? cookieRaw : `sessionid=${cookieRaw}`;
-      const csrfToken = (cookieHeader.match(/csrftoken=([^;]+)/) || [])[1]?.trim() || '';
-      return (proxyDispatcher ? undiciFetch : fetch)(url, {
-        headers: {
-          'x-ig-app-id': '936619743392459',
-          'x-csrftoken': csrfToken,
-          'x-requested-with': 'XMLHttpRequest',
-          'accept': 'application/json',
-          'accept-language': 'en-US,en;q=0.9',
-          'origin': 'https://www.instagram.com',
-          'sec-fetch-site': 'same-origin',
-          'sec-fetch-mode': 'cors',
-          'sec-fetch-dest': 'empty',
-          'cookie': cookieHeader,
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
-      });
-    };
-
-    const results = [];
-    let htmlCount = 0;
-    for (let i = 0; i < profiles.length; i++) {
-      const { handle, pk } = profiles[i];
-      const cookieRaw = cookies[i % cookies.length];
-      const acctTag = cookies.length > 1 ? ` [acct ${(i % cookies.length) + 1}/${cookies.length}]` : '';
-      try {
-        if (!pk) throw new Error('no pk');
-        const r = await igGet(`https://www.instagram.com/api/v1/users/${pk}/info/`, cookieRaw);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const bodyText = await r.text().catch(() => '');
-        let j;
-        try { j = JSON.parse(bodyText); } catch (_) {
-          htmlCount++;
-          if (htmlCount >= 3) {
-            console.log(`[ig-reenrich] session blocked (HTML responses) — stopping early`);
-            results.push({ handle, enriched: false });
-            updateProgress(scanId, { phase: 'complete', results, blocked: true, current: profiles.length, total: profiles.length });
-            return;
-          }
-          throw new Error('non-JSON (rate-limited)');
-        }
-        const u = j?.user;
-        if (!u) throw new Error('no user object');
-        const followers = Number(u.follower_count) || 0;
-        results.push({
-          handle,
-          followers:      String(u.follower_count ?? ''),
-          fullName:       u.full_name || '',
-          bio:            u.biography || '',
-          isVerified:     !!u.is_verified,
-          postCount:      String(u.media_count ?? ''),
-          enriched:       true,
-        });
-        console.log(`[ig-reenrich] ${handle}${acctTag} → ${followers} followers`);
-      } catch (e) {
-        if (i === 0) console.log(`[ig-reenrich] ${handle}${acctTag} failed: ${e.message}`);
-        results.push({ handle, enriched: false });
-      }
-      updateProgress(scanId, { phase: 'enriching', current: i + 1, total: profiles.length });
-      if (i < profiles.length - 1) await sleep(600, 1400);
-    }
-
-    const enriched = results.filter(r => r.enriched).length;
-    console.log(`[ig-reenrich] done — ${enriched}/${profiles.length} enriched`);
-    updateProgress(scanId, { phase: 'complete', results, current: profiles.length, total: profiles.length });
-  })();
-}
-
-// ── TikTok post scanner via Apify ─────────────────────────────────────────
-async function ttApifyScanPosts(profiles, onProgress) {
-  const token = process.env.APIFY_API_TOKEN;
-  if (!token) throw new Error('APIFY_API_TOKEN not configured');
-
-  const usernames = profiles.map(p => p.handle.replace(/^@/, ''));
-
-  const apifyJson = async (url, opts = {}) => {
-    const r = await fetch(url, opts);
-    const text = await r.text();
-    try { return JSON.parse(text); }
-    catch (_) { throw new Error(`Apify HTTP ${r.status}: ${text.slice(0, 200)}`); }
-  };
-
-  const runData = await apifyJson(
-    `https://api.apify.com/v2/acts/clockworks~tiktok-scraper/runs?token=${token}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        profiles: usernames,
-        resultsPerPage: 10,
-        shouldDownloadVideos: false,
-        shouldDownloadCovers: false,
-        shouldDownloadSubtitles: false,
-        shouldDownloadSlideshowImages: false,
-      }),
-    }
-  );
-  const runId = runData?.data?.id;
-  const datasetId = runData?.data?.defaultDatasetId;
-  if (!runId) throw new Error(`Apify start failed: ${JSON.stringify(runData)}`);
-  console.log(`[tt-scan-posts] Apify run ${runId} started for ${usernames.length} profiles`);
-
-  const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'ABORTED', 'TIMED-OUT']);
-  for (let attempt = 0; attempt < 120; attempt++) {
-    await new Promise(r => setTimeout(r, 5000));
-    const sData = await apifyJson(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
-    const status = sData?.data?.status;
-    const itemCount = sData?.data?.stats?.itemCount ?? 0;
-    onProgress({ phase: 'scanning', current: Math.min(itemCount, profiles.length), total: profiles.length });
-    if (status === 'SUCCEEDED') break;
-    if (TERMINAL.has(status)) throw new Error(`Apify run ${status}: ${JSON.stringify(sData?.data?.statusMessage ?? '')}`);
-  }
-
-  const items = await apifyJson(`https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&clean=true`);
-  console.log(`[tt-scan-posts] dataset has ${items.length} videos`);
-
-  // Group videos by author handle
-  const byAuthor = new Map();
-  for (const item of items) {
-    const handle = (item.authorMeta?.name || item.author?.uniqueId || '').toLowerCase();
-    if (!handle) continue;
-    if (!byAuthor.has(handle)) byAuthor.set(handle, { meta: item.authorMeta || {}, videos: [] });
-    byAuthor.get(handle).videos.push({
-      caption:  item.text || item.desc || '',
-      likes:    item.diggCount   ?? item.stats?.diggCount   ?? 0,
-      comments: item.commentCount ?? item.stats?.commentCount ?? 0,
-      shares:   item.shareCount  ?? item.stats?.shareCount  ?? 0,
-      views:    item.playCount   ?? item.stats?.playCount   ?? 0,
-      location: item.locationCreated?.city || item.locationCreated?.country || '',
-    });
-  }
-
-  const results = [];
-  for (const profile of profiles) {
-    const key = profile.handle.replace(/^@/, '').toLowerCase();
-    const entry = byAuthor.get(key);
-    if (!entry) {
-      console.log(`[tt-scan-posts] ${profile.handle} — no videos in dataset`);
-      results.push({ handle: profile.handle, postCaptions: [], postLocations: [], avgLikes: 0, avgComments: 0, avgViews: 0 });
-      continue;
-    }
-    const { videos } = entry;
-    const avgLikes    = videos.length ? Math.round(videos.reduce((s,v) => s + v.likes, 0)    / videos.length) : 0;
-    const avgComments = videos.length ? Math.round(videos.reduce((s,v) => s + v.comments, 0) / videos.length) : 0;
-    const avgViews    = videos.length ? Math.round(videos.reduce((s,v) => s + v.views, 0)    / videos.length) : 0;
-    console.log(`[tt-scan-posts] ${profile.handle} → ${videos.length} videos`);
-    results.push({
-      handle:        profile.handle,
-      postCaptions:  videos.map(v => v.caption).filter(Boolean),
-      postLocations: [...new Set(videos.map(v => v.location).filter(Boolean))],
-      avgLikes, avgComments, avgViews,
-    });
-  }
-  return results;
-}
-
-// ── Post scanner: fetches recent feed per profile (separate step, not part of search) ──
+// ── Recent-posts scanner ────────────────────────────────────────────────────
+// Fetches each selected profile's recent ~30 posts/videos with per-post engagement via
+// the shared fetchers (Apify for IG/TikTok/X, YouTube Data API), persists them to
+// profile_posts, and returns a per-handle summary for the UI. No session cookies needed.
 async function handleBdScanPosts(req, res) {
-  const { profiles, sessionCookie, sessionCookies } = req.body || {};
+  const { profiles, platform, dataset, target } = req.body || {};
   if (!Array.isArray(profiles) || !profiles.length)
     return res.status(400).json({ error: 'profiles[] required' });
 
-  // TikTok profiles use Apify — no session cookie required
-  const isTikTok = profiles.every(p => p.rawPlatform === 'tiktok');
-  const cookies = Array.isArray(sessionCookies) && sessionCookies.length
-    ? sessionCookies.filter(Boolean)
-    : sessionCookie ? [sessionCookie] : [];
-  if (!isTikTok && !cookies.length)
-    return res.status(400).json({ error: 'sessionCookie required' });
+  const canon = (p) => {
+    p = String(p || '').toLowerCase();
+    if (p.includes('insta') || p === 'ig') return 'instagram';
+    if (p.includes('tik') || p === 'tt') return 'tiktok';
+    if (p.includes('you') || p === 'yt') return 'youtube';
+    if (p === 'x' || p.includes('twitter')) return 'x';
+    return p;
+  };
+  const lc = (h) => String(h || '').replace(/^@/, '').toLowerCase();
 
   const scanId = `pscan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   updateProgress(scanId, { phase: 'scanning', current: 0, total: profiles.length });
   res.status(200).json({ scanId });
 
   (async () => {
-    // TikTok: delegate entirely to Apify
-    if (isTikTok) {
-      try {
-        const results = await ttApifyScanPosts(profiles, prog =>
-          updateProgress(scanId, { ...prog, total: profiles.length })
-        );
-        console.log(`[tt-scan-posts] done — ${results.filter(r => r.postCaptions.length).length}/${profiles.length} had captions`);
-        updateProgress(scanId, { phase: 'complete', results, current: profiles.length, total: profiles.length });
-      } catch (e) {
-        console.log(`[tt-scan-posts] fatal: ${e.message}`);
-        updateProgress(scanId, { phase: 'complete', results: profiles.map(p => ({ handle: p.handle, postCaptions: [], postLocations: [] })), current: profiles.length, total: profiles.length, error: e.message });
+    try {
+      // Group selected profiles by platform (single platform in normal UI use).
+      const groups = {};
+      for (const p of profiles) {
+        const plat = canon(platform || p.rawPlatform || p.platform);
+        (groups[plat] ??= []).push({ handle: p.handle, profileUrl: p.profileUrl || p.profile_url, followers: p.followers });
       }
-      return;
-    }
 
-    const sleep = (min, max) => new Promise(r => setTimeout(r, min + Math.random() * (max - min)));
-    const proxyUrl = process.env.BRIGHTDATA_PROXY_URL;
-    const proxyDispatcher = proxyUrl ? new ProxyAgent({
-      uri: proxyUrl,
-      requestTls: { rejectUnauthorized: false },
-      proxyTls:   { rejectUnauthorized: false },
-    }) : null;
-    const igGet = (url, cookieRaw) => {
-      const cookieHeader = cookieRaw.includes('sessionid=') ? cookieRaw : `sessionid=${cookieRaw}`;
-      const csrfToken = (cookieHeader.match(/csrftoken=([^;]+)/) || [])[1]?.trim() || '';
-      return (proxyDispatcher ? undiciFetch : fetch)(url, {
-        headers: {
-          'x-ig-app-id': '936619743392459',
-          'x-csrftoken': csrfToken,
-          'x-requested-with': 'XMLHttpRequest',
-          'accept': 'application/json',
-          'accept-language': 'en-US,en;q=0.9',
-          'origin': 'https://www.instagram.com',
-          'sec-fetch-site': 'same-origin',
-          'sec-fetch-mode': 'cors',
-          'sec-fetch-dest': 'empty',
-          'cookie': cookieHeader,
-          'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        },
-        ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {}),
-      });
-    };
+      const supabase = getSupabase();
+      const sourceTable = dataset
+        ? (dataset === 'lifestyle'
+            ? (target === 'excluded' ? 'lifestyle_bloggers_excluded' : 'lifestyle_bloggers')
+            : (target === 'excluded' ? 'brightdata_excluded_profiles' : 'brightdata_profiles'))
+        : null;
 
-    const results = [];
-    let htmlCount = 0;
-    for (let i = 0; i < profiles.length; i++) {
-      const { handle, pk } = profiles[i];
-      const cookieRaw = cookies[i % cookies.length];
-      const acctTag = cookies.length > 1 ? ` [acct ${(i % cookies.length) + 1}/${cookies.length}]` : '';
-      try {
-        if (!pk) throw new Error('no pk');
-        const r = await igGet(`https://www.instagram.com/api/v1/feed/user/${pk}/?count=12`, cookieRaw);
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const bodyText = await r.text().catch(() => '');
-        let j;
-        try { j = JSON.parse(bodyText); } catch (_) {
-          htmlCount++;
-          if (htmlCount >= 3) {
-            console.log(`[ig-scan-posts] session blocked (HTML responses) — stopping early`);
-            results.push({ handle, postCaptions: [], postLocations: [] });
-            updateProgress(scanId, { phase: 'complete', results, blocked: true, current: profiles.length, total: profiles.length });
-            return;
-          }
-          throw new Error('non-JSON response (rate-limited)');
+      const resultsByHandle = new Map();
+      let done = 0;
+
+      for (const [plat, arr] of Object.entries(groups)) {
+        let map = new Map();
+        try {
+          map = await fetchPostsForPlatform(plat, arr, {
+            onProgress: ({ itemCount }) =>
+              updateProgress(scanId, { phase: 'scanning', current: Math.min(done + itemCount, profiles.length), total: profiles.length }),
+          });
+        } catch (e) {
+          console.log(`[scan-posts:${plat}] failed: ${e.message}`);
         }
-        const items = j?.items || [];
-        results.push({
-          handle,
-          postCaptions:  items.map(m => (m.caption?.text || '').slice(0, 800)).filter(Boolean),
-          postLocations: [...new Set(items.map(m => m.location?.name || '').filter(Boolean))],
-        });
-        console.log(`[ig-scan-posts] ${handle}${acctTag} → ${items.length} posts`);
-      } catch (e) {
-        console.log(`[ig-scan-posts] ${handle}${acctTag} failed: ${e.message}`);
-        results.push({ handle, postCaptions: [], postLocations: [] });
-      }
-      updateProgress(scanId, { phase: 'scanning', current: i + 1, total: profiles.length });
-      if (i < profiles.length - 1) await sleep(600, 1400);
-    }
 
-    console.log(`[ig-scan-posts] done — ${results.filter(r => r.postCaptions.length).length}/${profiles.length} had captions`);
-    updateProgress(scanId, { phase: 'complete', results, current: profiles.length, total: profiles.length });
+        for (const prof of arr) {
+          const h = lc(prof.handle);
+          const posts = map.get(h) || [];
+          if (supabase && posts.length) {
+            const rows = posts.map(p => postToRow(h, plat, p)).filter(r => r.post_id);
+            if (rows.length) {
+              const { error } = await supabase.from('profile_posts').upsert(rows, { onConflict: 'handle,platform,post_id' });
+              if (error) console.log(`[scan-posts] profile_posts upsert ${h}: ${error.message}`);
+            }
+            if (sourceTable) {
+              const agg = computeAggregates(posts, prof.followers);
+              const { error } = await supabase.from(sourceTable).update(agg).eq('handle', h).eq('platform', plat);
+              if (error) console.log(`[scan-posts] agg ${h}@${sourceTable}: ${error.message}`);
+            }
+          }
+          resultsByHandle.set(h, {
+            handle: prof.handle,
+            postCaptions: posts.map(p => p.caption).filter(Boolean),
+            postLocations: [...new Set(posts.map(p => p.location).filter(Boolean))],
+            avgLikes: avgOf(posts, 'likes'),
+            avgComments: avgOf(posts, 'comments'),
+            avgViews: avgOf(posts, 'views'),
+            postCount: posts.length,
+          });
+          updateProgress(scanId, { phase: 'scanning', current: ++done, total: profiles.length });
+        }
+      }
+
+      const results = profiles.map(p =>
+        resultsByHandle.get(lc(p.handle)) || { handle: p.handle, postCaptions: [], postLocations: [] });
+      console.log(`[scan-posts] done — ${results.filter(r => r.postCaptions.length).length}/${profiles.length} had captions`);
+      updateProgress(scanId, { phase: 'complete', results, current: profiles.length, total: profiles.length });
+    } catch (e) {
+      console.log(`[scan-posts] fatal: ${e.message}`);
+      updateProgress(scanId, {
+        phase: 'complete',
+        results: profiles.map(p => ({ handle: p.handle, postCaptions: [], postLocations: [] })),
+        current: profiles.length, total: profiles.length, error: e.message,
+      });
+    }
   })();
 }
 
