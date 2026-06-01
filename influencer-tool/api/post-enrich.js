@@ -237,14 +237,28 @@ async function fetchXOne(handle) {
   }));
 }
 
+// Terminal account/quota limits — once hit, every further call fails, so stop trying. Crucially,
+// callers must NOT treat these (or any fetch error) as "0 posts / done": leave the handle ABSENT
+// from the result map so the batch logs it as retryable, not as a completed 0-post profile.
+export function isHardLimit(e) {
+  const m = (e && e.message) || String(e || '');
+  return /monthly usage hard limit|platform-feature-disabled|quota ?exceeded|usage hard limit/i.test(m);
+}
+
 async function fetchX(profiles, onProgress, concurrency = 6) {
   const byHandle = new Map();
-  let done = 0;
+  let done = 0, stop = false;
   await mapPool(profiles, concurrency, async (p) => {
-    try { byHandle.set(lc(p.handle), await fetchXOne(p.handle)); }
-    catch (e) { byHandle.set(lc(p.handle), []); console.warn(`[x-scan] ${p.handle}: ${e.message}`); }
+    if (stop) return;  // limit already hit — skip remaining (left absent → retried next run)
+    try { byHandle.set(lc(p.handle), await fetchXOne(p.handle)); }  // [] = genuinely no tweets (done)
+    catch (e) {
+      if (isHardLimit(e)) { stop = true; console.warn(`[x-scan] aborting — ${e.message}`); }
+      else console.warn(`[x-scan] ${p.handle}: ${e.message}`);
+      // do NOT set byHandle → caller retries this handle
+    }
     onProgress?.({ itemCount: ++done });
   });
+  if (stop) console.warn('[x-scan] stopped early on usage limit; unfetched X profiles will retry next run');
   return byHandle;
 }
 
@@ -313,12 +327,18 @@ async function fetchYouTubeOne(handle, profileUrl) {
 
 async function fetchYouTube(profiles, onProgress, concurrency = 8) {
   const byHandle = new Map();
-  let done = 0;
+  let done = 0, stop = false;
   await mapPool(profiles, concurrency, async (p) => {
-    try { byHandle.set(lc(p.handle), await fetchYouTubeOne(p.handle, p.profileUrl)); }
-    catch (e) { byHandle.set(lc(p.handle), []); console.warn(`[yt-scan] ${p.handle}: ${e.message}`); }
+    if (stop) return;  // quota already hit — skip remaining (left absent → retried next run)
+    try { byHandle.set(lc(p.handle), await fetchYouTubeOne(p.handle, p.profileUrl)); }  // [] = no uploads (done)
+    catch (e) {
+      if (isHardLimit(e)) { stop = true; console.warn(`[yt-scan] aborting — ${e.message}`); }
+      else console.warn(`[yt-scan] ${p.handle}: ${e.message}`);
+      // do NOT set byHandle → caller retries this handle
+    }
     onProgress?.({ itemCount: ++done });
   });
+  if (stop) console.warn('[yt-scan] stopped early on quota; unfetched YouTube profiles will retry next run (quota resets daily)');
   return byHandle;
 }
 

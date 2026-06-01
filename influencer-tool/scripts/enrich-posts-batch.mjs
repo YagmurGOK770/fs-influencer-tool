@@ -23,7 +23,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
-import { fetchPostsForPlatform, postToRow, computeAggregates } from '../api/post-enrich.js';
+import { fetchPostsForPlatform, postToRow, computeAggregates, isHardLimit } from '../api/post-enrich.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -47,6 +47,10 @@ const LIMIT       = Number(getFlag('--limit')) || Infinity;
 const ONLY        = getFlag('--only');            // instagram | tiktok | x | youtube
 const IG_BATCH    = Number(getFlag('--ig-batch')) || 50;
 const CONCURRENCY = Number(getFlag('--concurrency')) || 8;
+// Re-attempt handles previously logged with 0 posts. Use this to recover creators whose earlier
+// fetch FAILED (e.g. an Apify usage-limit run logged them as 0) — older code couldn't tell a failed
+// fetch from a genuinely-empty profile. Handles with stored posts are still always skipped.
+const RETRY_EMPTY = hasFlag('--retry-empty');
 
 const LOG_PATH = path.join(__dirname, 'enrich-posts-batch.jsonl');
 const log = (entry) => { try { fs.appendFileSync(LOG_PATH, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n'); } catch {} };
@@ -149,7 +153,9 @@ function loadAttemptedFromLog() {
       if (!line.trim()) continue;
       try {
         const e = JSON.parse(line);
-        if (e.handle && typeof e.posts === 'number') set.add(lc(e.handle));
+        if (!e.handle || typeof e.posts !== 'number') continue;
+        if (RETRY_EMPTY && e.posts === 0) continue; // re-attempt 0-post handles (recover failed fetches)
+        set.add(lc(e.handle));
       } catch {}
     }
   } catch {}
@@ -223,9 +229,14 @@ async function persistPerson(person, posts) {
   const byHandle = new Map(people.map(p => [p.handle, p]));
   let processed = 0, postsWritten = 0;
 
+  // All three of these run on Apify; once the account's monthly limit is hit, they all fail —
+  // stop trying so we don't churn (and don't mislog anyone as done). YouTube uses a separate quota.
+  let apifyStopped = false;
+
   // Apify-batched platforms: chunk profiles into one actor run per chunk.
   for (const plat of ['instagram', 'tiktok']) {
     const arr = groups[plat];
+    if (apifyStopped && arr.length) { console.warn(`[enrich:${plat}] skipped — Apify usage limit hit; will retry next run`); continue; }
     for (let i = 0; i < arr.length; i += IG_BATCH) {
       const chunk = arr.slice(i, i + IG_BATCH);
       console.log(`[enrich:${plat}] run ${i / IG_BATCH + 1} — ${chunk.length} profiles (${i + chunk.length}/${arr.length})`);
@@ -237,7 +248,8 @@ async function persistPerson(person, posts) {
       } catch (e) {
         console.warn(`[enrich:${plat}] chunk fetch failed: ${e.message}`);
         log({ platform: plat, error: e.message, chunkStart: i });
-        continue; // whole-chunk fetch failed — nothing to persist
+        if (isHardLimit(e)) { apifyStopped = true; console.warn('[enrich] Apify usage limit hit — stopping Apify platforms'); break; }
+        continue; // whole-chunk fetch failed — nothing to persist (chunk handles retry next run)
       }
       // Persist each profile independently: one DB error must not drop the rest of the
       // (already-billed) chunk and leave them unlogged → re-charged on the next resume.
@@ -259,12 +271,16 @@ async function persistPerson(person, posts) {
   for (const plat of ['x', 'youtube']) {
     const arr = groups[plat];
     if (!arr.length) continue;
+    if (plat === 'x' && apifyStopped) { console.warn(`[enrich:x] skipped — Apify usage limit hit; will retry next run`); continue; }
     console.log(`[enrich:${plat}] ${arr.length} profiles (concurrency ${CONCURRENCY})`);
     const map = await fetchPostsForPlatform(plat, arr.map(p => ({ handle: p.handle, profileUrl: p.profileUrl })),
       { concurrency: CONCURRENCY, onProgress: ({ itemCount }) => process.stdout.write(`\r  …${itemCount}/${arr.length}`) });
     process.stdout.write('\n');
     for (const person of arr) {
-      const posts = map.get(person.handle) || [];
+      // Absent from the map = fetch failed or was skipped on a usage limit — leave it UNLOGGED so
+      // it retries next run. Only a present value (incl. genuine []) counts as a completed attempt.
+      const posts = map.get(person.handle);
+      if (posts === undefined) { log({ handle: person.handle, platform: plat, error: 'not fetched (error or usage limit) — will retry' }); continue; }
       try {
         const n = await persistPerson(person, posts);
         postsWritten += n; processed++;
