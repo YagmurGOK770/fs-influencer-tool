@@ -361,13 +361,18 @@ export function postToRow(handle, platform, post) {
 }
 
 // Profile-level aggregates from a post array. engagement_rate needs followers (caller supplies).
-export function computeAggregates(posts, followers) {
+export function computeAggregates(allPosts, followers) {
+  // Score the latest ~30 posts (by date). Some actors return more than we ask for; capping here
+  // keeps "recent 30" consistent whether called at enrichment or on a later free recompute.
+  const posts = [...allPosts]
+    .sort((a, b) => (Date.parse(b.postedAt) || 0) - (Date.parse(a.postedAt) || 0))
+    .slice(0, POSTS_PER_PROFILE);
   const avg = (key) => {
     const vals = posts.map(p => p[key]).filter(v => v != null && v >= 0);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
   };
-  // Median over the posts actually fetched (could be < 30). Robust to one viral/dead post — used
-  // as the primary engagement-score input. Null metrics are excluded (not zero-filled).
+  // Median over the latest posts (could be < 30). Robust to one viral/dead post — used as the
+  // primary engagement-score input. Null metrics are excluded (not zero-filled).
   const median = (key) => {
     const vals = posts.map(p => p[key]).filter(v => v != null && v >= 0).sort((a, b) => a - b);
     if (!vals.length) return null;
@@ -389,7 +394,12 @@ export function computeAggregates(posts, followers) {
   const nowMs = Date.now();
   const dated = posts
     .filter(p => p.postedAt)
-    .map(p => ({ ...p, _ts: Date.parse(p.postedAt) }))
+    .map(p => {
+      // Age is measured against when we CAPTURED the counts (per-post fetchedAt), not "now", so a
+      // later free recompute from stored posts yields the same velocity instead of drifting.
+      const ref = p.fetchedAt && Number.isFinite(Date.parse(p.fetchedAt)) ? Date.parse(p.fetchedAt) : nowMs;
+      return { ...p, _ts: Date.parse(p.postedAt), _ref: ref };
+    })
     .filter(p => Number.isFinite(p._ts))
     .sort((a, b) => b._ts - a._ts);
   const recent5 = dated.slice(0, 5);
@@ -398,7 +408,7 @@ export function computeAggregates(posts, followers) {
       .filter(p => p[key] != null && p[key] >= 0)
       // Floor age at 2 days: engagement is front-loaded, so a just-posted item must not divide by
       // a tiny age and masquerade as runaway momentum.
-      .map(p => p[key] / Math.max(2, (nowMs - p._ts) / 86400000));
+      .map(p => p[key] / Math.max(2, (p._ref - p._ts) / 86400000));
     return rates.length ? Number((rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(2)) : null;
   };
   const last_post_at = dated.length ? new Date(dated[0]._ts).toISOString() : null;
