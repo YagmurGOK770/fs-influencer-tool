@@ -47,15 +47,20 @@ async function loadPostGroups() {
   const seen = new Map(); // key -> Set(post_id), dedupes rows in case offset-paging overlaps a
                           // concurrently-written table (otherwise aggregates over duplicated posts).
   const PAGE = 1000;
-  // Order by the immutable id PK so pagination is stable under concurrent inserts (new rows append
-  // at higher ids and aren't re-read), rather than the default non-deterministic order.
-  for (let from = 0; ; from += PAGE) {
+  // Keyset pagination on the id PK (id > lastId), NOT offset/range: profile_posts has ~300k rows and
+  // deep OFFSET makes Postgres re-scan all prior rows each page → statement timeout. Keyset is an
+  // index seek (fast at any depth) and is also stable under concurrent inserts (new rows have higher ids).
+  let lastId = 0;
+  for (;;) {
     const { data, error } = await sb.from('profile_posts')
-      .select('handle, platform, post_id, likes, comments, views, saves, shares, posted_at, fetched_at')
+      .select('id, handle, platform, post_id, likes, comments, views, saves, shares, posted_at, fetched_at')
+      .gt('id', lastId)
       .order('id', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) throw new Error(`load profile_posts at ${from}: ${error.message}`);
-    for (const r of (data || [])) {
+      .limit(PAGE);
+    if (error) throw new Error(`load profile_posts after id ${lastId}: ${error.message}`);
+    if (!data || !data.length) break;
+    for (const r of data) {
+      lastId = r.id;
       const plat = canon(r.platform);
       if (ONLY && plat !== ONLY) continue;
       const key = `${lc(r.handle)}|${plat}`;
@@ -68,7 +73,7 @@ async function loadPostGroups() {
         postedAt: r.posted_at, fetchedAt: r.fetched_at,
       });
     }
-    if (!data || data.length < PAGE) break;
+    if (data.length < PAGE) break;
   }
   return groups;
 }
