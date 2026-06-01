@@ -6594,7 +6594,7 @@ function bdrGetClass(handle, platform) { return _bdrClassCache.get(bdrClassKey(h
 function bdrSetClass(handle, platform, facts) { _bdrClassCache.set(bdrClassKey(handle, platform), facts || {}); }
 function bdrSeedClassFromRow(r) {
   if (!r || !r.handle || !r.platform) return;
-  if (r.entity_type == null && r.primary_content_category == null && r.uk_geography == null) return;
+  if (r.entity_type == null && r.primary_content_category == null && r.uk_geography == null && r.tier == null) return;
   _bdrClassCache.set(bdrClassKey(r.handle, r.platform), {
     entity_type:               r.entity_type               ?? null,
     primary_content_category:  r.primary_content_category  ?? null,
@@ -6603,6 +6603,8 @@ function bdrSeedClassFromRow(r) {
     total_posts_analyzed:      r.total_posts_analyzed       ?? null,
     uk_geography:              r.uk_geography               ?? null,
     reasoning:                 r.classification_reasoning   ?? null,
+    tier:                      r.tier                       ?? null,   // persisted effective tier (1–4 | null)
+    tier_manual:               r.tier_manual === true,                 // true = hand-picked override
   });
 }
 
@@ -6704,6 +6706,16 @@ function bdrTierOf(m) {
   return { tier: null, status: 'filtered', reason: `Non-food (${BD_CAT_LABEL[cat] || cat}), only ${pct}% food content — below threshold` };
 }
 
+// Effective tier shown/used everywhere: a manual override (persisted, tier_manual=true) wins;
+// otherwise the live rule-based tier. This is what the table, filters, sort, Insights and CSV read.
+function bdrEffectiveTier(m) {
+  const c = bdrGetClass(m.handle, m.platforms?.[0] || '');
+  if (c && c.tier_manual && c.tier) return { tier: c.tier, status: 'tier', reason: 'Manually set tier (override)', manual: true };
+  const t = bdrTierOf(m);
+  t.manual = false;
+  return t;
+}
+
 async function bdrClassifyVisible(limit) {
   const isTest = !!limit;
   const btn = document.getElementById(isTest ? 'bdrClassifyTestBtn' : 'bdrClassifyBtn');
@@ -6735,6 +6747,9 @@ async function bdrClassifyVisible(limit) {
     location:  m.location || '',
   }));
 
+  // Map classified handle→merged row so we can compute the rule tier (needs primary_followers).
+  const rowByKey = new Map(rows.map(m => [`${m.platforms[0] || ''}:${m.handle}`, m]));
+
   // Send in batches of 50
   const BATCH = 50;
   let done = 0, failed = 0, saved = 0;
@@ -6755,7 +6770,7 @@ async function bdrClassifyVisible(limit) {
       const patches = [];
       for (const r of results) {
         if (r.error) { failed++; continue; }
-        bdrSetClass(r.handle, r.platform, {
+        const facts = {
           entity_type:               r.entity_type               ?? null,
           primary_content_category:  r.primary_content_category  ?? null,
           primary_food_content_type: r.primary_food_content_type ?? null,
@@ -6763,7 +6778,16 @@ async function bdrClassifyVisible(limit) {
           total_posts_analyzed:      r.total_posts_analyzed       ?? null,
           uk_geography:              r.uk_geography               ?? null,
           reasoning:                 r.reasoning                  ?? null,
-        });
+        };
+        bdrSetClass(r.handle, r.platform, facts);          // facts first, so bdrTierOf can read them
+        // Compute + persist the rule-based tier alongside the facts. Preserve a pre-existing manual
+        // override if one somehow exists (the UI only classifies unclassified rows, so normally none).
+        const prev = bdrGetClass(r.handle, r.platform);
+        const mRow = rowByKey.get(`${r.platform}:${r.handle}`);
+        const ruleTier = mRow ? (bdrTierOf(mRow).tier ?? null) : null;
+        const tier_manual = prev.tier_manual === true;
+        const tier = tier_manual ? (prev.tier ?? null) : ruleTier;
+        bdrSetClass(r.handle, r.platform, { ...facts, tier, tier_manual });
         patches.push({
           handle:                    r.handle,
           platform:                  r.platform,
@@ -6774,6 +6798,8 @@ async function bdrClassifyVisible(limit) {
           total_posts_analyzed:      r.total_posts_analyzed       ?? null,
           uk_geography:              r.uk_geography               ?? null,
           classification_reasoning:  r.reasoning                  ?? null,
+          tier,
+          tier_manual,
         });
       }
       // Persist this batch to the DB *before* moving on — awaited so a save failure is
@@ -7338,7 +7364,7 @@ function insErBucket(er) {
 const ER_ORDER = ['10%+','5–10%','3–5%','1–3%','<1%','Unknown'];
 
 function insDimValue(m, dim) {
-  if (dim === 'tier')     { const t = bdrTierOf(m); return t.status === 'tier' ? `T${t.tier}` : (t.status === 'filtered' ? 'Filtered' : 'Unclassified'); }
+  if (dim === 'tier')     { const t = bdrEffectiveTier(m); return t.status === 'tier' ? `T${t.tier}` : (t.status === 'filtered' ? 'Filtered' : 'Unclassified'); }
   if (dim === 'entity')   { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type; return v ? (BD_ENTITY_META[v]?.label || v) : '(none)'; }
   if (dim === 'category') { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category; return v ? (BD_CAT_LABEL[v] || v) : '(none)'; }
   if (dim === 'uk')       { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').uk_geography; return v ? (BD_UK_META[v]?.label || v) : '(none)'; }
@@ -7403,7 +7429,7 @@ function bdrInsightsRender() {
   const avgEr  = erRows.length ? erRows.reduce((s, v) => s + v, 0) / erRows.length : 0;
   const classOf   = m => bdrGetClass(m.handle, m.platforms?.[0]||'');
   const tierCount = {1:0,2:0,3:0,4:0};
-  rows.forEach(m => { const t = bdrTierOf(m); if (t.status === 'tier') tierCount[t.tier]++; });
+  rows.forEach(m => { const t = bdrEffectiveTier(m); if (t.status === 'tier') tierCount[t.tier]++; });
   const ukRelevant = rows.filter(m => classOf(m).uk_geography === 'location_relevant').length;
   const classified = rows.filter(m => classOf(m).entity_type).length;
   document.getElementById('insStatCards').innerHTML = [
@@ -7547,7 +7573,7 @@ function bdrInsightsRender() {
   };
 
   let topRows = [...rows];
-  if (topTier) topRows = topRows.filter(m => { const t = bdrTierOf(m); return topTier === 'tiered' ? t.status === 'tier' : String(t.tier) === topTier; });
+  if (topTier) topRows = topRows.filter(m => { const t = bdrEffectiveTier(m); return topTier === 'tiered' ? t.status === 'tier' : String(t.tier) === topTier; });
   if (topEntity) topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type === topEntity);
   if (topCat)    topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category === topCat);
   topRows.sort((a, b) => topSort === 'er'
@@ -7584,7 +7610,7 @@ function bdrInsightsRender() {
           const cls = bdrGetClass(m.handle, m.platforms?.[0]||'');
           const em  = BD_ENTITY_META[cls.entity_type];
           const um  = BD_UK_META[cls.uk_geography];
-          const ti  = bdrTierOf(m); const tm = BD_TIER_META[ti.tier];
+          const ti  = bdrEffectiveTier(m); const tm = BD_TIER_META[ti.tier];
           const tierCell = tm
             ? `<span title="${(ti.reason||'').replace(/"/g,"'")}" style="font-size:10.5px;font-weight:800;background:${tm.bg};color:${tm.color};border:1px solid ${tm.color}55;border-radius:100px;padding:2px 9px;white-space:nowrap">${tm.label}</span>`
             : ti.status === 'filtered'
@@ -8087,7 +8113,7 @@ function bdrRefreshFilterDropdowns(filteredRows) {
   const tierCounts = { 1:0, 2:0, 3:0, 4:0, filtered:0, unclassified:0 };
   const entCounts = {}, catCounts = {}, ukCounts = {}, langCounts = {};
   filteredRows.forEach(m => {
-    const t = bdrTierOf(m);
+    const t = bdrEffectiveTier(m);
     if (t.status === 'tier') tierCounts[t.tier]++; else tierCounts[t.status]++;
     const c = bdrGetClass(m.handle, m.platforms?.[0] || '');
     const e = c.entity_type || '(none)';              entCounts[e] = (entCounts[e] || 0) + 1;
@@ -8303,7 +8329,7 @@ function bdrApplyFilter() {
   }
   if (tierFilt) {
     merged = merged.filter(m => {
-      const t = bdrTierOf(m);
+      const t = bdrEffectiveTier(m);
       if (tierFilt === 'tiered')  return t.status === 'tier';
       if (tierFilt === 'filtered') return t.status === 'filtered';
       if (tierFilt === 'unclassified') return t.status === 'unclassified';
@@ -8349,7 +8375,7 @@ function bdrApplyFilter() {
         case 'entity':          av=bdrGetClass(a.handle,a.platforms?.[0]||'').entity_type||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').entity_type||'zzz'; break;
         case 'category':        av=bdrGetClass(a.handle,a.platforms?.[0]||'').primary_content_category||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').primary_content_category||'zzz'; break;
         case 'uk':              av=bdrGetClass(a.handle,a.platforms?.[0]||'').uk_geography||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').uk_geography||'zzz'; break;
-        case 'tier':            av=bdrTierRank(bdrTierOf(a)); bv=bdrTierRank(bdrTierOf(b)); break;
+        case 'tier':            av=bdrTierRank(bdrEffectiveTier(a)); bv=bdrTierRank(bdrEffectiveTier(b)); break;
         case 'fetched_at':      av=a.fetched_at||'';               bv=b.fetched_at||'';               break;
         case 'language':        av=a.language||'zzz';              bv=b.language||'zzz';              break;
         default:                av=''; bv='';
@@ -8568,15 +8594,24 @@ function bdrRenderTable(rows, _skipPageSetup) {
     const ukHtml = um
       ? `<span title="${um.t}" style="font-size:10px;font-weight:700;background:${um.bg};color:${um.color};border:1px solid ${um.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap;cursor:help">${um.label}</span>`
       : muted;
-    // Rule-based outreach Tier badge (live).
-    const ti = bdrTierOf(m);
-    const tierTip = (ti.reason || '').replace(/"/g, "'");
+    // Outreach Tier — editable dropdown (Auto = live rule, or a manual T1–T4 override that persists).
+    const ti = bdrEffectiveTier(m);
+    const ruleTi = bdrTierOf(m);
+    const ruleLbl = ruleTi.status === 'tier' ? `T${ruleTi.tier}` : (ruleTi.status === 'filtered' ? 'filtered' : 'unset');
     const tm = BD_TIER_META[ti.tier];
-    const tierHtml = tm
-      ? `<span title="${tierTip}" style="font-size:10.5px;font-weight:800;background:${tm.bg};color:${tm.color};border:1px solid ${tm.color}55;border-radius:100px;padding:2px 9px;white-space:nowrap;cursor:help">${tm.label}</span>`
+    const selStyle = tm
+      ? `background:${tm.bg};color:${tm.color};border:1px solid ${tm.color}55;font-weight:800`
       : ti.status === 'filtered'
-        ? `<span title="Filtered: ${tierTip}" style="font-size:10px;font-weight:700;color:var(--muted2);border:1px dashed var(--border);border-radius:100px;padding:2px 8px;white-space:nowrap;cursor:help">filtered</span>`
-        : `<span title="Not classified yet — run AI Classify" style="color:var(--muted2)">—</span>`;
+        ? `background:var(--white);color:var(--muted2);border:1px dashed var(--border);font-weight:600`
+        : `background:var(--white);color:var(--muted2);border:1px solid var(--border)`;
+    const tierTip = ti.manual ? 'Manual override — pick Auto to revert to the rule' : (ti.reason || '');
+    const opt = (v, lbl) => `<option value="${v}"${(ti.manual && String(ti.tier) === v) || (!ti.manual && v === 'auto') ? ' selected' : ''}>${lbl}</option>`;
+    const tierHtml = (!ti.manual && ruleTi.status === 'unclassified')
+      ? `<span title="Not classified yet — run AI Classify" style="color:var(--muted2)">—</span>`
+      : `<select onchange="bdrSaveTierOverride(this)" data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}" title="${tierTip.replace(/"/g,"'")}" style="font-size:10.5px;border-radius:100px;padding:2px 6px;cursor:pointer;${selStyle}">
+           ${opt('auto', `Auto · ${ruleLbl}`)}
+           ${opt('1','T1')}${opt('2','T2')}${opt('3','T3')}${opt('4','T4')}
+         </select>${ti.manual ? '<span title="Manual override" style="color:var(--accent);font-weight:800;margin-left:3px">•</span>' : ''}`;
     const reasonTxt  = cls.reasoning || '';
     const reasonHtml = reasonTxt
       ? `<span title="${reasonTxt.replace(/"/g,"'")}" style="font-size:10.5px;color:var(--muted);cursor:help">${reasonTxt.slice(0,60)}${reasonTxt.length>60?'…':''}</span>`
@@ -8755,6 +8790,29 @@ async function bdrPatchClassificationDB(patches) {
   }
 }
 
+// Manual Tier override from the inline dropdown — saves automatically to the DB. "auto" reverts to
+// the live rule-based tier (tier_manual=false); T1–T4 set a persisted override (tier_manual=true).
+async function bdrSaveTierOverride(sel) {
+  const handle = sel.dataset.handle, platform = sel.dataset.platform;
+  const m = (bdrCurrentRows || []).find(x => x.handle === handle && (x.platforms?.[0] || '') === platform);
+  const existing = bdrGetClass(handle, platform);
+  let tier, tier_manual;
+  if (sel.value === 'auto') {
+    tier_manual = false;
+    tier = m ? (bdrTierOf(m).tier ?? null) : null; // store the current rule tier for DB query/export
+  } else {
+    tier_manual = true;
+    tier = Number(sel.value);
+  }
+  bdrSetClass(handle, platform, { ...existing, tier, tier_manual });
+  const res = await bdrPatchClassificationDB([{ handle, platform, tier, tier_manual }]);
+  if (!res.ok || res.unmatched?.length) {
+    alert(`Tier not saved for @${handle}: ${res.error || (res.unmatched?.length ? 'no matching DB row' : 'unknown error')}`);
+  }
+  bdrRenderPage();           // re-render current page in place (recolours badge, toggles • marker)
+  bdrInsightsRender();       // keep Insights in sync if open
+}
+
 function bdrProfileUrl(r) {
   if (!r?.handle) return '';
   const h    = r.handle.replace(/^@/, '');
@@ -8781,7 +8839,7 @@ function bdrExportCsv() {
     (m.bio||'').toLowerCase().includes(q)
   );
   if (tierFilt) merged = merged.filter(m => {
-    const t = bdrTierOf(m);
+    const t = bdrEffectiveTier(m);
     if (tierFilt === 'tiered')  return t.status === 'tier';
     if (tierFilt === 'filtered') return t.status === 'filtered';
     if (tierFilt === 'unclassified') return t.status === 'unclassified';
@@ -8801,7 +8859,7 @@ function bdrExportCsv() {
   });
   // Flatten back to individual rows for CSV export (one row per platform). Attach the creator-level
   // classification (keyed on the primary platform) to every row so it exports on each platform line.
-  const rows = merged.flatMap(m => { const cls = bdrGetClass(m.handle, m.platforms?.[0] || ''); const t = bdrTierOf(m); return m._rows.map(r => ({ ...r, _cls: cls, _tier: t })); });
+  const rows = merged.flatMap(m => { const cls = bdrGetClass(m.handle, m.platforms?.[0] || ''); const t = bdrEffectiveTier(m); return m._rows.map(r => ({ ...r, _cls: cls, _tier: t })); });
 
   const cols = ['handle','full_name','platform','followers','engagement_rate','is_verified',
                 'matched_keywords','post_captions','post_locations','bio','location','country',
