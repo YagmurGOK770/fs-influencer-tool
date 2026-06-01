@@ -4096,11 +4096,14 @@ function renderPostsModal(handle, posts) {
         <button class="pfill pfx" id="bdrPfX" onclick="bdrSetPlatform('x',this)">X <span class="fcount" id="bdrPcX">0</span></button>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="bdrFilterTier" onchange="bdrApplyFilter()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
-          <option value="">All Tiers</option>
+        <select id="bdrFilterEntity" onchange="bdrApplyFilter()" title="Filter by entity type" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="">All Entities</option>
         </select>
-        <select id="bdrFilterType" onchange="bdrApplyFilter()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);max-width:200px">
-          <option value="">All Types</option>
+        <select id="bdrFilterCategory" onchange="bdrApplyFilter()" title="Filter by primary content category" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);max-width:200px">
+          <option value="">All Categories</option>
+        </select>
+        <select id="bdrFilterUk" onchange="bdrApplyFilter()" title="Filter by UK relevance" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <option value="">All UK status</option>
         </select>
         <select id="bdrFilterLang" onchange="bdrApplyFilter()" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
           <option value="">All Languages</option>
@@ -4168,9 +4171,10 @@ function renderPostsModal(handle, posts) {
               <th title="Recent post captions — click to expand">Posts</th>
               <th>Bio</th>
               <th onclick="bdrSetSort('location')" style="cursor:pointer;user-select:none">Location <span id="bdrSrt-location" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th onclick="bdrSetSort('type')" style="cursor:pointer;user-select:none" title="Label the influencer type — saved in your browser">Type <span id="bdrSrt-type" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th onclick="bdrSetSort('llm_tier')" style="cursor:pointer;user-select:none" title="AI outreach tier">Tier <span id="bdrSrt-llm_tier" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th title="Tier reasoning">Reason</th>
+              <th onclick="bdrSetSort('entity')" style="cursor:pointer;user-select:none" title="individual (keep) vs brand (filter out) — from the classifier">Entity <span id="bdrSrt-entity" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('category')" style="cursor:pointer;user-select:none" title="Primary content category + dominant food-content type">Category <span id="bdrSrt-category" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('uk')" style="cursor:pointer;user-select:none" title="UK relevance judged from post-level location evidence">UK <span id="bdrSrt-uk" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th title="Classifier reasoning">Reason</th>
               <th onclick="bdrSetSort('language')" style="cursor:pointer;user-select:none" title="Detected language (ISO code)">Lang <span id="bdrSrt-language" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('fetched_at')" style="cursor:pointer;user-select:none">Saved <span id="bdrSrt-fetched_at" style="font-size:10px;opacity:.3">⇅</span></th>
             </tr>
@@ -4239,8 +4243,9 @@ function renderPostsModal(handle, posts) {
       <div style="display:flex;align-items:center;gap:6px">
         <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Row</span>
         <select id="insDimRow" onchange="bdrInsightsRender()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
-          <option value="tier">Tier</option>
-          <option value="type">Type</option>
+          <option value="entity">Entity</option>
+          <option value="category">Category</option>
+          <option value="uk">UK status</option>
           <option value="followers">Followers range</option>
           <option value="er">ER% range</option>
         </select>
@@ -4248,8 +4253,9 @@ function renderPostsModal(handle, posts) {
       <div style="display:flex;align-items:center;gap:6px">
         <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Column</span>
         <select id="insDimCol" onchange="bdrInsightsRender()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
-          <option value="type">Type</option>
-          <option value="tier">Tier</option>
+          <option value="category">Category</option>
+          <option value="entity">Entity</option>
+          <option value="uk">UK status</option>
           <option value="followers">Followers range</option>
           <option value="er">ER% range</option>
         </select>
@@ -4288,16 +4294,15 @@ function renderPostsModal(handle, posts) {
             <option value="followers">Followers</option>
             <option value="er">ER%</option>
           </select>
-          <span style="font-size:11px;color:var(--muted)">Filter tier</span>
-          <select id="insTopTier" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <span style="font-size:11px;color:var(--muted)">Filter entity</span>
+          <select id="insTopEntity" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
-            <option value="1">T1</option>
-            <option value="2">T2</option>
-            <option value="3">T3</option>
-            <option value="4">T4</option>
+            <option value="individual">Individual</option>
+            <option value="brand">Brand</option>
+            <option value="unclear">Unclear</option>
           </select>
-          <span style="font-size:11px;color:var(--muted)">Filter type</span>
-          <select id="insTopType" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+          <span style="font-size:11px;color:var(--muted)">Filter category</span>
+          <select id="insTopCategory" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
           </select>
         </div>
@@ -6563,17 +6568,60 @@ function bdrUpdateModelSel() {
     .map(m => `<option value="${m.id}">${m.label}</option>`).join('');
 }
 
+// ── New structured-facts classification (entity / category / food-type / uk_geography) ──────
+// Session-scoped store, keyed `${platform}:${handle}` (platform-first, matching the legacy caches).
+// Seeded from the DB columns on load (loadBdResults) and updated live after an AI Classify run, so
+// the table/filters/insights read one source. No localStorage — the reasoning strings are large and
+// the facts always live in the DB, reloaded with the rows.
+const _bdrClassCache = new Map();
+const bdrClassKey = (handle, platform) => `${platform || ''}:${handle || ''}`;
+function bdrGetClass(handle, platform) { return _bdrClassCache.get(bdrClassKey(handle, platform)) || {}; }
+function bdrSetClass(handle, platform, facts) { _bdrClassCache.set(bdrClassKey(handle, platform), facts || {}); }
+function bdrSeedClassFromRow(r) {
+  if (!r || !r.handle || !r.platform) return;
+  if (r.entity_type == null && r.primary_content_category == null && r.uk_geography == null) return;
+  _bdrClassCache.set(bdrClassKey(r.handle, r.platform), {
+    entity_type:               r.entity_type               ?? null,
+    primary_content_category:  r.primary_content_category  ?? null,
+    primary_food_content_type: r.primary_food_content_type ?? null,
+    food_post_count:           r.food_post_count            ?? null,
+    total_posts_analyzed:      r.total_posts_analyzed       ?? null,
+    uk_geography:              r.uk_geography               ?? null,
+    reasoning:                 r.classification_reasoning   ?? null,
+  });
+}
+
+// Display metadata for the enums (labels + badge colours).
+const BD_ENTITY_META = {
+  individual: { label: 'Individual', color: 'var(--text)',  bg: 'var(--surface)', t: 'A real person — keep' },
+  brand:      { label: 'Brand',      color: '#c0392b',       bg: '#fdf0ee',        t: 'Company / restaurant / publication — filter out' },
+  unclear:    { label: 'Unclear',    color: 'var(--muted)',  bg: 'var(--surface)', t: 'Not enough signal to decide' },
+};
+const BD_CAT_LABEL = {
+  food: 'Food', fitness_wellness: 'Fitness', fashion_beauty: 'Fashion', travel_lifestyle: 'Travel',
+  parenting_family: 'Parenting', business_career: 'Business', arts_culture: 'Arts',
+  general_lifestyle: 'Lifestyle', entertainment: 'Entertainment', other: 'Other',
+};
+const BD_FOODTYPE_LABEL = {
+  restaurant_lists: 'Restaurant lists', restaurant_reviews: 'Restaurant reviews', food_news_culture: 'Food news/culture',
+  chef_dishes: 'Chef dishes', travel_food: 'Travel food', recipes: 'Recipes', home_meals: 'Home meals',
+  mukbang: 'Mukbang', mixed: 'Mixed',
+};
+const BD_UK_META = {
+  location_relevant:   { label: 'UK ✓',       short: 'relevant',   color: 'var(--green)', bg: 'var(--green-bg)', t: '50%+ of location-bearing posts are UK' },
+  location_low_proof:  { label: 'UK partial',  short: 'low_proof',  color: 'var(--amber)', bg: '#fef8ec',         t: 'Some UK posts, but under 50% of located posts' },
+  location_unverified: { label: 'UK claim',    short: 'unverified', color: 'var(--muted)', bg: 'var(--surface)',  t: 'Bio/location claims UK, but no post-level proof' },
+  location_irrelevant: { label: 'non-UK',      short: 'irrelevant', color: '#c0392b',      bg: '#fdf0ee',         t: 'No UK signal in posts, bio empty or non-UK' },
+};
+
 async function bdrClassifyVisible(limit) {
   const isTest = !!limit;
   const btn = document.getElementById(isTest ? 'bdrClassifyTestBtn' : 'bdrClassifyBtn');
   if (!bdrCurrentRows || !bdrCurrentRows.length) return;
 
-  // Skip rows that already have BOTH a tier AND a uk_based verdict. Profiles
-  // classified before uk_based existed will still run so they get the new field.
-  const unclassified = bdrCurrentRows.filter(m => {
-    const meta = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '');
-    return !meta.tier || meta.uk_based == null;
-  });
+  // Skip rows already classified (entity_type set). The new classifier fetches each creator's
+  // enriched captions server-side, so we only send identity fields here.
+  const unclassified = bdrCurrentRows.filter(m => !bdrGetClass(m.handle, m.platforms?.[0] || '').entity_type);
   const skipped = bdrCurrentRows.length - unclassified.length;
   const rows = isTest ? unclassified.slice(0, limit) : unclassified;
   if (!rows.length) {
@@ -6590,20 +6638,16 @@ async function bdrClassifyVisible(limit) {
   const model    = document.getElementById('bdrClassifyModelSel')?.value    || 'claude-haiku-4-5-20251001';
 
   const profiles = rows.map(m => ({
-    handle:          m.handle,
-    platform:        m.platforms[0] || '',
-    full_name:       m.full_name || '',
-    followers:       m.followers || '',
-    engagement_rate: m.engagement_rate || 0,
-    platform_count:  m.platforms?.length || 1,
-    bio:             m.bio || '',
-    location:        m.location || '',
-    post_captions:   m.post_captions || [],
+    handle:    m.handle,
+    platform:  m.platforms[0] || '',
+    full_name: m.full_name || '',
+    bio:       m.bio || '',
+    location:  m.location || '',
   }));
 
   // Send in batches of 50
   const BATCH = 50;
-  let done = 0;
+  let done = 0, failed = 0;
   try {
     for (let i = 0; i < profiles.length; i += BATCH) {
       const batch = profiles.slice(i, i + BATCH);
@@ -6619,18 +6663,26 @@ async function bdrClassifyVisible(limit) {
       const { results } = await resp.json();
       const patches = [];
       for (const r of results) {
-        if (r.type) bdrSetType(r.handle, r.platform, r.type);
-        if (r.tier || r.reason || r.uk_based != null || r.food_focus != null) {
-          bdrSetLLMMeta(r.handle, r.platform, r.tier, r.tier_reason, r.reason, r.uk_based, r.food_focus);
-        }
+        if (r.error) { failed++; continue; }
+        bdrSetClass(r.handle, r.platform, {
+          entity_type:               r.entity_type               ?? null,
+          primary_content_category:  r.primary_content_category  ?? null,
+          primary_food_content_type: r.primary_food_content_type ?? null,
+          food_post_count:           r.food_post_count            ?? null,
+          total_posts_analyzed:      r.total_posts_analyzed       ?? null,
+          uk_geography:              r.uk_geography               ?? null,
+          reasoning:                 r.reasoning                  ?? null,
+        });
         patches.push({
-          handle:           r.handle,
-          platform:         r.platform,
-          influencer_type:  r.type        || null,
-          influencer_tier:  r.tier        ?? null,
-          tier_reason:      r.tier_reason || null,
-          uk_based:         r.uk_based    ?? null,
-          food_focus:       r.food_focus  ?? null,
+          handle:                    r.handle,
+          platform:                  r.platform,
+          entity_type:               r.entity_type               ?? null,
+          primary_content_category:  r.primary_content_category  ?? null,
+          primary_food_content_type: r.primary_food_content_type ?? null,
+          food_post_count:           r.food_post_count            ?? null,
+          total_posts_analyzed:      r.total_posts_analyzed       ?? null,
+          uk_geography:              r.uk_geography               ?? null,
+          classification_reasoning:  r.reasoning                  ?? null,
         });
       }
       // Fire-and-forget save to DB
@@ -6640,15 +6692,16 @@ async function bdrClassifyVisible(limit) {
         ? `⏳ Classifying ${done}/${profiles.length} (skipped ${skipped})…`
         : `⏳ Classifying ${done}/${profiles.length}…`;
     }
-    btn.textContent = skipped ? `✅ Done (${done}, skipped ${skipped})` : `✅ Done (${done})`;
-    // Re-render table with updated types
-    bdrRenderTable(rows);
+    const failNote = failed ? `, ${failed} failed` : '';
+    btn.textContent = skipped ? `✅ Done (${done}, skipped ${skipped}${failNote})` : `✅ Done (${done}${failNote})`;
+    // Re-render with the new classification columns populated
+    bdrRenderPage();
   } catch (e) {
-    btn.textContent = '✨ AI Classify';
+    btn.textContent = isTest ? '✨ Test (10)' : '✨ AI Classify';
     alert('Classification failed: ' + e.message);
   } finally {
     btn.disabled = false;
-    setTimeout(() => { if (btn.textContent.startsWith('✅')) btn.textContent = '✨ AI Classify'; }, 3000);
+    setTimeout(() => { if (btn.textContent.startsWith('✅')) btn.textContent = isTest ? '✨ Test (10)' : '✨ AI Classify'; }, 4000);
   }
 }
 
@@ -7003,6 +7056,7 @@ async function loadBdResults(forceRefresh, dataset) {
     allDbRows.forEach(r => {
       if (!r.handle || !r.platform) return;
       const key = `${r.platform}:${r.handle}`;
+      bdrSeedClassFromRow(r); // new structured-facts classifier columns → _bdrClassCache
       if (r.influencer_type)  types[key]  = r.influencer_type;
       if (r.influencer_tier != null || r.uk_based != null || r.food_focus != null) {
         const existing = llmAll[key] || {};
@@ -7179,8 +7233,9 @@ function insErBucket(er) {
 const ER_ORDER = ['10%+','5–10%','3–5%','1–3%','<1%','Unknown'];
 
 function insDimValue(m, dim) {
-  if (dim === 'tier')      return insTierLabel(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier || 0);
-  if (dim === 'type')      return bdrGetType(m.handle, m.platforms?.[0]||'') || '(none)';
+  if (dim === 'entity')   { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type; return v ? (BD_ENTITY_META[v]?.label || v) : '(none)'; }
+  if (dim === 'category') { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category; return v ? (BD_CAT_LABEL[v] || v) : '(none)'; }
+  if (dim === 'uk')       { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').uk_geography; return v ? (BD_UK_META[v]?.label || v) : '(none)'; }
   if (dim === 'followers') return insFollowersBucket(m.followers);
   if (dim === 'er') {
     const isYT = m.platforms?.some(p => p.includes('youtube'));
@@ -7193,10 +7248,11 @@ function insDimValue(m, dim) {
 }
 
 function insDimOrder(dim, keys) {
-  if (dim === 'tier')      return ['T1','T2','T3','T4','No tier'].filter(k => keys.has(k));
+  if (dim === 'entity')    return ['Individual','Brand','Unclear','(none)'].filter(k => keys.has(k));
+  if (dim === 'uk')        return ['UK ✓','UK partial','UK claim','non-UK','(none)'].filter(k => keys.has(k));
   if (dim === 'followers') return FOLLOWERS_ORDER.filter(k => keys.has(k));
   if (dim === 'er')        return ER_ORDER.filter(k => keys.has(k));
-  // type: sort by count (already handled by caller)
+  // category: sort by count (already handled by caller)
   return [...keys].sort();
 }
 
@@ -7238,14 +7294,17 @@ function bdrInsightsRender() {
   };
   const erRows = rows.map(m => erOf(m)).filter(v => v != null);
   const avgEr  = erRows.length ? erRows.reduce((s, v) => s + v, 0) / erRows.length : 0;
-  const t1count = rows.filter(m => (bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === 1).length;
-  const typedCount = rows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'')).length;
+  const classOf   = m => bdrGetClass(m.handle, m.platforms?.[0]||'');
+  const ukRelevant = rows.filter(m => classOf(m).uk_geography === 'location_relevant').length;
+  const brandCount = rows.filter(m => classOf(m).entity_type === 'brand').length;
+  const classified = rows.filter(m => classOf(m).entity_type).length;
   document.getElementById('insStatCards').innerHTML = [
     { num: rows.length,                     label: 'Creators (unique)' },
     { num: bdFormatCompact(totalFollowers), label: 'Total followers' },
     { num: avgEr.toFixed(1) + '%',          label: 'Avg ER%' },
-    { num: t1count,                         label: 'T1 creators' },
-    { num: typedCount,                      label: 'Typed creators' },
+    { num: ukRelevant,                      label: 'UK-relevant' },
+    { num: brandCount,                      label: 'Brands (filter out)' },
+    { num: classified,                      label: 'Classified' },
   ].map(s => `<div class="cov-stat"><div class="cov-stat-num" style="font-size:22px">${s.num}</div><div class="cov-stat-label">${s.label}</div></div>`).join('');
 
   // Cross-dataset split (matching-only): how many kept creators are food-only,
@@ -7280,8 +7339,8 @@ function bdrInsightsRender() {
   const rowKeys = (() => {
     const keySet = new Set(Object.keys(cellMap));
     const ordered = insDimOrder(rowDim, keySet);
-    // For type dim, sort by total count
-    if (rowDim === 'type') return Object.keys(cellMap).sort((a,b) => {
+    // For category dim (no fixed order), sort by total count
+    if (rowDim === 'category') return Object.keys(cellMap).sort((a,b) => {
       const ta = Object.values(cellMap[a]).reduce((s,a)=>s+a.length,0);
       const tb = Object.values(cellMap[b]).reduce((s,a)=>s+a.length,0);
       return tb - ta;
@@ -7290,7 +7349,7 @@ function bdrInsightsRender() {
   })();
   const colKeys = (() => {
     const ordered = insDimOrder(colDim, colKeySet);
-    if (colDim === 'type') {
+    if (colDim === 'category') {
       const typeTotals = {};
       colKeySet.forEach(ck => {
         typeTotals[ck] = rows.filter(m => insDimValue(m, colDim) === ck).length;
@@ -7341,10 +7400,7 @@ function bdrInsightsRender() {
 
   const tbody = rowKeys.map(rk => {
     const rowTotal = rows.filter(m => insDimValue(m, rowDim) === rk).length;
-    const tierNum = rowDim === 'tier' ? [1,2,3,4].find(n => `T${n}` === rk) : null;
-    const rowLabel = tierNum
-      ? `<span style="font-weight:700;color:${insTierColor(tierNum)}">${rk}</span>`
-      : `<span style="font-weight:600">${rk}</span>`;
+    const rowLabel = `<span style="font-weight:600">${rk}</span>`;
     const cells = colKeys.map(ck => {
       const { v, display } = cellVal(rk, ck);
       const intensity = v > 0 ? Math.round((v / globalMax) * 90) : 0;
@@ -7363,15 +7419,16 @@ function bdrInsightsRender() {
   document.getElementById('insCrossTable').innerHTML = thead + `<tbody>${tbody}</tbody>` + tfoot;
 
   // --- Top profiles list ---
-  // Populate type filter dropdown dynamically
-  const topTypeSel = document.getElementById('insTopType');
-  const prevTopType = topTypeSel.value;
-  const allTypes = [...new Set(rows.map(m => bdrGetType(m.handle, m.platforms?.[0]||'')).filter(Boolean))].sort();
-  topTypeSel.innerHTML = '<option value="">All</option>' + allTypes.map(t => `<option value="${t}"${t===prevTopType?' selected':''}>${t}</option>`).join('');
+  // Populate category filter dropdown dynamically (from the classifier's category facts)
+  const topCatSel = document.getElementById('insTopCategory');
+  const prevTopCat = topCatSel.value;
+  const allCats = [...new Set(rows.map(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category).filter(Boolean))]
+    .sort((a, b) => (BD_CAT_LABEL[a]||a).localeCompare(BD_CAT_LABEL[b]||b));
+  topCatSel.innerHTML = '<option value="">All</option>' + allCats.map(c => `<option value="${c}"${c===prevTopCat?' selected':''}>${BD_CAT_LABEL[c]||c}</option>`).join('');
 
-  const topSort = document.getElementById('insTopSort').value;
-  const topTier = document.getElementById('insTopTier').value;
-  const topType = topTypeSel.value;
+  const topSort   = document.getElementById('insTopSort').value;
+  const topEntity = document.getElementById('insTopEntity').value;
+  const topCat    = topCatSel.value;
 
   const topErOf = m => {
     const isYT = m.platforms?.some(p => p.includes('youtube'));
@@ -7380,14 +7437,13 @@ function bdrInsightsRender() {
   };
 
   let topRows = [...rows];
-  if (topTier) topRows = topRows.filter(m => String(bdrGetLLMMeta(m.handle, m.platforms?.[0]||'').tier||0) === topTier);
-  if (topType) topRows = topRows.filter(m => bdrGetType(m.handle, m.platforms?.[0]||'') === topType);
+  if (topEntity) topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type === topEntity);
+  if (topCat)    topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category === topCat);
   topRows.sort((a, b) => topSort === 'er'
     ? topErOf(b) - topErOf(a)
     : (Number(b.followers)||0) - (Number(a.followers)||0));
   topRows = topRows.slice(0, 30);
 
-  const TIER_BG = { 1:'#edf7f1', 2:'#eef4fc', 3:'#fef8ec', 4:'#fdf0ee' };
   const INS_PLAT_SVG = {
     instagram: `<svg viewBox="0 0 20 20" width="13" height="13" xmlns="http://www.w3.org/2000/svg"><rect x="2.5" y="2.5" width="15" height="15" rx="4.5" fill="none" stroke="white" stroke-width="1.8"/><circle cx="10" cy="10" r="3.8" fill="none" stroke="white" stroke-width="1.8"/><circle cx="14.8" cy="5.2" r="1.1" fill="white"/></svg>`,
     tiktok:    `<svg viewBox="0 0 20 20" width="12" height="12" xmlns="http://www.w3.org/2000/svg"><path fill="white" d="M13.4 2v1.6a3.3 3.3 0 0 0 3.3 2.8v2.2a5.6 5.6 0 0 1-3.3-1.1V13a4.4 4.4 0 1 1-2.2-3.8v2.4a2.1 2.1 0 1 0 1.1 1.9V2h1.1z"/></svg>`,
@@ -7399,12 +7455,6 @@ function bdrInsightsRender() {
     tiktok: '#010101', youtube: '#ff0000', x: '#000000',
   };
 
-  const TIER_STYLE = {
-    1: { bg:'#edf7f1', color:'var(--green)',  border:'var(--green)'  },
-    2: { bg:'#eef4fc', color:'var(--blue)',   border:'var(--blue)'   },
-    3: { bg:'#fef8ec', color:'var(--amber)',  border:'var(--amber)'  },
-    4: { bg:'#fdf0ee', color:'#c0392b',       border:'#c0392b'       },
-  };
   const trackedHandles = new Set(_outreachData.map(r => r.handle));
   document.getElementById('insTopList').innerHTML = topRows.length
     ? `<table style="width:100%;border-collapse:collapse">
@@ -7413,14 +7463,22 @@ function bdrInsightsRender() {
           <th style="padding:6px 8px;text-align:left">Handle</th>
           <th style="padding:6px 8px;text-align:right">Followers</th>
           <th style="padding:6px 8px;text-align:right">ER%</th>
-          <th style="padding:6px 8px;text-align:left">Tier</th>
-          <th style="padding:6px 8px;text-align:left">Type</th>
+          <th style="padding:6px 8px;text-align:left">Entity</th>
+          <th style="padding:6px 8px;text-align:left">Category</th>
+          <th style="padding:6px 8px;text-align:left">UK</th>
           <th style="padding:6px 8px;width:28px"></th>
         </tr></thead>
         <tbody>${topRows.map((m,i) => {
-          const llmMeta = bdrGetLLMMeta(m.handle, m.platforms?.[0]||'');
-          const tier = llmMeta.tier || 0;
-          const type = bdrGetType(m.handle, m.platforms?.[0]||'') || '—';
+          const cls = bdrGetClass(m.handle, m.platforms?.[0]||'');
+          const em  = BD_ENTITY_META[cls.entity_type];
+          const um  = BD_UK_META[cls.uk_geography];
+          const entityCell = em
+            ? `<span title="${em.t}" style="font-size:10px;font-weight:700;background:${em.bg};color:${em.color};border:1px solid ${em.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${em.label}</span>`
+            : '<span style="color:var(--muted2)">—</span>';
+          const catCell = cls.primary_content_category ? (BD_CAT_LABEL[cls.primary_content_category] || cls.primary_content_category) : '—';
+          const ukCell  = um
+            ? `<span title="${um.t}" style="font-size:10px;font-weight:700;background:${um.bg};color:${um.color};border:1px solid ${um.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${um.label}</span>`
+            : '<span style="color:var(--muted2)">—</span>';
           const isInsYT = m.platforms?.some(p => p.includes('youtube'));
           const erVal2 = isInsYT
             ? (Number(m.avg_likes) > 0 && Number(m.followers) > 0 ? Math.round((Number(m.avg_likes) / Number(m.followers)) * 10000) / 100 : null)
@@ -7446,16 +7504,6 @@ function bdrInsightsRender() {
             const ico = INS_PLAT_SVG[pKey] || `<span style="font-size:9px;font-weight:700;color:#fff">${p.slice(0,2).toUpperCase()}</span>`;
             return `<a href="${platUrl}" target="_blank" rel="noopener" title="Open ${p} profile" style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;${bg};text-decoration:none;flex-shrink:0;margin-left:4px">${ico}</a>`;
           }).filter(Boolean).join('');
-          const ts = tier ? TIER_STYLE[tier] : null;
-          const tierSelect = `<select data-handle="${h}" data-platform="${m.platforms?.[0]||''}"
-            onchange="bdrSaveTier(this)"
-            style="font-size:11px;padding:2px 6px;border:1px solid ${ts?.border||'var(--border)'};border-radius:6px;background:${ts?.bg||'var(--white)'};color:${ts?.color||'var(--text)'};font-weight:${ts?'700':'400'};cursor:pointer">
-            <option value="">— tier —</option>
-            <option value="1"${tier===1?' selected':''}>T1</option>
-            <option value="2"${tier===2?' selected':''}>T2</option>
-            <option value="3"${tier===3?' selected':''}>T3</option>
-            <option value="4"${tier===4?' selected':''}>T4</option>
-          </select>`;
           const rowBg = i % 2 === 0 ? '' : 'background:var(--surface)';
           return `<tr style="font-size:12px;${rowBg}">
             ${checkCell}
@@ -7468,8 +7516,9 @@ function bdrInsightsRender() {
             }</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
-            <td style="padding:6px 8px">${tierSelect}</td>
-            <td style="padding:6px 8px;color:var(--muted)">${type}</td>
+            <td style="padding:6px 8px">${entityCell}</td>
+            <td style="padding:6px 8px;color:var(--muted)">${catCell}</td>
+            <td style="padding:6px 8px">${ukCell}</td>
             <td style="padding:6px 8px;text-align:right"><button onclick="insExcludeProfile('${h}')" title="Mark as irrelevant — permanently excluded regardless of filter rules" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
           </tr>`;
         }).join('')}</tbody>
@@ -7902,62 +7951,55 @@ async function bdrViewFindPlatformsLog() {
 }
 
 function bdrRefreshFilterDropdowns(filteredRows) {
-  const TIER_LABELS = { 1:'T1', 2:'T2', 3:'T3', 4:'T4', 0:'No tier' };
-  const tierSel = document.getElementById('bdrFilterTier');
-  const typeSel = document.getElementById('bdrFilterType');
+  const entSel  = document.getElementById('bdrFilterEntity');
+  const catSel  = document.getElementById('bdrFilterCategory');
+  const ukSel   = document.getElementById('bdrFilterUk');
   const langSel = document.getElementById('bdrFilterLang');
-  if (!tierSel || !typeSel) return;
+  if (!entSel || !catSel || !ukSel) return;
 
-  const prevTier = tierSel.value;
-  const prevType = typeSel.value;
+  const prevEnt  = entSel.value;
+  const prevCat  = catSel.value;
+  const prevUk   = ukSel.value;
   const prevLang = langSel?.value || '';
 
-  // Count tiers, types and languages in the currently-visible (post-filter) rows
-  const tierCounts = {};
-  const typeCounts = {};
-  const langCounts = {};
+  // Count entity / category / uk / language across the currently-visible (post-filter) rows
+  const entCounts = {}, catCounts = {}, ukCounts = {}, langCounts = {};
   filteredRows.forEach(m => {
-    const t = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier || 0;
-    tierCounts[t] = (tierCounts[t] || 0) + 1;
-    const ty = bdrGetType(m.handle, m.platforms?.[0] || '') || '';
-    if (ty) typeCounts[ty] = (typeCounts[ty] || 0) + 1;
-    else    typeCounts['(none)'] = (typeCounts['(none)'] || 0) + 1;
+    const c = bdrGetClass(m.handle, m.platforms?.[0] || '');
+    const e = c.entity_type || '(none)';              entCounts[e] = (entCounts[e] || 0) + 1;
+    const cat = c.primary_content_category || '(none)'; catCounts[cat] = (catCounts[cat] || 0) + 1;
+    const uk = c.uk_geography || '(none)';            ukCounts[uk] = (ukCounts[uk] || 0) + 1;
     const lang = m.language || '';
     if (lang) langCounts[lang] = (langCounts[lang] || 0) + 1;
     else      langCounts['(none)'] = (langCounts['(none)'] || 0) + 1;
   });
 
-  // Rebuild tier dropdown — fixed order 1,2,3,4,0; only show tiers that exist
-  tierSel.innerHTML = '<option value="">All Tiers</option>';
-  [1,2,3,4,0].forEach(k => {
-    if (!tierCounts[k]) return;
-    const opt = document.createElement('option');
-    opt.value = k === 0 ? 'none' : String(k);
-    opt.textContent = `${TIER_LABELS[k]} (${tierCounts[k]})`;
-    tierSel.appendChild(opt);
-  });
-  // Restore selection if it still exists, else reset
-  if ([...tierSel.options].some(o => o.value === prevTier)) tierSel.value = prevTier;
-  else tierSel.value = '';
+  const fill = (sel, allLabel, order, labelOf, counts, prev) => {
+    sel.innerHTML = `<option value="">${allLabel}</option>`;
+    const keys = order
+      ? order.filter(k => counts[k])
+      : Object.keys(counts).filter(k => k !== '(none)').sort((a, b) => counts[b] - counts[a]);
+    keys.forEach(k => {
+      const opt = document.createElement('option');
+      opt.value = k;
+      opt.textContent = `${labelOf(k)} (${counts[k]})`;
+      sel.appendChild(opt);
+    });
+    if (counts['(none)']) {
+      const opt = document.createElement('option');
+      opt.value = 'none';
+      opt.textContent = `(unclassified) (${counts['(none)']})`;
+      sel.appendChild(opt);
+    }
+    sel.value = [...sel.options].some(o => o.value === prev) ? prev : '';
+  };
 
-  // Rebuild type dropdown — sorted by count desc, named types first, (none) last
-  typeSel.innerHTML = '<option value="">All Types</option>';
-  const named = Object.entries(typeCounts).filter(([k]) => k !== '(none)').sort((a,b) => b[1]-a[1]);
-  const noType = typeCounts['(none)'];
-  named.forEach(([k, n]) => {
-    const opt = document.createElement('option');
-    opt.value = k;
-    opt.textContent = `${k} (${n})`;
-    typeSel.appendChild(opt);
-  });
-  if (noType) {
-    const opt = document.createElement('option');
-    opt.value = 'none';
-    opt.textContent = `No type (${noType})`;
-    typeSel.appendChild(opt);
-  }
-  if ([...typeSel.options].some(o => o.value === prevType)) typeSel.value = prevType;
-  else typeSel.value = '';
+  fill(entSel, 'All Entities', ['individual', 'brand', 'unclear'],
+       k => (BD_ENTITY_META[k]?.label || k), entCounts, prevEnt);
+  fill(catSel, 'All Categories', null,
+       k => (BD_CAT_LABEL[k] || k), catCounts, prevCat);
+  fill(ukSel, 'All UK status', ['location_relevant', 'location_low_proof', 'location_unverified', 'location_irrelevant'],
+       k => (BD_UK_META[k]?.label || k), ukCounts, prevUk);
 
   // Rebuild language dropdown — EN first, then alphabetical, (none) last
   if (langSel) {
@@ -8073,7 +8115,7 @@ function bdrSetSort(col) {
 }
 
 function bdrUpdateSortIndicators() {
-  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','engScore','recencyScore','reachRatio','location','type','fetched_at','language'];
+  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','engScore','recencyScore','reachRatio','location','entity','category','uk','fetched_at','language'];
   for (const c of sortable) {
     const el = document.getElementById('bdrSrt-' + c);
     if (!el) continue;
@@ -8098,9 +8140,10 @@ function bdrSearchDebounced() {
 function bdrApplyFilter() {
   const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
-  const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
-  const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
-  const langFilt = (document.getElementById('bdrFilterLang')?.value || '');
+  const entFilt  = (document.getElementById('bdrFilterEntity')?.value   || '');
+  const catFilt  = (document.getElementById('bdrFilterCategory')?.value || '');
+  const ukFilt   = (document.getElementById('bdrFilterUk')?.value       || '');
+  const langFilt = (document.getElementById('bdrFilterLang')?.value     || '');
 
   let merged = bdrMergeByHandle(src);
   // Compute engagement scores over the FULL merged set (cohort = all enriched creators per
@@ -8121,16 +8164,22 @@ function bdrApplyFilter() {
       (Array.isArray(m.matched_keywords) ? m.matched_keywords.join(' ').toLowerCase() : '').includes(q)
     );
   }
-  if (tierFilt) {
+  if (entFilt) {
     merged = merged.filter(m => {
-      const tier = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier;
-      return tierFilt === 'none' ? !tier : String(tier) === tierFilt;
+      const v = bdrGetClass(m.handle, m.platforms?.[0] || '').entity_type;
+      return entFilt === 'none' ? !v : v === entFilt;
     });
   }
-  if (typeFilt) {
+  if (catFilt) {
     merged = merged.filter(m => {
-      const type = bdrGetType(m.handle, m.platforms?.[0] || '');
-      return typeFilt === 'none' ? !type : type === typeFilt;
+      const v = bdrGetClass(m.handle, m.platforms?.[0] || '').primary_content_category;
+      return catFilt === 'none' ? !v : v === catFilt;
+    });
+  }
+  if (ukFilt) {
+    merged = merged.filter(m => {
+      const v = bdrGetClass(m.handle, m.platforms?.[0] || '').uk_geography;
+      return ukFilt === 'none' ? !v : v === ukFilt;
     });
   }
   if (langFilt) {
@@ -8151,8 +8200,9 @@ function bdrApplyFilter() {
         case 'recencyScore':    av=a.recencyScore??-1;             bv=b.recencyScore??-1;             break;
         case 'reachRatio':      av=a.reachRatio??-1;               bv=b.reachRatio??-1;               break;
         case 'location':        av=(a.location||'').toLowerCase(); bv=(b.location||'').toLowerCase(); break;
-        case 'type':            av=bdrGetType(a.handle,'').toLowerCase(); bv=bdrGetType(b.handle,'').toLowerCase(); break;
-        case 'llm_tier':        av=bdrGetLLMMeta(a.handle,a.platforms?.[0]||'').tier||99; bv=bdrGetLLMMeta(b.handle,b.platforms?.[0]||'').tier||99; break;
+        case 'entity':          av=bdrGetClass(a.handle,a.platforms?.[0]||'').entity_type||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').entity_type||'zzz'; break;
+        case 'category':        av=bdrGetClass(a.handle,a.platforms?.[0]||'').primary_content_category||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').primary_content_category||'zzz'; break;
+        case 'uk':              av=bdrGetClass(a.handle,a.platforms?.[0]||'').uk_geography||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').uk_geography||'zzz'; break;
         case 'fetched_at':      av=a.fetched_at||'';               bv=b.fetched_at||'';               break;
         case 'language':        av=a.language||'zzz';              bv=b.language||'zzz';              break;
         default:                av=''; bv='';
@@ -8351,23 +8401,30 @@ function bdrRenderTable(rows, _skipPageSetup) {
       ? new Date(m.fetched_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'2-digit'})
       : '—';
 
-    const safeHandle   = (m.handle||'').replace(/"/g,'&quot;');
-    const typeVal      = bdrGetType(m.handle, m.platforms[0]||'').replace(/"/g,'&quot;');
-    const llmMeta    = bdrGetLLMMeta(m.handle, m.platforms[0]||'');
-    const TIER_STYLE = {
-      1: { label: 'T1',   bg: '#edf7f1', color: 'var(--green)',  border: 'var(--green)' },
-      2: { label: 'T2',     bg: '#eef4fc', color: 'var(--blue)',   border: 'var(--blue)'  },
-      3: { label: 'T3',      bg: '#fef8ec', color: 'var(--amber)',  border: 'var(--amber)' },
-      4: { label: 'T4',   bg: '#fdf0ee', color: '#c0392b',       border: '#c0392b'      },
-    };
-    const ts = TIER_STYLE[llmMeta.tier];
-    const tierBadge  = ts
-      ? `<span style="font-size:10px;font-weight:700;background:${ts.bg};color:${ts.color};border:1px solid ${ts.border}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${ts.label}</span>`
-      : '<span style="color:var(--muted2)">—</span>';
-    const tierReason = llmMeta.tier_reason || llmMeta.reason || '';
-    const reasonHtml = tierReason
-      ? `<span title="${tierReason.replace(/"/g,"'")}" style="font-size:10.5px;color:var(--muted);cursor:help">${tierReason.slice(0,60)}${tierReason.length>60?'…':''}</span>`
-      : '<span style="color:var(--muted2)">—</span>';
+    const safeHandle = (m.handle||'').replace(/"/g,'&quot;');
+    // New structured-facts classification (read-only AI output).
+    const cls   = bdrGetClass(m.handle, m.platforms[0]||'');
+    const muted = '<span style="color:var(--muted2)">—</span>';
+    const em = BD_ENTITY_META[cls.entity_type];
+    const entityHtml = em
+      ? `<span title="${em.t}" style="font-size:10px;font-weight:700;background:${em.bg};color:${em.color};border:1px solid ${em.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap;cursor:help">${em.label}</span>`
+      : muted;
+    const catLabel = cls.primary_content_category ? (BD_CAT_LABEL[cls.primary_content_category] || cls.primary_content_category) : '';
+    const ftLabel  = cls.primary_food_content_type ? (BD_FOODTYPE_LABEL[cls.primary_food_content_type] || cls.primary_food_content_type) : '';
+    const foodN    = (cls.food_post_count != null && cls.total_posts_analyzed != null)
+      ? `${cls.food_post_count}/${cls.total_posts_analyzed} food`
+      : (cls.food_post_count != null ? `${cls.food_post_count} food` : '');
+    const categoryHtml = catLabel
+      ? `<div style="font-size:11.5px;font-weight:600;color:var(--text)">${catLabel}</div>${(ftLabel||foodN)?`<div style="font-size:10px;color:var(--muted)">${[ftLabel, foodN].filter(Boolean).join(' · ')}</div>`:''}`
+      : muted;
+    const um = BD_UK_META[cls.uk_geography];
+    const ukHtml = um
+      ? `<span title="${um.t}" style="font-size:10px;font-weight:700;background:${um.bg};color:${um.color};border:1px solid ${um.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap;cursor:help">${um.label}</span>`
+      : muted;
+    const reasonTxt  = cls.reasoning || '';
+    const reasonHtml = reasonTxt
+      ? `<span title="${reasonTxt.replace(/"/g,"'")}" style="font-size:10.5px;color:var(--muted);cursor:help">${reasonTxt.slice(0,60)}${reasonTxt.length>60?'…':''}</span>`
+      : muted;
 
     // Expandable posts row — combined captions from all platforms
     const captions   = m.post_captions;
@@ -8384,7 +8441,7 @@ function bdrRenderTable(rows, _skipPageSetup) {
 
     const postsExpandHtml = captions.length ? `
     <tr id="${postsRowId}" style="display:none">
-      <td colspan="20" style="padding:0;background:var(--surface);border-bottom:2px solid var(--border)">
+      <td colspan="21" style="padding:0;background:var(--surface);border-bottom:2px solid var(--border)">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto">
           ${captions.map((cap,i) => {
             const loc  = postLocs[i] ? `<span style="display:inline-block;font-size:10px;font-weight:600;background:var(--blue-bg);color:var(--blue);border-radius:100px;padding:1px 7px;margin-right:6px;flex-shrink:0">📍 ${postLocs[i]}</span>` : '';
@@ -8418,34 +8475,9 @@ function bdrRenderTable(rows, _skipPageSetup) {
       <td style="white-space:nowrap">${postsCell}</td>
       <td style="max-width:200px">${bioHtml}</td>
       <td>${locHtml}</td>
-      <td>
-        <select class="bucket-input" data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}"
-          onchange="bdrSaveType(this)" style="min-width:160px">
-          <option value="">— select type —</option>
-          <option value="Chef"${typeVal==='Chef'?' selected':''}>Chef</option>
-          <option value="Home Cook & Recipe Creator"${typeVal==='Home Cook & Recipe Creator'?' selected':''}>Home Cook & Recipe Creator</option>
-          <option value="Food Reviewer"${typeVal==='Food Reviewer'?' selected':''}>Food Reviewer</option>
-          <option value="Food Guide & Curator"${typeVal==='Food Guide & Curator'?' selected':''}>Food Guide & Curator</option>
-          <option value="Mukbanger / Eating Show"${typeVal==='Mukbanger / Eating Show'?' selected':''}>Mukbanger / Eating Show</option>
-          <option value="Street Food & Market Explorer"${typeVal==='Street Food & Market Explorer'?' selected':''}>Street Food & Market Explorer</option>
-          <option value="Cuisine Specialist"${typeVal==='Cuisine Specialist'?' selected':''}>Cuisine Specialist</option>
-          <option value="Drinks & Nightlife Creator"${typeVal==='Drinks & Nightlife Creator'?' selected':''}>Drinks & Nightlife Creator</option>
-          <option value="Travel Blogger"${typeVal==='Travel Blogger'?' selected':''}>Travel Blogger</option>
-          <option value="Lifestyle Blogger"${typeVal==='Lifestyle Blogger'?' selected':''}>Lifestyle Blogger</option>
-          <option value="City Guide / Editorial"${typeVal==='City Guide / Editorial'?' selected':''}>City Guide / Editorial</option>
-        </select>
-      </td>
-      <td style="white-space:nowrap">
-        <select data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}"
-          onchange="bdrSaveTier(this)"
-          style="font-size:11px;padding:2px 6px;border:1px solid ${ts?.border||'var(--border)'};border-radius:6px;background:${ts?.bg||'var(--white)'};color:${ts?.color||'var(--text)'};font-weight:${ts?'700':'400'}">
-          <option value="">— tier —</option>
-          <option value="1"${llmMeta.tier===1?' selected':''}>T1</option>
-          <option value="2"${llmMeta.tier===2?' selected':''}>T2</option>
-          <option value="3"${llmMeta.tier===3?' selected':''}>T3</option>
-          <option value="4"${llmMeta.tier===4?' selected':''}>T4</option>
-        </select>
-      </td>
+      <td>${entityHtml}</td>
+      <td style="max-width:170px">${categoryHtml}</td>
+      <td style="white-space:nowrap">${ukHtml}</td>
       <td style="max-width:200px">${reasonHtml}</td>
       <td style="white-space:nowrap">${m.language
         ? `<span style="font-size:10px;font-weight:700;background:${m.language==='en'?'var(--green-bg)':'#fef8ec'};color:${m.language==='en'?'var(--green)':'var(--amber)'};border:1px solid ${m.language==='en'?'var(--green)':'var(--amber)'}40;border-radius:100px;padding:2px 9px;text-transform:uppercase">${m.language}</span>`
@@ -8541,35 +8573,8 @@ async function bdrReenrichMissing() {
   setTimeout(() => { btn.textContent = '🔄 Re-enrich missing'; }, 4000);
 }
 
-function bdrSaveType(input) {
-  const handle   = input.dataset.handle;
-  const platform = input.dataset.platform;
-  bdrSetType(handle, platform, input.value);
-  bdrPatchClassificationDB([{ handle, platform, influencer_type: input.value || null }]);
-  bdrInsightsRender();
-}
-
-function bdrSaveTier(select) {
-  const handle   = select.dataset.handle;
-  const platform = select.dataset.platform;
-  const tier     = select.value ? Number(select.value) : null;
-  const meta     = bdrGetLLMMeta(handle, platform);
-  bdrSetLLMMeta(handle, platform, tier, meta.tier_reason, meta.reason);
-  // Re-colour the select to match new tier
-  const TIER_STYLE = {
-    1: { bg: '#edf7f1', color: 'var(--green)',  border: 'var(--green)' },
-    2: { bg: '#eef4fc', color: 'var(--blue)',   border: 'var(--blue)'  },
-    3: { bg: '#fef8ec', color: 'var(--amber)',  border: 'var(--amber)' },
-    4: { bg: '#fdf0ee', color: '#c0392b',       border: '#c0392b'      },
-  };
-  const ts = tier ? TIER_STYLE[tier] : null;
-  select.style.background  = ts?.bg     || 'var(--white)';
-  select.style.color       = ts?.color  || 'var(--text)';
-  select.style.borderColor = ts?.border || 'var(--border)';
-  select.style.fontWeight  = ts ? '700' : '400';
-  bdrPatchClassificationDB([{ handle, platform, influencer_tier: tier }]);
-  bdrInsightsRender();
-}
+// (Manual Type/Tier editors removed — classification is now read-only AI output from the
+//  structured-facts classifier; the rule-based Tier will be derived separately.)
 
 async function bdrPatchClassificationDB(patches) {
   if (!patches.length) return;
@@ -8598,8 +8603,9 @@ function bdrProfileUrl(r) {
 function bdrExportCsv() {
   const src      = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
-  const tierFilt = (document.getElementById('bdrFilterTier')?.value || '');
-  const typeFilt = (document.getElementById('bdrFilterType')?.value || '');
+  const entFilt = (document.getElementById('bdrFilterEntity')?.value   || '');
+  const catFilt = (document.getElementById('bdrFilterCategory')?.value || '');
+  const ukFilt  = (document.getElementById('bdrFilterUk')?.value       || '');
   let merged = bdrMergeByHandle(src);
   if (bdrPlatform !== 'all') merged = merged.filter(m => m.platforms.some(p => p.includes(bdrPlatform)));
   if (q) merged = merged.filter(m =>
@@ -8607,30 +8613,42 @@ function bdrExportCsv() {
     (m.full_name||'').toLowerCase().includes(q) ||
     (m.bio||'').toLowerCase().includes(q)
   );
-  if (tierFilt) merged = merged.filter(m => {
-    const tier = bdrGetLLMMeta(m.handle, m.platforms?.[0] || '').tier;
-    return tierFilt === 'none' ? !tier : String(tier) === tierFilt;
+  if (entFilt) merged = merged.filter(m => {
+    const v = bdrGetClass(m.handle, m.platforms?.[0] || '').entity_type;
+    return entFilt === 'none' ? !v : v === entFilt;
   });
-  if (typeFilt) merged = merged.filter(m => {
-    const type = bdrGetType(m.handle, m.platforms?.[0] || '');
-    return typeFilt === 'none' ? !type : type === typeFilt;
+  if (catFilt) merged = merged.filter(m => {
+    const v = bdrGetClass(m.handle, m.platforms?.[0] || '').primary_content_category;
+    return catFilt === 'none' ? !v : v === catFilt;
   });
-  // Flatten back to individual rows for CSV export (one row per platform)
-  const rows = merged.flatMap(m => m._rows);
+  if (ukFilt) merged = merged.filter(m => {
+    const v = bdrGetClass(m.handle, m.platforms?.[0] || '').uk_geography;
+    return ukFilt === 'none' ? !v : v === ukFilt;
+  });
+  // Flatten back to individual rows for CSV export (one row per platform). Attach the creator-level
+  // classification (keyed on the primary platform) to every row so it exports on each platform line.
+  const rows = merged.flatMap(m => m._rows.map(r => ({ ...r, _cls: bdrGetClass(m.handle, m.platforms?.[0] || '') })));
 
   const cols = ['handle','full_name','platform','followers','engagement_rate','is_verified',
                 'matched_keywords','post_captions','post_locations','bio','location','country',
-                'post_count','avg_likes','avg_comments','hashtag_posts','profile_url','fetched_at','type'];
+                'post_count','avg_likes','avg_comments','hashtag_posts','profile_url','fetched_at',
+                'entity_type','primary_content_category','primary_food_content_type','food_post_count',
+                'total_posts_analyzed','uk_geography','classification_reasoning'];
   const esc  = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
   const csv  = [
     cols.join(','),
     ...rows.map(r => {
-      const rawPlat = (r.platform || r.raw_platform || '').toLowerCase();
-      const type    = bdrGetType(r.handle, rawPlat);
-      const loc     = bdrExtractLocation(r) || '';
+      const loc = bdrExtractLocation(r) || '';
+      const cl  = r._cls || {};
       return cols.map(c =>
-        c === 'type'             ? esc(type) :
-        c === 'location'         ? esc(loc) :
+        c === 'location'                 ? esc(loc) :
+        c === 'entity_type'              ? esc(cl.entity_type) :
+        c === 'primary_content_category' ? esc(cl.primary_content_category) :
+        c === 'primary_food_content_type'? esc(cl.primary_food_content_type) :
+        c === 'food_post_count'          ? esc(cl.food_post_count) :
+        c === 'total_posts_analyzed'     ? esc(cl.total_posts_analyzed) :
+        c === 'uk_geography'             ? esc(cl.uk_geography) :
+        c === 'classification_reasoning' ? esc(cl.reasoning) :
         (c === 'matched_keywords' || c === 'post_captions' || c === 'post_locations')
           ? esc(Array.isArray(r[c]) ? r[c].join(' | ') : (r[c] || '')) :
         esc(r[c])
