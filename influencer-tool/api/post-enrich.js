@@ -372,6 +372,26 @@ export function computeAggregates(posts, followers) {
   const engagement_rate = (f > 0 && (avg_likes != null || avg_comments != null))
     ? Number((((avg_likes || 0) + (avg_comments || 0)) / f * 100).toFixed(2))
     : null;
+  // ── Recency / velocity inputs (latest 5 posts, engagement-per-day) ──────────
+  // For each recent post, divide its engagement by how many days it had been live when we
+  // measured it (now ≈ fetched_at), so fast-accruing fresh posts weigh more. Average per metric.
+  // e.g. 1,000 likes on a 2-day-old post → 500 likes/day. Null metrics are excluded (not zeroed),
+  // mirroring avg() above, so a platform that lacks saves/shares isn't penalised.
+  const nowMs = Date.now();
+  const dated = posts
+    .filter(p => p.postedAt)
+    .map(p => ({ ...p, _ts: Date.parse(p.postedAt) }))
+    .filter(p => Number.isFinite(p._ts))
+    .sort((a, b) => b._ts - a._ts);
+  const recent5 = dated.slice(0, 5);
+  const dailyAvg = (key) => {
+    const rates = recent5
+      .filter(p => p[key] != null && p[key] >= 0)
+      .map(p => p[key] / Math.max(1, (nowMs - p._ts) / 86400000));
+    return rates.length ? Number((rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(2)) : null;
+  };
+  const last_post_at = dated.length ? new Date(dated[0]._ts).toISOString() : null;
+
   return {
     avg_likes,
     avg_comments,
@@ -379,5 +399,11 @@ export function computeAggregates(posts, followers) {
     avg_saves: avg('saves'),
     avg_shares: avg('shares'),
     engagement_rate,
+    recent_daily_likes:    dailyAvg('likes'),
+    recent_daily_comments: dailyAvg('comments'),
+    recent_daily_views:    dailyAvg('views'),
+    recent_daily_saves:    dailyAvg('saves'),
+    recent_daily_shares:   dailyAvg('shares'),
+    last_post_at,
   };
 }

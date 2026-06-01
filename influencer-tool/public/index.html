@@ -4121,6 +4121,19 @@ function renderPostsModal(handle, posts) {
       </div>
     </div>
 
+    <!-- Engagement-score weights (dynamic, cross-platform) -->
+    <div id="bdrEngPanel" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px">
+      <span style="font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-size:11px">Engagement Score weights</span>
+      <label style="display:flex;align-items:center;gap:4px">Like <input type="number" id="bdrWLike" min="0" step="0.5" value="1" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
+      <label style="display:flex;align-items:center;gap:4px">Comment <input type="number" id="bdrWComment" min="0" step="0.5" value="4" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
+      <label style="display:flex;align-items:center;gap:4px">Save <input type="number" id="bdrWSave" min="0" step="0.5" value="5" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
+      <label style="display:flex;align-items:center;gap:4px">Share <input type="number" id="bdrWShare" min="0" step="0.5" value="5" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
+      <button class="btn-sm" onclick="bdrResetEngWeights()" title="Reset to defaults (1/4/5/5)">Reset</button>
+      <span style="width:1px;height:18px;background:var(--border)"></span>
+      <label style="display:flex;align-items:center;gap:4px" title="Hide creators below this Engagement Score">Min Eng <input type="number" id="bdrMinEng" min="0" max="100" step="5" value="0" oninput="bdrApplyFilter()" style="width:56px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
+      <span style="color:var(--muted);font-size:11px">0–100, ranked within each platform · ⚠ = big following, low engagement</span>
+    </div>
+
     <!-- Loading state -->
     <div id="bdrLoading" style="padding:3rem;text-align:center;color:var(--muted)">
       <div style="font-size:2rem;margin-bottom:10px">⏳</div>
@@ -4147,6 +4160,9 @@ function renderPostsModal(handle, posts) {
               <th onclick="bdrSetSort('post_count')" style="cursor:pointer;user-select:none" title="Video count (YouTube) or post count">Posts <span id="bdrSrt-post_count" style="font-size:10px;opacity:.3">⇅</span></th>
               <th title="Total views (YouTube) or avg likes">AVG ♥</th>
               <th onclick="bdrSetSort('engagement_rate')" style="cursor:pointer;user-select:none" title="ER% for Instagram/TikTok; view rate for YouTube">ER% <span id="bdrSrt-engagement_rate" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('engScore')" style="cursor:pointer;user-select:none" title="Engagement Score 0–100: weighted engagement ÷ this platform's followers, ranked within platform">Eng <span id="bdrSrt-engScore" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('recencyScore')" style="cursor:pointer;user-select:none" title="Recency 0–100: per-day engagement of the latest 5 posts, ranked within platform">Recent <span id="bdrSrt-recencyScore" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('reachRatio')" style="cursor:pointer;user-select:none" title="Reach: avg views ÷ followers (video platforms)">Reach <span id="bdrSrt-reachRatio" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('is_verified')" style="cursor:pointer;user-select:none" title="Sort by verified">✓ <span id="bdrSrt-is_verified" style="font-size:10px;opacity:.3">⇅</span></th>
               <th>Keywords matched</th>
               <th title="Recent post captions — click to expand">Posts</th>
@@ -6688,6 +6704,20 @@ function bdrMergeByHandle(rows) {
       engagement_rate: primary.engagement_rate,
       avg_likes:       primary.avg_likes,
       avg_comments:    primary.avg_comments,
+      // Engagement-score inputs — all from the ENRICHED (primary) platform only. primary_followers
+      // is that platform's own follower count (NOT the summed `followers`), so the score denominator
+      // matches the platform we pulled posts from.
+      avg_views:       primary.avg_views,
+      avg_saves:       primary.avg_saves,
+      avg_shares:      primary.avg_shares,
+      recent_daily_likes:    primary.recent_daily_likes,
+      recent_daily_comments: primary.recent_daily_comments,
+      recent_daily_views:    primary.recent_daily_views,
+      recent_daily_saves:    primary.recent_daily_saves,
+      recent_daily_shares:   primary.recent_daily_shares,
+      last_post_at:    primary.last_post_at || null,
+      primary_platform: (primary.platform || primary.raw_platform || '').toLowerCase(),
+      primary_followers: primary.followers,
       post_count:      (yt || primary).post_count || null,
       avatar_url:      (yt || primary).avatar_url || null,
       followers:       String(totalFollowers),
@@ -6720,6 +6750,78 @@ function bdrMergeByHandle(rows) {
   });
   _bdrMergeCache.set(rows, result);
   return result;
+}
+
+// ── Engagement scoring (dynamic, cross-platform via per-platform percentile) ──────────
+// Each creator is ranked ONLY against others enriched on the SAME platform, using that
+// platform's OWN follower count (primary_followers, never summed). Weights are UI-editable;
+// scores recompute live. Missing metrics (e.g. IG saves/shares) are fair because the cohort
+// is within-platform, so every peer lacks the same fields.
+const BD_ENG_WEIGHTS_KEY = 'bd_eng_weights';
+function bdrGetEngWeights() {
+  try {
+    const w = JSON.parse(localStorage.getItem(BD_ENG_WEIGHTS_KEY) || 'null');
+    if (w && typeof w === 'object')
+      return { like: +w.like || 0, comment: +w.comment || 0, save: +w.save || 0, share: +w.share || 0 };
+  } catch (_) {}
+  return { like: 1, comment: 4, save: 5, share: 5 };
+}
+function bdrSetEngWeights(w) { try { localStorage.setItem(BD_ENG_WEIGHTS_KEY, JSON.stringify(w)); } catch (_) {} }
+function bdrOnWeightChange() {
+  const num = (id, d) => { const v = parseFloat(document.getElementById(id)?.value); return Number.isFinite(v) && v >= 0 ? v : d; };
+  bdrSetEngWeights({ like: num('bdrWLike', 1), comment: num('bdrWComment', 4), save: num('bdrWSave', 5), share: num('bdrWShare', 5) });
+  if (typeof bdrApplyFilter === 'function') bdrApplyFilter();
+}
+function bdrResetEngWeights() {
+  bdrSetEngWeights({ like: 1, comment: 4, save: 5, share: 5 });
+  bdrInitEngWeights();
+  if (typeof bdrApplyFilter === 'function') bdrApplyFilter();
+}
+function bdrInitEngWeights() { // sync the input boxes to the saved weights
+  const w = bdrGetEngWeights();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('bdrWLike', w.like); set('bdrWComment', w.comment); set('bdrWSave', w.save); set('bdrWShare', w.share);
+}
+
+function _bdLowerBound(a, v) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < v) lo = m + 1; else hi = m; } return lo; }
+function _bdUpperBound(a, v) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] <= v) lo = m + 1; else hi = m; } return lo; }
+function _bdPctl(sortedAsc, v) { // tie-stable midrank percentile 0-100
+  if (!sortedAsc.length || v == null) return null;
+  const rank = (_bdLowerBound(sortedAsc, v) + _bdUpperBound(sortedAsc, v)) / 2;
+  return Math.round(rank / sortedAsc.length * 100);
+}
+
+// Attaches engScore/recencyScore/reachRatio/hype to each merged row. Pass the FULL merged set
+// for the current view so the percentile cohort = all enriched creators on that platform.
+function bdrComputeScores(rows) {
+  const w = bdrGetEngWeights();
+  const wsum = (l, c, s, sh) => w.like * (+l || 0) + w.comment * (+c || 0) + w.save * (+s || 0) + w.share * (+sh || 0);
+  const isEnriched = r => (r.avg_likes != null || r.avg_comments != null || r.avg_views != null);
+  const platOf = r => r.primary_platform || (r.platforms && r.platforms[0]) || '';
+  for (const r of rows) {
+    const f = bdParseCompact(r.primary_followers != null ? r.primary_followers : r.followers);
+    if (!isEnriched(r) || !f) { r.engScore = null; r.recencyScore = null; r.reachRatio = null; r.hype = false; r._er = null; r._vel = null; continue; }
+    r._er  = wsum(r.avg_likes, r.avg_comments, r.avg_saves, r.avg_shares) / f;
+    r._vel = wsum(r.recent_daily_likes, r.recent_daily_comments, r.recent_daily_saves, r.recent_daily_shares) / f;
+    r.reachRatio = (r.avg_views != null) ? Number(r.avg_views) / f * 100 : null;
+  }
+  const co = {};
+  for (const r of rows) {
+    if (r._er == null && r._vel == null) continue;
+    const p = platOf(r); (co[p] || (co[p] = { er: [], vel: [] }));
+    if (r._er != null) co[p].er.push(r._er);
+    if (r._vel != null) co[p].vel.push(r._vel);
+  }
+  for (const p in co) { co[p].er.sort((a, b) => a - b); co[p].vel.sort((a, b) => a - b); }
+  for (const r of rows) {
+    if (r._er == null && r._vel == null) continue;
+    const c = co[platOf(r)];
+    r.engScore = _bdPctl(c.er, r._er);
+    r.recencyScore = _bdPctl(c.vel, r._vel);
+    const f = bdParseCompact(r.primary_followers != null ? r.primary_followers : r.followers);
+    r.hype = f >= 100000 && ((r.engScore != null && r.engScore <= 25) || (r.recencyScore != null && r.recencyScore <= 25));
+  }
+  return rows;
 }
 
 // Converts a DB snake_case row to the shape bdPassesFilters() expects
@@ -6844,6 +6946,7 @@ function bdrDiscardReclassify() {
 
 async function loadBdResults(forceRefresh, dataset) {
   const ds = dataset || bdrDataset;
+  bdrInitEngWeights(); // sync the weight inputs to saved values
   if (bdrLoaded && !forceRefresh && ds === bdrDataset) { bdrApplyFilter(); return; }
   document.getElementById('bdrLoading').style.display = '';
   document.getElementById('bdrEmpty').style.display = 'none';
@@ -7930,13 +8033,14 @@ function bdrSetSort(col) {
     bdrSortDir = bdrSortDir === 'asc' ? 'desc' : 'asc';
   } else {
     bdrSortCol = col;
-    bdrSortDir = (col === 'followers' || col === 'engagement_rate' || col === 'fetched_at' || col === 'is_verified') ? 'desc' : 'asc';
+    bdrSortDir = (col === 'followers' || col === 'engagement_rate' || col === 'fetched_at' || col === 'is_verified'
+                  || col === 'engScore' || col === 'recencyScore' || col === 'reachRatio') ? 'desc' : 'asc';
   }
   bdrApplyFilter();
 }
 
 function bdrUpdateSortIndicators() {
-  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','location','type','fetched_at','language'];
+  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','engScore','recencyScore','reachRatio','location','type','fetched_at','language'];
   for (const c of sortable) {
     const el = document.getElementById('bdrSrt-' + c);
     if (!el) continue;
@@ -7966,10 +8070,15 @@ function bdrApplyFilter() {
   const langFilt = (document.getElementById('bdrFilterLang')?.value || '');
 
   let merged = bdrMergeByHandle(src);
+  // Compute engagement scores over the FULL merged set (cohort = all enriched creators per
+  // platform) BEFORE filtering, so a creator's score is stable regardless of the active filters.
+  bdrComputeScores(merged);
 
   if (bdrPlatform !== 'all') {
     merged = merged.filter(m => m.platforms.some(p => p.includes(bdrPlatform)));
   }
+  const minEng = Number(document.getElementById('bdrMinEng')?.value) || 0;
+  if (minEng > 0) merged = merged.filter(m => (m.engScore != null && m.engScore >= minEng));
   if (q) {
     merged = merged.filter(m =>
       (m.handle    || '').toLowerCase().includes(q) ||
@@ -8005,6 +8114,9 @@ function bdrApplyFilter() {
         case 'is_verified':     av=a.is_verified?1:0;              bv=b.is_verified?1:0;              break;
         case 'followers':       av=Number(a.followers)||0;         bv=Number(b.followers)||0;         break;
         case 'engagement_rate': av=Number(a.engagement_rate)||0;   bv=Number(b.engagement_rate)||0;   break;
+        case 'engScore':        av=a.engScore??-1;                 bv=b.engScore??-1;                 break;
+        case 'recencyScore':    av=a.recencyScore??-1;             bv=b.recencyScore??-1;             break;
+        case 'reachRatio':      av=a.reachRatio??-1;               bv=b.reachRatio??-1;               break;
         case 'location':        av=(a.location||'').toLowerCase(); bv=(b.location||'').toLowerCase(); break;
         case 'type':            av=bdrGetType(a.handle,'').toLowerCase(); bv=bdrGetType(b.handle,'').toLowerCase(); break;
         case 'llm_tier':        av=bdrGetLLMMeta(a.handle,a.platforms?.[0]||'').tier||99; bv=bdrGetLLMMeta(b.handle,b.platforms?.[0]||'').tier||99; break;
@@ -8239,7 +8351,7 @@ function bdrRenderTable(rows, _skipPageSetup) {
 
     const postsExpandHtml = captions.length ? `
     <tr id="${postsRowId}" style="display:none">
-      <td colspan="16" style="padding:0;background:var(--surface);border-bottom:2px solid var(--border)">
+      <td colspan="20" style="padding:0;background:var(--surface);border-bottom:2px solid var(--border)">
         <div style="padding:10px 14px;display:flex;flex-direction:column;gap:6px;max-height:280px;overflow-y:auto">
           ${captions.map((cap,i) => {
             const loc  = postLocs[i] ? `<span style="display:inline-block;font-size:10px;font-weight:600;background:var(--blue-bg);color:var(--blue);border-radius:100px;padding:1px 7px;margin-right:6px;flex-shrink:0">📍 ${postLocs[i]}</span>` : '';
@@ -8265,6 +8377,9 @@ function bdrRenderTable(rows, _skipPageSetup) {
       <td style="white-space:nowrap">${postCountHtml}</td>
       <td style="white-space:nowrap">${avgHtml}</td>
       <td style="font-family:var(--mono);font-size:12px;font-weight:600;color:${erColor}">${er}</td>
+      <td style="text-align:center;font-family:var(--mono)">${m.engScore==null?'<span style="color:var(--muted2)">—</span>':`<span style="font-weight:700;color:${m.engScore>=70?'var(--green)':m.engScore>=40?'var(--amber)':'var(--muted)'}">${m.engScore}</span>`}${m.hype?' <span title="Large following but low engagement for its platform — verify before outreach" style="color:#c0392b;font-weight:700;cursor:help">⚠</span>':''}</td>
+      <td style="text-align:center;font-family:var(--mono)">${m.recencyScore==null?'<span style="color:var(--muted2)">—</span>':`<span style="font-weight:700;color:${m.recencyScore>=70?'var(--green)':m.recencyScore>=40?'var(--amber)':'var(--muted)'}">${m.recencyScore}</span>`}</td>
+      <td style="white-space:nowrap;font-size:11px;font-family:var(--mono)">${m.reachRatio==null?'<span style="color:var(--muted2)">—</span>':(m.reachRatio>=100?Math.round(m.reachRatio):m.reachRatio.toFixed(1))+'%'}</td>
       <td style="text-align:center">${m.is_verified?'<span style="color:var(--blue);font-weight:700">✓</span>':'<span style="color:var(--muted2)">—</span>'}</td>
       <td style="max-width:160px">${kws}</td>
       <td style="white-space:nowrap">${postsCell}</td>
