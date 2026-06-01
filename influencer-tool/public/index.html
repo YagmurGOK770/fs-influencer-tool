@@ -6781,7 +6781,11 @@ async function bdrClassifyVisible(limit) {
       // loses earlier batches.
       const saveRes = await bdrPatchClassificationDB(patches);
       if (!saveRes.ok) saveErrors.push(saveRes.error || 'unknown save error');
-      else { saved += saveRes.patched || patches.length; if (saveRes.errors?.length) saveErrors.push(...saveRes.errors); }
+      else {
+        saved += saveRes.updated || 0;                                   // rows ACTUALLY written to the DB
+        if (saveRes.errors?.length)    saveErrors.push(...saveRes.errors);
+        if (saveRes.unmatched?.length) saveErrors.push(`${saveRes.unmatched.length} matched no DB row: ${saveRes.unmatched.slice(0, 3).join(', ')}${saveRes.unmatched.length > 3 ? '…' : ''}`);
+      }
       done += batch.length;
       btn.textContent = `⏳ Classifying ${done}/${profiles.length} · saved ${saved}${skipped ? ` (skipped ${skipped})` : ''}…`;
     }
@@ -6794,7 +6798,7 @@ async function bdrClassifyVisible(limit) {
             `\n\nThe on-screen results are not all persisted — re-run to retry the unsaved ones.`);
     } else {
       const failNote = failed ? `, ${failed} model-failed` : '';
-      btn.textContent = skipped ? `✅ ${done} classified & saved (skipped ${skipped}${failNote})` : `✅ ${done} classified & saved${failNote}`;
+      btn.textContent = skipped ? `✅ ${saved} saved to DB (skipped ${skipped}${failNote})` : `✅ ${saved} saved to DB${failNote}`;
     }
   } catch (e) {
     btn.textContent = isTest ? '✨ Test (10)' : '✨ AI Classify';
@@ -8744,10 +8748,10 @@ async function bdrPatchClassificationDB(patches) {
       return { ok: false, patched: 0, errors: [], error: err.error || `HTTP ${resp.status}` };
     }
     const data = await resp.json().catch(() => ({}));
-    return { ok: true, patched: data.patched ?? patches.length, errors: data.errors || [] };
+    return { ok: true, updated: data.updated ?? data.patched ?? patches.length, unmatched: data.unmatched || [], errors: data.errors || [] };
   } catch (e) {
     console.warn('[bdr] patch-classification failed:', e.message);
-    return { ok: false, patched: 0, errors: [], error: e.message };
+    return { ok: false, updated: 0, unmatched: [], errors: [], error: e.message };
   }
 }
 
