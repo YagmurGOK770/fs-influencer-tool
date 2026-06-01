@@ -3527,10 +3527,14 @@ function closeProfileCard() {
 // ── Recent-posts modal (rich per-post data from profile_posts) ──────────────
 async function bdrViewPosts(handle, platform) {
   const h = (handle || '').replace(/^@/, '');
+  const modal = document.getElementById('postsModal');
+  // The modal markup lives inside the hidden legacy #mainDash container; re-parent it to
+  // <body> so its position:fixed actually renders (a display:none ancestor would hide it).
+  if (modal.parentElement !== document.body) document.body.appendChild(modal);
   document.getElementById('pmTitle').textContent = '@' + h;
   document.getElementById('pmSub').textContent = 'Loading recent posts…';
   document.getElementById('pmBody').innerHTML = '<div style="padding:48px;text-align:center;color:#9ca3af;font-size:13px">Loading…</div>';
-  document.getElementById('postsModal').style.display = 'flex';
+  modal.style.display = 'flex';
   try {
     const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
