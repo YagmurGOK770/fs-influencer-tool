@@ -6710,6 +6710,12 @@ function bdrMergeByHandle(rows) {
       avg_views:       primary.avg_views,
       avg_saves:       primary.avg_saves,
       avg_shares:      primary.avg_shares,
+      median_likes:    primary.median_likes,
+      median_comments: primary.median_comments,
+      median_views:    primary.median_views,
+      median_saves:    primary.median_saves,
+      median_shares:   primary.median_shares,
+      posts_sampled:   primary.posts_sampled,
       recent_daily_likes:    primary.recent_daily_likes,
       recent_daily_comments: primary.recent_daily_comments,
       recent_daily_views:    primary.recent_daily_views,
@@ -6791,19 +6797,46 @@ function _bdPctl(sortedAsc, v) { // tie-stable midrank percentile 0-100
   return Math.round(rank / sortedAsc.length * 100);
 }
 
+// Which metrics enter a platform's weighted sum (drop ones the platform never reports, so we never
+// zero-fill an absent metric). 'x' covers twitter; default falls back to likes+comments.
+const BD_PLATFORM_METRICS = {
+  instagram: ['likes', 'comments'],
+  tiktok:    ['likes', 'comments', 'saves', 'shares'],
+  x:         ['likes', 'comments', 'saves', 'shares'],
+  youtube:   ['likes', 'comments'],
+};
+const _BD_WEIGHT_OF = { likes: 'like', comments: 'comment', saves: 'save', shares: 'share' };
+
 // Attaches engScore/recencyScore/reachRatio/hype to each merged row. Pass the FULL merged set
 // for the current view so the percentile cohort = all enriched creators on that platform.
 function bdrComputeScores(rows) {
   const w = bdrGetEngWeights();
-  const wsum = (l, c, s, sh) => w.like * (+l || 0) + w.comment * (+c || 0) + w.save * (+s || 0) + w.share * (+sh || 0);
-  const isEnriched = r => (r.avg_likes != null || r.avg_comments != null || r.avg_views != null);
-  const platOf = r => r.primary_platform || (r.platforms && r.platforms[0]) || '';
+  const platOf = r => { const p = r.primary_platform || (r.platforms && r.platforms[0]) || ''; return p.includes('insta') ? 'instagram' : p.includes('tik') ? 'tiktok' : p.includes('you') ? 'youtube' : (p === 'x' || p.includes('twit')) ? 'x' : p; };
+  const isEnriched = r => (r.median_likes != null || r.avg_likes != null || r.median_comments != null || r.avg_comments != null || r.avg_views != null);
+  // Weighted sum over the platform's metric set; skip null (no zero-fill). `pick` chooses median
+  // (preferred) and falls back to the mean for rows enriched before medians were stored.
+  const weighted = (r, metrics, pick) => {
+    let sum = 0, any = false;
+    for (const m of metrics) {
+      const v = pick(r, m);
+      if (v == null) continue;
+      sum += (+w[_BD_WEIGHT_OF[m]] || 0) * (+v || 0);
+      any = true;
+    }
+    return any ? sum : null;
+  };
+  const overall = (r, m) => { const md = r['median_' + m]; return md != null ? md : r['avg_' + m]; };
+  const recent  = (r, m) => r['recent_daily_' + m];
   for (const r of rows) {
     const f = bdParseCompact(r.primary_followers != null ? r.primary_followers : r.followers);
+    const metrics = BD_PLATFORM_METRICS[platOf(r)] || ['likes', 'comments'];
     if (!isEnriched(r) || !f) { r.engScore = null; r.recencyScore = null; r.reachRatio = null; r.hype = false; r._er = null; r._vel = null; continue; }
-    r._er  = wsum(r.avg_likes, r.avg_comments, r.avg_saves, r.avg_shares) / f;
-    r._vel = wsum(r.recent_daily_likes, r.recent_daily_comments, r.recent_daily_saves, r.recent_daily_shares) / f;
-    r.reachRatio = (r.avg_views != null) ? Number(r.avg_views) / f * 100 : null;
+    const wE = weighted(r, metrics, overall);
+    const wV = weighted(r, metrics, recent);
+    r._er  = wE != null ? wE / f : null;
+    r._vel = wV != null ? wV / f : null;
+    const views = r.median_views != null ? r.median_views : r.avg_views;          // video-only
+    r.reachRatio = (views != null) ? Number(views) / f * 100 : null;
   }
   const co = {};
   for (const r of rows) {
@@ -6819,7 +6852,7 @@ function bdrComputeScores(rows) {
     r.engScore = _bdPctl(c.er, r._er);
     r.recencyScore = _bdPctl(c.vel, r._vel);
     const f = bdParseCompact(r.primary_followers != null ? r.primary_followers : r.followers);
-    r.hype = f >= 100000 && ((r.engScore != null && r.engScore <= 25) || (r.recencyScore != null && r.recencyScore <= 25));
+    r.hype = f >= 25000 && r.engScore != null && r.engScore <= 25;  // big-ish audience, bottom-quartile engagement
   }
   return rows;
 }
@@ -8377,7 +8410,7 @@ function bdrRenderTable(rows, _skipPageSetup) {
       <td style="white-space:nowrap">${postCountHtml}</td>
       <td style="white-space:nowrap">${avgHtml}</td>
       <td style="font-family:var(--mono);font-size:12px;font-weight:600;color:${erColor}">${er}</td>
-      <td style="text-align:center;font-family:var(--mono)">${m.engScore==null?'<span style="color:var(--muted2)">—</span>':`<span style="font-weight:700;color:${m.engScore>=70?'var(--green)':m.engScore>=40?'var(--amber)':'var(--muted)'}">${m.engScore}</span>`}${m.hype?' <span title="Large following but low engagement for its platform — verify before outreach" style="color:#c0392b;font-weight:700;cursor:help">⚠</span>':''}</td>
+      <td style="text-align:center;font-family:var(--mono)"${m.posts_sampled?` title="Scored on ${m.posts_sampled} post${m.posts_sampled==1?'':'s'}"`:''}>${m.engScore==null?'<span style="color:var(--muted2)">—</span>':`<span style="font-weight:700;color:${m.engScore>=70?'var(--green)':m.engScore>=40?'var(--amber)':'var(--muted)'}">${m.engScore}</span>`}${m.hype?' <span title="≥25k followers but bottom-quartile engagement for its platform — verify before outreach" style="color:#c0392b;font-weight:700;cursor:help">⚠</span>':''}</td>
       <td style="text-align:center;font-family:var(--mono)">${m.recencyScore==null?'<span style="color:var(--muted2)">—</span>':`<span style="font-weight:700;color:${m.recencyScore>=70?'var(--green)':m.recencyScore>=40?'var(--amber)':'var(--muted)'}">${m.recencyScore}</span>`}</td>
       <td style="white-space:nowrap;font-size:11px;font-family:var(--mono)">${m.reachRatio==null?'<span style="color:var(--muted2)">—</span>':(m.reachRatio>=100?Math.round(m.reachRatio):m.reachRatio.toFixed(1))+'%'}</td>
       <td style="text-align:center">${m.is_verified?'<span style="color:var(--blue);font-weight:700">✓</span>':'<span style="color:var(--muted2)">—</span>'}</td>

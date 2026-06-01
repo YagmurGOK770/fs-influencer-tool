@@ -366,6 +366,15 @@ export function computeAggregates(posts, followers) {
     const vals = posts.map(p => p[key]).filter(v => v != null && v >= 0);
     return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
   };
+  // Median over the posts actually fetched (could be < 30). Robust to one viral/dead post — used
+  // as the primary engagement-score input. Null metrics are excluded (not zero-filled).
+  const median = (key) => {
+    const vals = posts.map(p => p[key]).filter(v => v != null && v >= 0).sort((a, b) => a - b);
+    if (!vals.length) return null;
+    const mid = vals.length >> 1;
+    return vals.length % 2 ? vals[mid] : Math.round((vals[mid - 1] + vals[mid]) / 2);
+  };
+  const posts_sampled = posts.length;
   const avg_likes = avg('likes');
   const avg_comments = avg('comments');
   const f = Number(followers) || 0;
@@ -387,7 +396,9 @@ export function computeAggregates(posts, followers) {
   const dailyAvg = (key) => {
     const rates = recent5
       .filter(p => p[key] != null && p[key] >= 0)
-      .map(p => p[key] / Math.max(1, (nowMs - p._ts) / 86400000));
+      // Floor age at 2 days: engagement is front-loaded, so a just-posted item must not divide by
+      // a tiny age and masquerade as runaway momentum.
+      .map(p => p[key] / Math.max(2, (nowMs - p._ts) / 86400000));
     return rates.length ? Number((rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(2)) : null;
   };
   const last_post_at = dated.length ? new Date(dated[0]._ts).toISOString() : null;
@@ -399,6 +410,12 @@ export function computeAggregates(posts, followers) {
     avg_saves: avg('saves'),
     avg_shares: avg('shares'),
     engagement_rate,
+    posts_sampled,
+    median_likes:    median('likes'),
+    median_comments: median('comments'),
+    median_views:    median('views'),
+    median_saves:    median('saves'),
+    median_shares:   median('shares'),
     recent_daily_likes:    dailyAvg('likes'),
     recent_daily_comments: dailyAvg('comments'),
     recent_daily_views:    dailyAvg('views'),
