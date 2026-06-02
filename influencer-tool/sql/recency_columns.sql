@@ -9,10 +9,7 @@
 do $$
 declare t text;
 begin
-  foreach t in array array[
-    'brightdata_profiles','brightdata_excluded_profiles',
-    'lifestyle_bloggers','lifestyle_bloggers_excluded'
-  ] loop
+  foreach t in array array['brightdata_profiles','lifestyle_bloggers'] loop
     execute format('alter table %I add column if not exists median_likes    numeric', t);
     execute format('alter table %I add column if not exists median_comments numeric', t);
     execute format('alter table %I add column if not exists median_views    numeric', t);

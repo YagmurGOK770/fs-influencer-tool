@@ -55,7 +55,7 @@ function ruleTierForRow(r) {
   return t.status === 'tier' ? t.tier : null; // 1–4 | null (filtered/unclassified)
 }
 
-const TABLES = ['brightdata_profiles', 'brightdata_excluded_profiles', 'lifestyle_bloggers', 'lifestyle_bloggers_excluded'];
+const TABLES = ['brightdata_profiles', 'lifestyle_bloggers'];
 async function mapPool(items, n, worker) { let i = 0; await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; await worker(items[k]); } })); }
 
 (async () => {

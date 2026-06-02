@@ -3905,16 +3905,7 @@ function renderPostsModal(handle, posts) {
     <!-- Results table -->
     <div id="bdTableWrap" style="display:none">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:10px;flex-wrap:wrap">
-        <div id="bdViewToggle" style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)">
-          <button id="bdViewMatchBtn" onclick="bdSetView('matching')" type="button"
-            style="padding:6px 12px;border:none;background:var(--green-bg);color:var(--green);font-size:12px;font-weight:700;cursor:pointer">
-            ✓ Matching <span id="bdViewMatchCount" style="font-weight:500;opacity:.8">0</span>
-          </button>
-          <button id="bdViewExclBtn" onclick="bdSetView('excluded')" type="button"
-            style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)">
-            ✕ Filtered out <span id="bdViewExclCount" style="font-weight:500;opacity:.8">0</span>
-          </button>
-        </div>
+        <div id="bdViewCount" style="font-size:12px;color:var(--muted);font-weight:600"></div>
         <div style="display:flex;gap:8px;align-items:center">
           <button onclick="bdBulkToggleBadges('bdTbody', this)" type="button"
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
@@ -3927,7 +3918,7 @@ function renderPostsModal(handle, posts) {
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)">
             📝 Scan recent posts
           </button>
-          <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px">💾 Save filtered results to DB</button>
+          <button class="btn-green" id="bdSaveBtn" onclick="bdSaveFiltered()" style="font-size:12px" title="Saves every result to brightdata_profiles — Tier decides scope, not a filter split">💾 Save all results to DB</button>
           <button id="bdSaveLifestyleBtn" onclick="bdSaveAllToLifestyle()" type="button"
             style="font-size:12px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--white);cursor:pointer;color:var(--text)"
             title="Save ALL search results (no filter) to lifestyle_bloggers table">
@@ -3946,9 +3937,6 @@ function renderPostsModal(handle, posts) {
         </div>
       </div>
       <div id="bdLifestyleImportStatus" style="font-size:11.5px;color:var(--muted);padding:4px 12px"></div>
-      <div id="bdExclHint" style="display:none;padding:8px 12px;margin-bottom:8px;background:#fef8ec;border:1px solid #f5c9a8;border-radius:6px;font-size:11.5px;color:#92400e">
-        Reviewing profiles that did <strong>not</strong> match your filters. Use <strong>Save to review table</strong> to keep them for later analysis (they're stored separately from your main results).
-      </div>
       <div class="table-wrap" style="max-height:60vh">
         <table class="cov-table">
           <thead>
@@ -4025,25 +4013,11 @@ function renderPostsModal(handle, posts) {
       </div>
     </div>
 
-    <!-- Reclassification banner (shown when filters produce changes vs saved DB state) -->
-    <div id="bdrReclassifyBanner" style="display:none;background:#fffbe6;border:1px solid #f0c040;border-radius:8px;padding:10px 14px;margin-bottom:14px;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <span id="bdrReclassifyMsg" style="font-size:13px;color:#7a6000"></span>
-      <div style="display:flex;gap:8px">
-        <button class="btn-sm" onclick="bdrSaveReclassify()" id="bdrSaveReclassifyBtn"
-          style="background:var(--green);color:#fff;border-color:var(--green)">💾 Save to DB</button>
-        <button class="btn-sm" onclick="bdrDiscardReclassify()">Discard</button>
-      </div>
-    </div>
-
     <!-- Stats row -->
     <div class="cov-stats" style="margin-bottom:16px">
       <div class="cov-stat found">
         <div class="cov-stat-num" id="bdrTotMatch">—</div>
-        <div class="cov-stat-label">Matching saved</div>
-      </div>
-      <div class="cov-stat missing">
-        <div class="cov-stat-num" id="bdrTotExcl">—</div>
-        <div class="cov-stat-label">Filtered out</div>
+        <div class="cov-stat-label">Total saved</div>
       </div>
       <div class="cov-stat">
         <div class="cov-stat-num" id="bdrTotIg" style="color:#e1306c">—</div>
@@ -4063,7 +4037,10 @@ function renderPostsModal(handle, posts) {
       </div>
     </div>
 
-    <!-- Dataset switcher: each dataset has its own matching/excluded tables -->
+    <!-- Tier distribution for the loaded dataset (incl. filtered & unclassified) -->
+    <div id="bdrTierCards" style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap"></div>
+
+    <!-- Dataset switcher: each dataset has its own single table -->
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <span style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Dataset:</span>
       <button id="bdrDsFoodBtn" onclick="bdrSetDataset('food')" type="button"
@@ -4076,18 +4053,8 @@ function renderPostsModal(handle, posts) {
       </button>
     </div>
 
-    <!-- Toolbar: view toggle + platform pills + search -->
+    <!-- Toolbar: platform pills + tier/filter selects + search -->
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
-      <div style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--white)">
-        <button id="bdrViewMatchBtn" onclick="bdrSetView('matching')" type="button"
-          style="padding:6px 12px;border:none;background:var(--green-bg);color:var(--green);font-size:12px;font-weight:700;cursor:pointer">
-          ✓ Matching <span id="bdrMatchCount" style="font-weight:500;opacity:.8">0</span>
-        </button>
-        <button id="bdrViewExclBtn" onclick="bdrSetView('excluded')" type="button"
-          style="padding:6px 12px;border:none;background:var(--white);color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)">
-          ✕ Filtered out <span id="bdrExclCount" style="font-weight:500;opacity:.8">0</span>
-        </button>
-      </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <button class="pfill active" id="bdrPfAll" onclick="bdrSetPlatform('all',this)">All <span class="fcount" id="bdrPcAll">0</span></button>
         <button class="pfill pfig" id="bdrPfIg" onclick="bdrSetPlatform('instagram',this)">Instagram <span class="fcount" id="bdrPcIg">0</span></button>
@@ -4250,6 +4217,7 @@ function renderPostsModal(handle, posts) {
           <option value="tier">Tier</option>
           <option value="entity">Entity</option>
           <option value="category">Category</option>
+          <option value="foodtype">Food sub-type</option>
           <option value="uk">UK status</option>
           <option value="followers">Followers range</option>
           <option value="er">ER% range</option>
@@ -4259,6 +4227,7 @@ function renderPostsModal(handle, posts) {
         <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Column</span>
         <select id="insDimCol" onchange="bdrInsightsRender()" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
           <option value="category">Category</option>
+          <option value="foodtype">Food sub-type</option>
           <option value="entity">Entity</option>
           <option value="uk">UK status</option>
           <option value="tier">Tier</option>
@@ -4278,6 +4247,10 @@ function renderPostsModal(handle, posts) {
 
     <!-- Summary stat cards -->
     <div id="insStatCards" class="cov-stats" style="margin-bottom:12px"></div>
+
+    <!-- Tier distribution (full set, incl. filtered & unclassified) -->
+    <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:4px 0 8px">Tier distribution (incl. filtered)</div>
+    <div id="insTierCards" style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap"></div>
 
     <!-- Cross-dataset source split: Food only / Lifestyle only / In both -->
     <div id="insSourceCards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px"></div>
@@ -4318,6 +4291,10 @@ function renderPostsModal(handle, posts) {
           </select>
           <span style="font-size:11px;color:var(--muted)">Filter category</span>
           <select id="insTopCategory" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="">All</option>
+          </select>
+          <span style="font-size:11px;color:var(--muted)">Filter food type</span>
+          <select id="insTopFoodType" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
           </select>
         </div>
@@ -4479,7 +4456,6 @@ let bdAllResults  = []; // all raw results from API
 let bdPlatform    = 'instagram';
 let bdSearchStartSlot  = 0; // which cookie slot index the next search starts from
 let bdLastUsedSlotIdx  = 0; // last slot used by search — re-enrich picks up from next
-let bdViewMode    = 'matching'; // 'matching' | 'excluded'
 
 // ── Cookie pool management ─────────────────────────────────────────────────
 
@@ -5361,62 +5337,30 @@ function bdPassesFilter(profile) { return bdPassesFilters(profile); }
 
 function bdApplyFilters() {
   if (bdAllResults.length) {
+    // Filters are now a non-destructive preview — every result is saved; Tier decides
+    // scope. Show how many match the active rules, but render the full set.
     const matching = bdAllResults.filter(bdPassesFilters);
-    const excluded = bdAllResults.filter(r => !bdPassesFilters(r));
     document.getElementById('bdFltCount').textContent = `${matching.length} of ${bdAllResults.length} match filters`;
-    const matchCntEl = document.getElementById('bdViewMatchCount');
-    const exclCntEl  = document.getElementById('bdViewExclCount');
-    if (matchCntEl) matchCntEl.textContent = matching.length;
-    if (exclCntEl)  exclCntEl.textContent  = excluded.length;
-    renderBdTable(bdViewMode === 'excluded' ? excluded : matching);
+    const cntEl = document.getElementById('bdViewCount');
+    if (cntEl) cntEl.textContent = `${bdAllResults.length} result${bdAllResults.length === 1 ? '' : 's'}`;
+    renderBdTable(bdAllResults);
   } else {
     document.getElementById('bdFltCount').textContent = '';
+    const cntEl = document.getElementById('bdViewCount');
+    if (cntEl) cntEl.textContent = '';
   }
   // Button visibility is managed by bdOnPlatformChange — no need to repeat here
   // Always update BD Results tab if loaded — runs even when no Enrich search is active.
-  // Defer to idle so the Enrich tab paints first; autoApply re-merges 10k+ BDR rows.
+  // Defer to idle so the Enrich tab paints first; it re-merges 10k+ BDR rows.
   if (typeof bdrLoaded !== 'undefined' && bdrLoaded) {
     clearTimeout(window._bdrAutoApplyTimer);
-    window._bdrAutoApplyTimer = setTimeout(bdrAutoApply, 0);
+    window._bdrAutoApplyTimer = setTimeout(bdrApplyFilter, 0);
   }
 }
 
-function bdSetView(mode) {
-  bdViewMode = mode === 'excluded' ? 'excluded' : 'matching';
-  // Update button styles
-  const matchBtn = document.getElementById('bdViewMatchBtn');
-  const exclBtn  = document.getElementById('bdViewExclBtn');
-  const saveBtn  = document.getElementById('bdSaveBtn');
-  const hint     = document.getElementById('bdExclHint');
-  if (matchBtn) {
-    const active = bdViewMode === 'matching';
-    matchBtn.style.background = active ? 'var(--green-bg)' : 'var(--white)';
-    matchBtn.style.color      = active ? 'var(--green)'    : 'var(--muted)';
-  }
-  if (exclBtn) {
-    const active = bdViewMode === 'excluded';
-    exclBtn.style.background = active ? '#fef3ec'         : 'var(--white)';
-    exclBtn.style.color      = active ? 'var(--orange)'   : 'var(--muted)';
-  }
-  // Save button now switches label/style based on view (so excluded view can still save to review table)
-  if (saveBtn) {
-    if (bdViewMode === 'excluded') {
-      saveBtn.textContent       = '💾 Save to review table';
-      saveBtn.style.background  = 'var(--amber-bg)';
-      saveBtn.style.color       = 'var(--amber)';
-      saveBtn.style.border      = '1px solid #f5c9a8';
-      saveBtn.title             = 'Saves to brightdata_excluded_profiles for later review';
-    } else {
-      saveBtn.textContent       = '💾 Save filtered results to DB';
-      saveBtn.style.background  = '';
-      saveBtn.style.color       = '';
-      saveBtn.style.border      = '';
-      saveBtn.title             = 'Saves to brightdata_profiles';
-    }
-  }
-  if (hint)    hint.style.display    = bdViewMode === 'excluded' ? '' : 'none';
-  bdApplyFilters();
-}
+// Retired: the matching/excluded view toggle is gone (one table now; Tier marks scope).
+// Kept as a no-op so existing callers don't break.
+function bdSetView() { /* no-op */ }
 
 function bdResetFilters() {
   bdFilterGroups = [bdNewGroup()];
@@ -6061,17 +6005,14 @@ async function runBdSearch() {
 }
 
 async function bdSaveFiltered() {
-  // Save matching → brightdata_profiles; excluded → brightdata_excluded_profiles
-  const isExcluded = bdViewMode === 'excluded';
-  const toSave = (isExcluded
-      ? bdAllResults.filter(r => !bdPassesFilters(r))
-      : bdAllResults.filter(bdPassesFilters)
-    ).map(r => ({ ...r, rawPlatform: bdPlatform }));
-  if (!toSave.length) { setBdStatus(`No ${isExcluded ? 'excluded' : 'filtered'} profiles to save.`, 'red'); return; }
+  // Save EVERY result to brightdata_profiles — filters no longer gate the save; Tier
+  // ('filtered' status) marks out-of-scope rows in the Results tab.
+  const toSave = bdAllResults.map(r => ({ ...r, rawPlatform: bdPlatform }));
+  if (!toSave.length) { setBdStatus('No results to save.', 'red'); return; }
   const btn = document.getElementById('bdSaveBtn');
   const originalText = btn.textContent;
   btn.disabled = true;
-  const target = isExcluded ? 'excluded' : 'matching';
+  const target = 'matching';
   // Vercel has a ~4.5 MB body limit; batch to avoid 413 "Request Entity Too Large"
   const BATCH = 300;
   let totalSaved = 0;
@@ -6505,8 +6446,9 @@ const _bdrDatasetCache = { food: null, lifestyle: null };
 // Kept for backwards compat with any remaining references — superseded by dataset switch.
 let bdrLifestyleData = [];
 let bdrLifestyleLoaded = false;
+// Retired: the excluded table is gone. Kept as a permanently-empty stub so the
+// { matching, excluded } cache shape and any stray reads stay valid.
 let bdrExcludedData = [];
-let bdrViewMode = 'matching';
 let bdrPlatform = 'all';
 let bdrLoaded = false;
 let bdrSortCol = 'followers';
@@ -6652,6 +6594,33 @@ const BD_TIER_META = {
   3: { label: 'T3', color: 'var(--amber)', bg: '#fef8ec', t: 'Food-engaged: secondary paid-campaign pool' },
   4: { label: 'T4', color: '#7c3aed',      bg: '#f3effe', t: 'Non-food creator with enough food content, UK-relevant' },
 };
+// Count effective Tiers across a MERGED creator set → { 1,2,3,4, filtered, unclassified }.
+function bdTierCounts(merged) {
+  const c = { 1: 0, 2: 0, 3: 0, 4: 0, filtered: 0, unclassified: 0 };
+  for (const m of merged) {
+    const t = bdrEffectiveTier(m);
+    if (t.status === 'tier') c[t.tier]++; else c[t.status] = (c[t.status] || 0) + 1;
+  }
+  return c;
+}
+
+// Render a row of coloured count badges for T1–T4 / Filtered / Unclassified.
+function bdTierBadgeRow(c) {
+  const defs = [
+    { k: 1,              label: 'Tier 1',       bg: '#edf7f1',       color: 'var(--green)' },
+    { k: 2,              label: 'Tier 2',       bg: '#eef4fc',       color: 'var(--blue)' },
+    { k: 3,              label: 'Tier 3',       bg: '#fef8ec',       color: 'var(--amber)' },
+    { k: 4,              label: 'Tier 4',       bg: '#f3effe',       color: '#7c3aed' },
+    { k: 'filtered',     label: 'Filtered out', bg: '#fdf0ee',       color: '#c0392b' },
+    { k: 'unclassified', label: 'Unclassified', bg: 'var(--surface)', color: 'var(--muted)' },
+  ];
+  return defs.map(d => `
+    <div style="flex:1;min-width:88px;background:${d.bg};border:1px solid ${d.color}33;border-radius:10px;padding:10px 12px;text-align:center">
+      <div style="font-size:22px;font-weight:700;color:${d.color};font-family:var(--mono)">${c[d.k] || 0}</div>
+      <div style="font-size:11px;color:${d.color};opacity:.85;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">${d.label}</div>
+    </div>`).join('');
+}
+
 const _BD_RESTAURANT_FT = new Set(['restaurant_lists', 'restaurant_reviews', 'food_news_culture']);
 const _BD_T4_GROUP_A    = new Set(['fitness_wellness', 'fashion_beauty', 'travel_lifestyle', 'parenting_family', 'business_career', 'arts_culture']);
 const _BD_T4_GROUP_B    = new Set(['general_lifestyle', 'entertainment']);
@@ -6711,6 +6680,9 @@ function bdrTierOf(m) {
 function bdrEffectiveTier(m) {
   const c = bdrGetClass(m.handle, m.platforms?.[0] || '');
   if (c && c.tier_manual && c.tier) return { tier: c.tier, status: 'tier', reason: 'Manually set tier (override)', manual: true };
+  // Manual "Filtered" override: tier_manual flagged but no tier = hand-marked out of scope
+  // (replaces the old "mark irrelevant" → excluded-table flow).
+  if (c && c.tier_manual && c.tier == null) return { tier: null, status: 'filtered', reason: 'Manually marked filtered (irrelevant)', manual: true };
   const t = bdrTierOf(m);
   t.manual = false;
   return t;
@@ -7069,97 +7041,9 @@ function bdrToFilterShape(row) {
   };
 }
 
-let bdrPendingMatching = null;
-let bdrPendingExcluded = null;
-
-function bdrAutoApply() {
-  const allRawRows = [...bdrMatchingData, ...bdrExcludedData];
-  if (!allRawRows.length) return;
-
-  const hasActiveRules = bdFilterGroups.some(g =>
-    g.rules.some(r => r.field === 'verified' || r.field === 'ukBased' || r.field === 'foodFocus' || (r.value != null && r.value !== ''))
-  );
-  if (!hasActiveRules) {
-    document.getElementById('bdrReclassifyBanner').style.display = 'none';
-    return;
-  }
-
-  const mergedAll      = bdrMergeByHandle(allRawRows);
-  // Irrelevant overrides filter logic — these always go to excluded regardless of rules.
-  const passedMerged   = mergedAll.filter(m => m.relevancy !== 'irrelevant' && bdPassesFilters(bdrToFilterShape(m)));
-  const failedMerged   = mergedAll.filter(m => m.relevancy === 'irrelevant' || !bdPassesFilters(bdrToFilterShape(m)));
-
-  const newMatching = passedMerged.flatMap(m => m._rows);
-  const newExcluded = failedMerged.flatMap(m => m._rows);
-
-  const prevMatchHandles = new Set(bdrMatchingData.map(r => r.handle));
-  const prevExclHandles  = new Set(bdrExcludedData.map(r => r.handle));
-  const toMatch = passedMerged.filter(m => prevExclHandles.has(m.handle)).length;
-  const toExcl  = failedMerged.filter(m => prevMatchHandles.has(m.handle)).length;
-
-  bdrPendingMatching = newMatching;
-  bdrPendingExcluded = newExcluded;
-  bdrMatchingData    = newMatching;
-  bdrExcludedData    = newExcluded;
-  bdrUpdateStats();
-  bdrApplyFilter();
-
-  const parts = [];
-  if (toMatch > 0) parts.push(`${toMatch} moved → Matching`);
-  if (toExcl  > 0) parts.push(`${toExcl} moved → Filtered out`);
-  const msg = parts.length
-    ? `${parts.join(', ')} (${passedMerged.length} matching, ${failedMerged.length} filtered out) — unsaved`
-    : `${passedMerged.length} matching, ${failedMerged.length} filtered out`;
-  document.getElementById('bdrReclassifyMsg').textContent = msg;
-  document.getElementById('bdrReclassifyBanner').style.display = 'flex';
-  document.getElementById('bdrSaveReclassifyBtn').style.display = parts.length ? '' : 'none';
-}
-
-async function bdrSaveReclassify() {
-  if (!bdrPendingMatching || !bdrPendingExcluded) return;
-  const btn = document.getElementById('bdrSaveReclassifyBtn');
-  btn.disabled = true;
-  // Send in chunks of 300 each to stay under Vercel body limit
-  const CHUNK = 300;
-  try {
-    const matching = bdrPendingMatching, excluded = bdrPendingExcluded;
-    const totalChunks = Math.max(
-      Math.ceil(matching.length / CHUNK),
-      Math.ceil(excluded.length / CHUNK),
-      1
-    );
-    for (let i = 0; i < totalChunks; i++) {
-      const mChunk = matching.slice(i * CHUNK, (i + 1) * CHUNK);
-      const eChunk = excluded.slice(i * CHUNK, (i + 1) * CHUNK);
-      // Only send non-empty chunks, but always need at least one call to clear moves
-      if (!mChunk.length && !eChunk.length) continue;
-      btn.textContent = `⏳ Saving… ${Math.min((i + 1) * CHUNK, matching.length + excluded.length)}/${matching.length + excluded.length}`;
-      const resp = await fetch('/api/db-save', {
-        method: 'POST', headers: getApiHeaders(),
-        body: JSON.stringify({ action: 'brightdata-reclassify', matching: mChunk, excluded: eChunk, dataset: bdrDataset }),
-      });
-      let data;
-      try { data = await resp.json(); } catch (_) { throw new Error('Server returned non-JSON (payload too large?)'); }
-      if (!resp.ok) throw new Error(data.error || resp.statusText);
-    }
-    document.getElementById('bdrReclassifyMsg').textContent =
-      `Saved — ${matching.length} matching, ${excluded.length} filtered out`;
-    document.getElementById('bdrSaveReclassifyBtn').style.display = 'none';
-    bdrPendingMatching = null;
-    bdrPendingExcluded = null;
-  } catch (e) {
-    document.getElementById('bdrReclassifyMsg').textContent = `Save failed: ${e.message}`;
-  } finally {
-    btn.disabled = false; btn.textContent = '💾 Save to DB';
-  }
-}
-
-function bdrDiscardReclassify() {
-  bdrPendingMatching = null;
-  bdrPendingExcluded = null;
-  document.getElementById('bdrReclassifyBanner').style.display = 'none';
-  loadBdResults(true); // reload from DB to restore original state
-}
+// The matching/excluded reclassify flow is retired — there's one table now and Tier
+// ('filtered' status) marks scope, so applying filters never moves rows between tables.
+// Filter edits are a pure view refresh via bdrApplyFilter().
 
 async function loadBdResults(forceRefresh, dataset) {
   const ds = dataset || bdrDataset;
@@ -7176,12 +7060,14 @@ async function loadBdResults(forceRefresh, dataset) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     bdrDataset = ds;
-    bdrMatchingData = data.matching || [];
-    bdrExcludedData = data.excluded || [];
+    // One table now: everything comes back under `matching`. `excluded` is always [] from
+    // the API, but we still fold it in to stay correct during the migration window.
+    bdrMatchingData = [...(data.matching || []), ...(data.excluded || [])];
+    bdrExcludedData = [];
     // Cache so switching back doesn't re-fetch
-    _bdrDatasetCache[ds] = { matching: bdrMatchingData, excluded: bdrExcludedData };
+    _bdrDatasetCache[ds] = { matching: bdrMatchingData, excluded: [] };
     // Seed localStorage from DB values so tiers/types are visible on any device
-    const allDbRows = [...bdrMatchingData, ...bdrExcludedData];
+    const allDbRows = bdrMatchingData;
     const types = bdrGetTypes();
     const llmAll = bdrGetAllLLMMeta();
     allDbRows.forEach(r => {
@@ -7224,7 +7110,6 @@ async function loadBdResults(forceRefresh, dataset) {
     if (localStorage.getItem('bdr_filter_panel_collapsed') === '1') bdrToggleFilters();
     bdrUpdateStats();        // show DB state as-is on load
     bdrApplyFilter();
-    bdrAutoApply();          // re-classify by active filter rules (shows banner if anything changed)
   } catch (e) {
     document.getElementById('bdrLoading').innerHTML =
       `<div style="color:var(--red);font-size:13px">Failed to load: ${e.message}</div>`;
@@ -7233,9 +7118,7 @@ async function loadBdResults(forceRefresh, dataset) {
 
 function bdrUpdateStats() {
   const uniqMatch = new Set(bdrMatchingData.map(r => r.handle)).size;
-  const uniqExcl  = new Set(bdrExcludedData.map(r => r.handle)).size;
   document.getElementById('bdrTotMatch').textContent = uniqMatch;
-  document.getElementById('bdrTotExcl').textContent  = uniqExcl;
 
   const platHandles = (src, plat) => new Set(
     src.filter(r => (r.platform||r.raw_platform||'').toLowerCase().includes(plat)).map(r => r.handle)
@@ -7248,7 +7131,7 @@ function bdrUpdateStats() {
     return p === 'x' || p === 'twitter' || p.includes('x / twitter');
   }).reduce((s,r,_,a) => { s.add(r.handle); return s; }, new Set()).size;
 
-  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src = bdrMatchingData;
   const pc = plat => plat === 'all'
     ? new Set(src.map(r => r.handle)).size
     : platHandles(src, plat);
@@ -7257,8 +7140,6 @@ function bdrUpdateStats() {
   document.getElementById('bdrPcTt').textContent  = pc('tiktok');
   document.getElementById('bdrPcYt').textContent  = pc('youtube');
   document.getElementById('bdrPcX').textContent   = pc('x');
-  document.getElementById('bdrMatchCount').textContent = uniqMatch;
-  document.getElementById('bdrExclCount').textContent  = uniqExcl;
   bdrInsightsRender();
 }
 
@@ -7297,35 +7178,32 @@ async function bdrEnsureBothDatasetsLoaded() {
   }
 }
 
-// Pull every row from all 4 tables, tagging each with its dataset of origin.
+// Pull every row from both dataset tables, tagging each with its dataset of origin.
 // Used by the Overview to compute a unified, dedup'd view with source labels.
 function bdrGetAllRowsTagged() {
   // Sync the active dataset into the cache so the snapshot is current.
-  _bdrDatasetCache[bdrDataset] = { matching: bdrMatchingData, excluded: bdrExcludedData };
+  _bdrDatasetCache[bdrDataset] = { matching: bdrMatchingData, excluded: [] };
   const food = _bdrDatasetCache.food      || { matching: [], excluded: [] };
   const life = _bdrDatasetCache.lifestyle || { matching: [], excluded: [] };
   const tagged = [];
   for (const r of food.matching) tagged.push({ ...r, _dataset: 'food',      _status: 'matching' });
-  for (const r of food.excluded) tagged.push({ ...r, _dataset: 'food',      _status: 'excluded' });
   for (const r of life.matching) tagged.push({ ...r, _dataset: 'lifestyle', _status: 'matching' });
-  for (const r of life.excluded) tagged.push({ ...r, _dataset: 'lifestyle', _status: 'excluded' });
   return tagged;
 }
 
 function insGetRows() {
-  // Merge across BOTH datasets — one row per handle. Source is decided from the
-  // MATCHING tables only (excluded rows still inform bio/captions/etc. via merge,
-  // but they don't count toward "this creator belongs to dataset X"). Profiles
-  // that exist only in excluded tables (no matching anywhere) are filtered out
-  // of the Overview entirely — Overview is for the kept set.
+  // Merge across BOTH datasets — one row per handle, labelled by source dataset.
+  // Out-of-scope creators (rule-based or manually 'filtered' Tier) are dropped —
+  // the Overview is for the kept set.
   const tagged = bdrGetAllRowsTagged();
   const merged = bdrMergeByHandle(tagged);
   const out = [];
   for (const m of merged) {
-    const inFoodMatching = m._rows?.some(r => r._dataset === 'food'      && r._status === 'matching') || false;
-    const inLifeMatching = m._rows?.some(r => r._dataset === 'lifestyle' && r._status === 'matching') || false;
-    if (!inFoodMatching && !inLifeMatching) continue; // not in any matching table — skip from Overview
-    m.source = inFoodMatching && inLifeMatching ? 'both' : inFoodMatching ? 'food' : 'lifestyle';
+    const inFood = m._rows?.some(r => r._dataset === 'food')      || false;
+    const inLife = m._rows?.some(r => r._dataset === 'lifestyle') || false;
+    if (!inFood && !inLife) continue;
+    if (bdrEffectiveTier(m).status === 'filtered') continue; // out of scope — skip from Overview
+    m.source = inFood && inLife ? 'both' : inFood ? 'food' : 'lifestyle';
     out.push(m);
   }
   if (insPlatform === 'all') return out;
@@ -7367,6 +7245,7 @@ function insDimValue(m, dim) {
   if (dim === 'tier')     { const t = bdrEffectiveTier(m); return t.status === 'tier' ? `T${t.tier}` : (t.status === 'filtered' ? 'Filtered' : 'Unclassified'); }
   if (dim === 'entity')   { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type; return v ? (BD_ENTITY_META[v]?.label || v) : '(none)'; }
   if (dim === 'category') { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category; return v ? (BD_CAT_LABEL[v] || v) : '(none)'; }
+  if (dim === 'foodtype') { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').primary_food_content_type; return v ? (BD_FOODTYPE_LABEL[v] || v) : '(none)'; }
   if (dim === 'uk')       { const v = bdrGetClass(m.handle, m.platforms?.[0]||'').uk_geography; return v ? (BD_UK_META[v]?.label || v) : '(none)'; }
   if (dim === 'followers') return insFollowersBucket(m.followers);
   if (dim === 'er') {
@@ -7381,6 +7260,7 @@ function insDimValue(m, dim) {
 
 function insDimOrder(dim, keys) {
   if (dim === 'tier')      return ['T1','T2','T3','T4','Filtered','Unclassified'].filter(k => keys.has(k));
+  if (dim === 'foodtype')  return [...Object.values(BD_FOODTYPE_LABEL), '(none)'].filter(k => keys.has(k));
   if (dim === 'entity')    return ['Individual','Brand','Unclear','(none)'].filter(k => keys.has(k));
   if (dim === 'uk')        return ['UK ✓','UK partial','UK claim','non-UK','(none)'].filter(k => keys.has(k));
   if (dim === 'followers') return FOLLOWERS_ORDER.filter(k => keys.has(k));
@@ -7405,6 +7285,9 @@ function bdrInsightsRender() {
     const id = { instagram:'insPcIg', tiktok:'insPcTt', youtube:'insPcYt', x:'insPcX' }[p];
     document.getElementById(id).textContent = allM.filter(m => m.platforms.some(pl => pl.includes(p))).length;
   });
+
+  // Tier distribution over the FULL merged set (includes filtered + unclassified).
+  document.getElementById('insTierCards').innerHTML = bdTierBadgeRow(bdTierCounts(allM));
 
   if (!rows.length) {
     document.getElementById('insStatCards').innerHTML = '<span style="font-size:13px;color:var(--muted)">No data — run a search and save results first.</span>';
@@ -7561,10 +7444,18 @@ function bdrInsightsRender() {
     .sort((a, b) => (BD_CAT_LABEL[a]||a).localeCompare(BD_CAT_LABEL[b]||b));
   topCatSel.innerHTML = '<option value="">All</option>' + allCats.map(c => `<option value="${c}"${c===prevTopCat?' selected':''}>${BD_CAT_LABEL[c]||c}</option>`).join('');
 
+  // Food sub-type filter — populated from the classifier's primary_food_content_type facts
+  const topFtSel = document.getElementById('insTopFoodType');
+  const prevTopFt = topFtSel.value;
+  const allFts = [...new Set(rows.map(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_food_content_type).filter(Boolean))]
+    .sort((a, b) => (BD_FOODTYPE_LABEL[a]||a).localeCompare(BD_FOODTYPE_LABEL[b]||b));
+  topFtSel.innerHTML = '<option value="">All</option>' + allFts.map(f => `<option value="${f}"${f===prevTopFt?' selected':''}>${BD_FOODTYPE_LABEL[f]||f}</option>`).join('');
+
   const topSort   = document.getElementById('insTopSort').value;
   const topTier   = document.getElementById('insTopTier')?.value || '';
   const topEntity = document.getElementById('insTopEntity').value;
   const topCat    = topCatSel.value;
+  const topFt     = topFtSel.value;
 
   const topErOf = m => {
     const isYT = m.platforms?.some(p => p.includes('youtube'));
@@ -7576,6 +7467,7 @@ function bdrInsightsRender() {
   if (topTier) topRows = topRows.filter(m => { const t = bdrEffectiveTier(m); return topTier === 'tiered' ? t.status === 'tier' : String(t.tier) === topTier; });
   if (topEntity) topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type === topEntity);
   if (topCat)    topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category === topCat);
+  if (topFt)     topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_food_content_type === topFt);
   topRows.sort((a, b) => topSort === 'er'
     ? topErOf(b) - topErOf(a)
     : (Number(b.followers)||0) - (Number(a.followers)||0));
@@ -7603,6 +7495,7 @@ function bdrInsightsRender() {
           <th style="padding:6px 8px;text-align:left">Tier</th>
           <th style="padding:6px 8px;text-align:left">Entity</th>
           <th style="padding:6px 8px;text-align:left">Category</th>
+          <th style="padding:6px 8px;text-align:left">Food type</th>
           <th style="padding:6px 8px;text-align:left">UK</th>
           <th style="padding:6px 8px;width:28px"></th>
         </tr></thead>
@@ -7620,6 +7513,7 @@ function bdrInsightsRender() {
             ? `<span title="${em.t}" style="font-size:10px;font-weight:700;background:${em.bg};color:${em.color};border:1px solid ${em.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${em.label}</span>`
             : '<span style="color:var(--muted2)">—</span>';
           const catCell = cls.primary_content_category ? (BD_CAT_LABEL[cls.primary_content_category] || cls.primary_content_category) : '—';
+          const ftCell  = cls.primary_food_content_type ? (BD_FOODTYPE_LABEL[cls.primary_food_content_type] || cls.primary_food_content_type) : '—';
           const ukCell  = um
             ? `<span title="${um.t}" style="font-size:10px;font-weight:700;background:${um.bg};color:${um.color};border:1px solid ${um.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${um.label}</span>`
             : '<span style="color:var(--muted2)">—</span>';
@@ -7663,8 +7557,9 @@ function bdrInsightsRender() {
             <td style="padding:6px 8px">${tierCell}</td>
             <td style="padding:6px 8px">${entityCell}</td>
             <td style="padding:6px 8px;color:var(--muted)">${catCell}</td>
+            <td style="padding:6px 8px;color:var(--muted)">${ftCell}</td>
             <td style="padding:6px 8px">${ukCell}</td>
-            <td style="padding:6px 8px;text-align:right;white-space:nowrap"><button onclick="bdrViewPosts('${h}','${m.platforms?.[0]||''}')" title="View recent posts with engagement, thumbnails &amp; links" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4;margin-right:4px" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">🖼</button><button onclick="insExcludeProfile('${h}')" title="Mark as irrelevant — permanently excluded regardless of filter rules" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
+            <td style="padding:6px 8px;text-align:right;white-space:nowrap"><button onclick="bdrViewPosts('${h}','${m.platforms?.[0]||''}')" title="View recent posts with engagement, thumbnails &amp; links" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4;margin-right:4px" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">🖼</button><button onclick="insExcludeProfile('${h}')" title="Mark as Filtered (irrelevant) — sets a manual out-of-scope Tier; revert via the Tier dropdown" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
           </tr>`;
         }).join('')}</tbody>
       </table>`
@@ -7734,42 +7629,40 @@ async function insAddToOutreach() {
   }
 }
 
+// Mark a creator out of scope via a manual "Filtered" Tier override (tier=null,
+// tier_manual=true), persisted through patch-classification. Replaces the old
+// excluded-table "mark irrelevant" flow now that there's one table.
 async function insExcludeProfile(handle) {
-  if (!confirm(`Mark @${handle} as irrelevant?\n\nThey'll be excluded from matching even if your filters would otherwise include them.`)) return;
+  if (!confirm(`Mark @${handle} as Filtered (irrelevant)?\n\nThey'll be set out of scope (Tier: Filtered) regardless of the rule-based tier. You can revert to Auto anytime.`)) return;
   const rows = bdrMatchingData.filter(r => r.handle === handle);
   if (!rows.length) return;
-  // Tag each row as irrelevant — the reclassify upsert will persist this column.
-  rows.forEach(r => { r.relevancy = 'irrelevant'; });
-  // Reassign array so WeakMap-keyed merge cache is invalidated automatically
-  bdrMatchingData = bdrMatchingData.filter(r => r.handle !== handle);
-  bdrExcludedData = [...bdrExcludedData, ...rows];
+  const platforms = [...new Set(rows.map(r => r.platform).filter(Boolean))];
+  const patches = platforms.map(platform => {
+    const existing = bdrGetClass(handle, platform);
+    bdrSetClass(handle, platform, { ...existing, tier: null, tier_manual: true });
+    return { handle, platform, tier: null, tier_manual: true };
+  });
   bdrInsightsRender();
-  try {
-    await fetch('/api/db-save', {
-      method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: rows, dataset: bdrDataset }),
-    });
-  } catch (e) { console.warn('[insExclude]', e.message); }
+  const res = await bdrPatchClassificationDB(patches);
+  if (!res.ok) console.warn('[insExclude]', res.error);
 }
 
-// Restore a previously-marked-irrelevant profile so filter rules apply normally.
+// Restore a manually-filtered profile back to Auto so the rule-based tier applies again.
 async function insRestoreProfile(handle) {
-  if (!confirm(`Restore @${handle}? Filter rules will determine if they end up in matching.`)) return;
-  const allRows = [...bdrMatchingData, ...bdrExcludedData].filter(r => r.handle === handle);
-  if (!allRows.length) return;
-  allRows.forEach(r => { r.relevancy = null; });
-  // Reassign arrays so WeakMap-keyed merge cache is invalidated and the new
-  // relevancy value is picked up on the next merge.
-  bdrMatchingData = [...bdrMatchingData];
-  bdrExcludedData = [...bdrExcludedData];
+  if (!confirm(`Restore @${handle}? The rule-based tier will apply again.`)) return;
+  const rows = bdrMatchingData.filter(r => r.handle === handle);
+  if (!rows.length) return;
+  const merged = bdrMergeByHandle(rows);
+  const ruleTier = merged.length ? (bdrTierOf(merged[0]).tier ?? null) : null;
+  const platforms = [...new Set(rows.map(r => r.platform).filter(Boolean))];
+  const patches = platforms.map(platform => {
+    const existing = bdrGetClass(handle, platform);
+    bdrSetClass(handle, platform, { ...existing, tier: ruleTier, tier_manual: false });
+    return { handle, platform, tier: ruleTier, tier_manual: false };
+  });
   bdrInsightsRender();
-  try {
-    await fetch('/api/db-save', {
-      method: 'POST', headers: getApiHeaders(),
-      body: JSON.stringify({ action: 'brightdata-reclassify', matching: [], excluded: allRows, dataset: bdrDataset }),
-    });
-  } catch (e) { console.warn('[insRestore]', e.message); }
-  bdrAutoApply();
+  const res = await bdrPatchClassificationDB(patches);
+  if (!res.ok) console.warn('[insRestore]', res.error);
 }
 
 // Silently load outreach data (no spinner, no table render) so Overview can
@@ -7793,7 +7686,7 @@ let _bdrLangRunning = false;
 
 async function bdrDetectAllLanguages() {
   if (_bdrLangRunning) return;
-  const srcData = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const srcData = bdrMatchingData;
   const merged = bdrMergeByHandle(srcData);
   const todo = merged.filter(m => !m.language);
   if (!todo.length) { alert('All profiles already have a language detected.'); return; }
@@ -7840,7 +7733,6 @@ async function bdrDetectOneLang(handle, platform) {
       const d = await resp.json();
       if (d.language) {
         bdrMatchingData.forEach(r => { if (r.handle === handle) r.language = d.language; });
-        bdrExcludedData.forEach(r => { if (r.handle === handle) r.language = d.language; });
         bdrApplyFilter();
         return;
       }
@@ -7937,17 +7829,15 @@ async function bdrFindOtherPlatforms() {
   if (_bdrFindPlatformsRunning) return;
 
   const matchMerged = bdrMergeByHandle(bdrMatchingData);
-  const exclMerged  = bdrMergeByHandle(bdrExcludedData);
-  const totalProfiles = matchMerged.length + exclMerged.length;
+  const totalProfiles = matchMerged.length;
   if (!totalProfiles) { alert('No profiles loaded yet.'); return; }
 
   // Rough cost estimate — assume avg 2 missing platforms per profile, ~$0.0015 per BD call
   const estCost = (totalProfiles * 2 * 0.0015).toFixed(2);
   const ok = confirm(
-    `This will scan ${totalProfiles} unique creators (${matchMerged.length} matching + ${exclMerged.length} filtered out) ` +
+    `This will scan ${totalProfiles} unique creators ` +
     `for accounts on other platforms.\n\n` +
     `• Processes 100 at a time, saving to DB after each batch\n` +
-    `• Starts with matching, then filtered out\n` +
     `• Uses Bright Data — rough cost estimate: $${estCost}\n\n` +
     `Continue?`
   );
@@ -8021,14 +7911,11 @@ async function bdrFindOtherPlatforms() {
     }
   }
 
-  // Route to the active dataset's table pair so find-other-platforms writes to the correct tables.
-  const datasetTables = bdrDataset === 'lifestyle'
-    ? { matching: 'lifestyle_bloggers',  excluded: 'lifestyle_bloggers_excluded' }
-    : { matching: 'brightdata_profiles', excluded: 'brightdata_excluded_profiles' };
+  // Route to the active dataset's table so find-other-platforms writes to the right place.
+  const datasetTable = bdrDataset === 'lifestyle' ? 'lifestyle_bloggers' : 'brightdata_profiles';
 
   try {
-    if (matchMerged.length) await runPhase('Matching', matchMerged, datasetTables.matching);
-    if (exclMerged.length)  await runPhase('Filtered out', exclMerged, datasetTables.excluded);
+    if (matchMerged.length) await runPhase('Profiles', matchMerged, datasetTable);
 
     const br = runState.breakdown;
     status.textContent = `✓ Done — processed ${runState.totalProcessed}, found ${runState.totalDiscovered}, saved ${runState.totalSaved} (name_mismatch ${br.name_mismatch}, verify_failed ${br.verify_failed}, save_failed ${br.save_failed})`;
@@ -8188,26 +8075,14 @@ function bdrRefreshFilterDropdowns(filteredRows) {
   }
 }
 
-function bdrSetView(mode) {
-  bdrViewMode = mode;
-  const matchBtn = document.getElementById('bdrViewMatchBtn');
-  const exclBtn  = document.getElementById('bdrViewExclBtn');
-  matchBtn.style.background = mode === 'matching' ? 'var(--green-bg)' : 'var(--white)';
-  matchBtn.style.color      = mode === 'matching' ? 'var(--green)'    : 'var(--muted)';
-  exclBtn.style.background  = mode === 'excluded' ? '#fff5f0'         : 'var(--white)';
-  exclBtn.style.color       = mode === 'excluded' ? 'var(--orange)'   : 'var(--muted)';
-  bdrUpdateStats();
-  bdrApplyFilter();
-}
-
 // Switch between Food Bloggers and Lifestyle Bloggers datasets. Each has its own
-// matching + excluded tables. Cached on first load so re-switching is instant.
+// single table. Cached on first load so re-switching is instant.
 async function bdrSetDataset(dataset) {
   if (dataset !== 'food' && dataset !== 'lifestyle') return;
   if (dataset === bdrDataset && bdrLoaded) return;
   // Stash current arrays before swap
   if (bdrLoaded) {
-    _bdrDatasetCache[bdrDataset] = { matching: bdrMatchingData, excluded: bdrExcludedData };
+    _bdrDatasetCache[bdrDataset] = { matching: bdrMatchingData, excluded: [] };
   }
   // Update pill button styles
   const foodBtn = document.getElementById('bdrDsFoodBtn');
@@ -8224,7 +8099,7 @@ async function bdrSetDataset(dataset) {
   if (_bdrDatasetCache[dataset]) {
     bdrDataset = dataset;
     bdrMatchingData = _bdrDatasetCache[dataset].matching;
-    bdrExcludedData = _bdrDatasetCache[dataset].excluded;
+    bdrExcludedData = [];
     bdrUpdateStats();
     bdrApplyFilter();
   } else {
@@ -8300,7 +8175,7 @@ function bdrSearchDebounced() {
 }
 
 function bdrApplyFilter() {
-  const src = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src = bdrMatchingData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
   const tierFilt = (document.getElementById('bdrFilterTier')?.value     || '');
   const entFilt  = (document.getElementById('bdrFilterEntity')?.value   || '');
@@ -8312,6 +8187,10 @@ function bdrApplyFilter() {
   // Compute engagement scores over the FULL merged set (cohort = all enriched creators per
   // platform) BEFORE filtering, so a creator's score is stable regardless of the active filters.
   bdrComputeScores(merged);
+
+  // Tier distribution badges reflect the full loaded dataset (before view filters).
+  const _tierCardsEl = document.getElementById('bdrTierCards');
+  if (_tierCardsEl) _tierCardsEl.innerHTML = bdTierBadgeRow(bdTierCounts(merged));
 
   if (bdrPlatform !== 'all') {
     merged = merged.filter(m => m.platforms.some(p => p.includes(bdrPlatform)));
@@ -8392,7 +8271,7 @@ function bdrApplyFilter() {
   if (!merged.length) {
     document.getElementById('bdrEmpty').style.display = '';
     document.getElementById('bdrTableWrap').style.display = 'none';
-    const hasAny = bdrMatchingData.length || bdrExcludedData.length;
+    const hasAny = bdrMatchingData.length;
     document.getElementById('bdrEmpty').innerHTML = hasAny
       ? '<div style="font-size:2rem;margin-bottom:10px">🔍</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No profiles match</div><div style="font-size:12.5px">Try a different platform, tier, type, or clear the search.</div>'
       : '<div style="font-size:2rem;margin-bottom:10px">📭</div><div style="font-weight:600;font-size:14px;margin-bottom:6px">No saved results yet</div><div style="font-size:12.5px">Run a search in the <strong>BrightData Enrich</strong> tab and click <strong>Save filtered results to DB</strong>.</div>';
@@ -8605,12 +8484,16 @@ function bdrRenderTable(rows, _skipPageSetup) {
         ? `background:var(--white);color:var(--muted2);border:1px dashed var(--border);font-weight:600`
         : `background:var(--white);color:var(--muted2);border:1px solid var(--border)`;
     const tierTip = ti.manual ? 'Manual override — pick Auto to revert to the rule' : (ti.reason || '');
-    const opt = (v, lbl) => `<option value="${v}"${(ti.manual && String(ti.tier) === v) || (!ti.manual && v === 'auto') ? ' selected' : ''}>${lbl}</option>`;
+    const opt = (v, lbl) => `<option value="${v}"${
+      (ti.manual && ti.status === 'filtered' && v === 'filtered') ||
+      (ti.manual && ti.status !== 'filtered' && String(ti.tier) === v) ||
+      (!ti.manual && v === 'auto') ? ' selected' : ''}>${lbl}</option>`;
     const tierHtml = (!ti.manual && ruleTi.status === 'unclassified')
       ? `<span title="Not classified yet — run AI Classify" style="color:var(--muted2)">—</span>`
       : `<select onchange="bdrSaveTierOverride(this)" data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}" title="${tierTip.replace(/"/g,"'")}" style="font-size:10.5px;border-radius:100px;padding:2px 6px;cursor:pointer;${selStyle}">
            ${opt('auto', `Auto · ${ruleLbl}`)}
            ${opt('1','T1')}${opt('2','T2')}${opt('3','T3')}${opt('4','T4')}
+           ${opt('filtered','✕ Filtered')}
          </select>${ti.manual ? '<span title="Manual override" style="color:var(--accent);font-weight:800;margin-left:3px">•</span>' : ''}`;
     const reasonTxt  = cls.reasoning || '';
     const reasonHtml = reasonTxt
@@ -8685,7 +8568,7 @@ async function bdrReenrichMissing() {
   btn.disabled = true;
 
   // Operate on the currently-viewed table within the active dataset.
-  const sourceData = bdrViewMode === 'excluded' ? bdrExcludedData : bdrMatchingData;
+  const sourceData = bdrMatchingData;
   const allMerged = bdrMergeByHandle(sourceData);
   const needsEnrich = r => !r.engagement_rate || !r.followers;
 
@@ -8800,6 +8683,9 @@ async function bdrSaveTierOverride(sel) {
   if (sel.value === 'auto') {
     tier_manual = false;
     tier = m ? (bdrTierOf(m).tier ?? null) : null; // store the current rule tier for DB query/export
+  } else if (sel.value === 'filtered') {
+    tier_manual = true;
+    tier = null;            // manual "Filtered" (irrelevant) — out of scope, set by hand
   } else {
     tier_manual = true;
     tier = Number(sel.value);
@@ -8811,6 +8697,8 @@ async function bdrSaveTierOverride(sel) {
   }
   bdrRenderPage();           // re-render current page in place (recolours badge, toggles • marker)
   bdrInsightsRender();       // keep Insights in sync if open
+  const _tc = document.getElementById('bdrTierCards');
+  if (_tc) _tc.innerHTML = bdTierBadgeRow(bdTierCounts(bdrMergeByHandle(bdrMatchingData)));  // refresh tier counts
 }
 
 function bdrProfileUrl(r) {
@@ -8825,7 +8713,7 @@ function bdrProfileUrl(r) {
 }
 
 function bdrExportCsv() {
-  const src      = bdrViewMode === 'matching' ? bdrMatchingData : bdrExcludedData;
+  const src      = bdrMatchingData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
   const tierFilt = (document.getElementById('bdrFilterTier')?.value     || '');
   const entFilt = (document.getElementById('bdrFilterEntity')?.value   || '');
@@ -8892,7 +8780,7 @@ function bdrExportCsv() {
 
   const a       = document.createElement('a');
   a.href        = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download    = `bd_results_${bdrViewMode}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download    = `bd_results_${new Date().toISOString().slice(0, 10)}.csv`;
   a.click();
 }
 

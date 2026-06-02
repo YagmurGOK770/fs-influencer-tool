@@ -32,7 +32,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABA
 if (!SUPABASE_URL || !SUPABASE_KEY) { console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_KEY'); process.exit(1); }
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const SOURCE_TABLES = ['brightdata_profiles', 'brightdata_excluded_profiles', 'lifestyle_bloggers', 'lifestyle_bloggers_excluded'];
+const SOURCE_TABLES = ['brightdata_profiles', 'lifestyle_bloggers'];
 const lc = (h) => String(h || '').replace(/^@/, '').toLowerCase();
 const canon = (p) => { p = String(p || '').toLowerCase(); if (p.includes('insta')) return 'instagram'; if (p.includes('tik')) return 'tiktok'; if (p.includes('you')) return 'youtube'; if (p === 'x' || p.includes('twit')) return 'x'; return p; };
 function parseFollowers(v) {

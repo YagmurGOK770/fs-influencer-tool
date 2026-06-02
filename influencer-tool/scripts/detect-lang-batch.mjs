@@ -5,8 +5,6 @@
 //   node scripts/detect-lang-batch.mjs --limit 100         # process up to 100 handles (test run)
 //   node scripts/detect-lang-batch.mjs --concurrency 20    # 20 LLM calls in flight (default 10)
 //   node scripts/detect-lang-batch.mjs --dry-run           # show what would happen, no DB writes
-//   node scripts/detect-lang-batch.mjs --only excluded     # only the excluded table
-//   node scripts/detect-lang-batch.mjs --only matching     # only the matching table
 //
 // Resumable: only touches rows where `language IS NULL`, so re-running picks up where it left off.
 // Every result is appended to scripts/detect-lang-batch.jsonl as it happens — never loses data.
@@ -40,7 +38,6 @@ const hasFlag = (name) => args.includes(name);
 const DRY_RUN     = hasFlag('--dry-run');
 const LIMIT       = Number(getFlag('--limit')) || Infinity;
 const CONCURRENCY = Number(getFlag('--concurrency')) || 10;
-const ONLY        = getFlag('--only'); // 'matching' | 'excluded' | null
 
 const LOG_PATH = path.join(__dirname, 'detect-lang-batch.jsonl');
 function log(entry) {
@@ -61,7 +58,7 @@ if (!process.env.ANTHROPIC_API_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// ── Fetch profiles missing language from both tables (paginated) ────────────
+// ── Fetch profiles missing language from the profiles table (paginated) ─────
 async function fetchMissing(table) {
   const all = [];
   const PAGE = 1000;
@@ -81,28 +78,18 @@ async function fetchMissing(table) {
   return all;
 }
 
-console.log(`[detect-lang-batch] starting (concurrency=${CONCURRENCY}, dry_run=${DRY_RUN}, only=${ONLY || 'both'})`);
+console.log(`[detect-lang-batch] starting (concurrency=${CONCURRENCY}, dry_run=${DRY_RUN})`);
 const t0 = Date.now();
 
-const matchRows = (ONLY === 'excluded') ? [] : await fetchMissing('brightdata_profiles');
-const exclRows  = (ONLY === 'matching') ? [] : await fetchMissing('brightdata_excluded_profiles');
-console.log(`[detect-lang-batch] fetched: matching=${matchRows.length} excluded=${exclRows.length}`);
+const matchRows = await fetchMissing('brightdata_profiles');
+console.log(`[detect-lang-batch] fetched: ${matchRows.length} rows missing language`);
 
-// ── Group by handle, aggregate text from BOTH tables (so one detection covers all platforms) ─
+// ── Group by handle, aggregate text (so one detection covers all platforms) ─
 const byHandle = new Map();
-const sourceTablesOf = (handle, defaultTable) => byHandle.get(handle)?._tables || new Set([defaultTable]);
 
 for (const r of matchRows) {
-  if (!byHandle.has(r.handle)) byHandle.set(r.handle, { handle: r.handle, captions: [], bios: [], _tables: new Set() });
+  if (!byHandle.has(r.handle)) byHandle.set(r.handle, { handle: r.handle, captions: [], bios: [] });
   const e = byHandle.get(r.handle);
-  e._tables.add('brightdata_profiles');
-  if (Array.isArray(r.post_captions)) e.captions.push(...r.post_captions.slice(0, 5));
-  if (r.bio) e.bios.push(r.bio);
-}
-for (const r of exclRows) {
-  if (!byHandle.has(r.handle)) byHandle.set(r.handle, { handle: r.handle, captions: [], bios: [], _tables: new Set() });
-  const e = byHandle.get(r.handle);
-  e._tables.add('brightdata_excluded_profiles');
   if (Array.isArray(r.post_captions)) e.captions.push(...r.post_captions.slice(0, 5));
   if (r.bio) e.bios.push(r.bio);
 }
@@ -117,10 +104,10 @@ for (const e of byHandle.values()) {
   }
   if (text.trim().length < 5) {
     noText++;
-    log({ handle: e.handle, language: null, reason: 'no_text', tables: [...e._tables] });
+    log({ handle: e.handle, language: null, reason: 'no_text' });
     continue;
   }
-  todo.push({ handle: e.handle, text, tables: [...e._tables] });
+  todo.push({ handle: e.handle, text });
   if (todo.length >= LIMIT) break;
 }
 
@@ -132,7 +119,7 @@ if (DRY_RUN) {
 if (!todo.length) { console.log('[detect-lang-batch] nothing to do'); process.exit(0); }
 
 // ── Detect with concurrency ─────────────────────────────────────────────────
-const results = []; // { handle, lang, tables }
+const results = []; // { handle, lang }
 let done = 0;
 let errors = 0;
 const detectStart = Date.now();
@@ -149,15 +136,15 @@ async function detectOne(item) {
     });
     const lang = (msg.content[0]?.text?.trim().toLowerCase() || 'unknown').replace(/[^a-z]/g, '').slice(0, 5);
     if (!lang || lang === 'unknown') {
-      log({ handle: item.handle, language: null, reason: 'llm_unknown', tables: item.tables });
-      return { handle: item.handle, lang: null, tables: item.tables };
+      log({ handle: item.handle, language: null, reason: 'llm_unknown' });
+      return { handle: item.handle, lang: null };
     }
-    log({ handle: item.handle, language: lang, source: 'claude_haiku', textLen: item.text.length, tables: item.tables });
-    return { handle: item.handle, lang, tables: item.tables };
+    log({ handle: item.handle, language: lang, source: 'claude_haiku', textLen: item.text.length });
+    return { handle: item.handle, lang };
   } catch (e) {
     errors++;
-    log({ handle: item.handle, language: null, reason: 'llm_error', error: e.message, tables: item.tables });
-    return { handle: item.handle, lang: null, tables: item.tables, error: e.message };
+    log({ handle: item.handle, language: null, reason: 'llm_error', error: e.message });
+    return { handle: item.handle, lang: null, error: e.message };
   }
 }
 
@@ -175,19 +162,12 @@ for (let i = 0; i < todo.length; i += CONCURRENCY) {
   }
 }
 
-// ── Batch updates: group by language, one UPDATE per language per table ─────
+// ── Batch updates: group by language, one UPDATE per language ───────────────
 const byLangMatch = new Map(); // lang -> [handle]
-const byLangExcl  = new Map();
 for (const r of results) {
   if (!r.lang) continue;
-  if (r.tables.includes('brightdata_profiles')) {
-    if (!byLangMatch.has(r.lang)) byLangMatch.set(r.lang, []);
-    byLangMatch.get(r.lang).push(r.handle);
-  }
-  if (r.tables.includes('brightdata_excluded_profiles')) {
-    if (!byLangExcl.has(r.lang)) byLangExcl.set(r.lang, []);
-    byLangExcl.get(r.lang).push(r.handle);
-  }
+  if (!byLangMatch.has(r.lang)) byLangMatch.set(r.lang, []);
+  byLangMatch.get(r.lang).push(r.handle);
 }
 
 async function batchUpdate(table, byLang) {
@@ -209,14 +189,12 @@ async function batchUpdate(table, byLang) {
 }
 
 console.log(`[detect-lang-batch] writing to DB…`);
-const updatedMatch = await batchUpdate('brightdata_profiles',          byLangMatch);
-const updatedExcl  = await batchUpdate('brightdata_excluded_profiles', byLangExcl);
+const updatedMatch = await batchUpdate('brightdata_profiles', byLangMatch);
 
 const total = (Date.now() - t0) / 1000;
 console.log(`[detect-lang-batch] DONE in ${total.toFixed(1)}s`);
 console.log(`  handles detected:    ${results.filter(r => r.lang).length}`);
 console.log(`  llm errors:          ${errors}`);
 console.log(`  no_text skipped:     ${noText}`);
-console.log(`  rows updated (match):${updatedMatch}`);
-console.log(`  rows updated (excl): ${updatedExcl}`);
+console.log(`  rows updated:        ${updatedMatch}`);
 console.log(`  log file:            ${LOG_PATH}`);

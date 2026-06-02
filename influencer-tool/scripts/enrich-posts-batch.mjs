@@ -61,7 +61,7 @@ const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABA
 if (!SUPABASE_URL || !SUPABASE_KEY) { console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_KEY in .env.local'); process.exit(1); }
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-const SOURCE_TABLES = ['brightdata_profiles', 'brightdata_excluded_profiles', 'lifestyle_bloggers', 'lifestyle_bloggers_excluded'];
+const SOURCE_TABLES = ['brightdata_profiles', 'lifestyle_bloggers'];
 
 // ── helpers ───────────────────────────────────────────────────────────────
 function parseFollowers(v) {

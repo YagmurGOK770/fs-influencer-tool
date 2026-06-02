@@ -23,7 +23,7 @@ const ONLY = (() => { const i = args.indexOf('--only'); return i >= 0 ? args[i +
 
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-const TABLES = ['brightdata_profiles', 'brightdata_excluded_profiles', 'lifestyle_bloggers', 'lifestyle_bloggers_excluded'];
+const TABLES = ['brightdata_profiles', 'lifestyle_bloggers'];
 const CLEAR = {
   entity_type: null, primary_content_category: null, primary_food_content_type: null,
   food_post_count: null, total_posts_analyzed: null, uk_geography: null, classification_reasoning: null,

@@ -41,7 +41,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 const LOG_PATH = path.join(__dirname, 'classify-batch.jsonl');
 const log = (e) => { try { fs.appendFileSync(LOG_PATH, JSON.stringify({ ts: new Date().toISOString(), ...e }) + '\n'); } catch {} };
 
-const SOURCE_TABLES = ['brightdata_profiles', 'brightdata_excluded_profiles', 'lifestyle_bloggers', 'lifestyle_bloggers_excluded'];
+const SOURCE_TABLES = ['brightdata_profiles', 'lifestyle_bloggers'];
 const lc = (h) => String(h || '').replace(/^@/, '').toLowerCase();
 const canon = (p) => { p = String(p || '').toLowerCase(); if (p.includes('insta')) return 'instagram'; if (p.includes('tik')) return 'tiktok'; if (p.includes('you')) return 'youtube'; if (p === 'x' || p.includes('twit')) return 'x'; return p; };
 const PLATFORM_PRIORITY = { instagram: 0, tiktok: 1, youtube: 2, x: 3 };

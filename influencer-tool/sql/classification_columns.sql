@@ -6,10 +6,7 @@
 do $$
 declare t text;
 begin
-  foreach t in array array[
-    'brightdata_profiles','brightdata_excluded_profiles',
-    'lifestyle_bloggers','lifestyle_bloggers_excluded'
-  ] loop
+  foreach t in array array['brightdata_profiles','lifestyle_bloggers'] loop
     execute format('alter table %I add column if not exists entity_type               text',    t);
     execute format('alter table %I add column if not exists primary_content_category   text',    t);
     execute format('alter table %I add column if not exists primary_food_content_type  text',    t);
