@@ -3561,7 +3561,8 @@ function closePostsModal() {
 function bdrProxyThumb(u) {
   if (!u) return u;
   // base64 the target so the request URL carries no Meta-domain substring for blockers to match.
-  return /(?:cdninstagram\.com|fbcdn\.net)/i.test(u) ? `/api/img?u=${encodeURIComponent(btoa(u))}` : u;
+  // Proxy lives on /api/db-load (folded in to stay under Vercel's Hobby-plan 12-function cap).
+  return /(?:cdninstagram\.com|fbcdn\.net)/i.test(u) ? `/api/db-load?u=${encodeURIComponent(btoa(u))}` : u;
 }
 
 function renderPostsModal(handle, posts) {
