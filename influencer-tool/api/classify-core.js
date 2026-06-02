@@ -18,14 +18,29 @@ Base every judgment on visible evidence, not guesses.
 Return JSON only. Use ONLY the values listed for each enum — never
 invent new values.
 FIELDS
-entity_type:
-  "individual" — a real person posting first-person content. KEEP.
-                 A chef who owns restaurants is still "individual" if
-                 the account posts personal content.
-  "brand"      — a company, restaurant, magazine, market, publication,
-                 hotel, or commercial account. Institutional voice.
-                 FILTER.
-  "unclear"    — not enough signal to decide.
+entity_type — decide by WHO owns and speaks for the account, NOT by what the
+content is about. Featuring, reviewing, or recommending restaurants does NOT
+make an account a brand — that is exactly what a food influencer does. An
+account is a brand only when the account itself IS a company speaking for itself.
+  "individual"    — a real, identifiable person posting first-person content
+                    ("I", "my", a single recurring personality). A food critic,
+                    reviewer, or "best places to eat" creator is an individual
+                    even if every post features commercial venues. A chef who
+                    owns a restaurant is still individual if the account is the
+                    person, not the business.
+  "public_figure" — a real person who is ALSO a commercial brand in their own
+                    right: a celebrity, or a creator/chef who runs their own
+                    named restaurant group, product line, show, or media venture
+                    and promotes it. A personal voice is present (so not a pure
+                    brand), but their own commercial scale sets them apart from a
+                    plain influencer. Merely taking sponsorships does NOT qualify
+                    — the bar is owning a named enterprise or celebrity-level
+                    recognition.
+  "brand"         — a company, restaurant, magazine, market, publication, hotel,
+                    or commercial account speaking in an institutional voice
+                    ("we", "our team", "visit us", "book now", "order from us").
+                    The account IS the business.
+  "unclear"       — not enough signal to decide.
 primary_content_category — the SINGLE dominant theme across visible posts:
   "food"              — identity built around food
   "fitness_wellness"  — training, nutrition, sports
@@ -75,21 +90,28 @@ OUTPUT
   "food_post_count": 0,
   "total_posts_analyzed": 0,
   "uk_geography": "...",
-  "reasoning": "one or two sentences; for uk_geography, state the post-level evidence vs the bio claim"
+  "reasoning": "two or three sentences; justify entity_type by who owns/speaks for the account, and uk_geography by post evidence vs the bio claim"
 }`;
+
+// Strip unpaired UTF-16 surrogates. Captions are truncated to 280 chars upstream, which can split
+// an emoji's surrogate pair and leave a lone surrogate — invalid UTF-8 that xAI (and others) reject
+// with HTTP 400. Also cleans any already-corrupt scraped bio/caption data. Valid emoji are preserved.
+const stripLoneSurrogates = (s) => String(s == null ? '' : s)
+  .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')   // high surrogate with no following low
+  .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');  // low surrogate with no preceding high
 
 export function buildUserPrompt(p) {
   const caps = Array.isArray(p.captions) ? p.captions.filter(Boolean) : [];
-  return `INPUT
+  return stripLoneSurrogates(`INPUT
 Bio: ${p.bio || '(none)'}
 Display name: ${p.full_name || '(none)'}
 Location field: ${p.location || '(none)'}
 Platform: ${p.platform || '(unknown)'}
-Recent post captions: ${caps.length ? caps.join('\n---\n') : '(no posts)'}`;
+Recent post captions: ${caps.length ? caps.join('\n---\n') : '(no posts)'}`);
 }
 
 // Enum guards — never let an out-of-list value through (prompt says so, but coerce defensively).
-const ENTITY = ['individual', 'brand', 'unclear'];
+const ENTITY = ['individual', 'public_figure', 'brand', 'unclear'];
 const CATEGORY = ['food', 'fitness_wellness', 'fashion_beauty', 'travel_lifestyle', 'parenting_family', 'business_career', 'arts_culture', 'general_lifestyle', 'entertainment', 'other'];
 const FOOD_TYPE = ['restaurant_lists', 'restaurant_reviews', 'food_news_culture', 'chef_dishes', 'travel_food', 'recipes', 'home_meals', 'mukbang', 'mixed'];
 const GEO = ['location_relevant', 'location_low_proof', 'location_unverified', 'location_irrelevant'];
@@ -114,6 +136,36 @@ function parseResult(text) {
 
 const MAX_TOKENS = 500;
 
+// ── Transient-failure retry (429 rate-limits + 5xx) with exponential backoff + jitter ──────────
+// Lets the shared classifier run at high concurrency on any provider: a rate-limited or briefly
+// overloaded call backs off and retries instead of dropping the row as a hard failure.
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 529]);
+function isRetryable(err) {
+  if (err && typeof err.status === 'number') return RETRYABLE_STATUS.has(err.status);
+  // No HTTP status (network/transport error) — treat common transient cases as retryable.
+  return /\b(429|rate.?limit|overloaded|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|network)\b/i.test(String(err?.message || ''));
+}
+// Build an Error carrying the HTTP status (+ Retry-After hint) so isRetryable/backoff can use them.
+function httpError(fallbackMsg, resp, body) {
+  const e = new Error((body && body.error && (body.error.message || body.error)) || fallbackMsg);
+  e.status = resp.status;
+  const ra = resp.headers?.get?.('retry-after');
+  if (ra != null) { const s = Number(ra); if (Number.isFinite(s)) e.retryAfterMs = s * 1000; }
+  return e;
+}
+async function withRetry(fn, { tries = 5, baseMs = 1000, maxMs = 30000 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await fn(); }
+    catch (err) {
+      if (attempt >= tries || !isRetryable(err)) throw err;
+      const backoff = Math.min(maxMs, baseMs * 2 ** (attempt - 1));
+      const jitter  = Math.floor(Math.random() * 250);
+      const delay   = Math.max(Number(err?.retryAfterMs) || 0, backoff) + jitter;
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
 async function callClaude(client, model, profile) {
   const msg = await client.messages.create({
     model, max_tokens: MAX_TOKENS, system: SYSTEM_PROMPT,
@@ -128,8 +180,8 @@ async function callOpenAI(model, profile) {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model, max_completion_tokens: MAX_TOKENS, messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: buildUserPrompt(profile) }] }),
   });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message || `OpenAI HTTP ${r.status}`);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw httpError(`OpenAI HTTP ${r.status}`, r, d);
   return parseResult(d.choices[0].message.content);
 }
 async function callGemini(model, profile) {
@@ -139,8 +191,8 @@ async function callGemini(model, profile) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ contents: [{ parts: [{ text: SYSTEM_PROMPT + '\n\n' + buildUserPrompt(profile) }] }], generationConfig: { maxOutputTokens: MAX_TOKENS } }),
   });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message || `Gemini HTTP ${r.status}`);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw httpError(`Gemini HTTP ${r.status}`, r, d);
   return parseResult(d.candidates[0].content.parts[0].text);
 }
 async function callGrok(model, profile) {
@@ -150,8 +202,8 @@ async function callGrok(model, profile) {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
     body: JSON.stringify({ model, max_tokens: MAX_TOKENS, messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: buildUserPrompt(profile) }] }),
   });
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.error?.message || `xAI HTTP ${r.status}`);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw httpError(`xAI HTTP ${r.status}`, r, d);
   return parseResult(d.choices[0].message.content);
 }
 
@@ -160,10 +212,10 @@ let _anthropic = null;
 export async function classifyCreator(profile, { provider = 'anthropic', model = 'claude-haiku-4-5-20251001' } = {}) {
   if (provider === 'anthropic') {
     _anthropic = _anthropic || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    return callClaude(_anthropic, model, profile);
+    return withRetry(() => callClaude(_anthropic, model, profile));
   }
-  if (provider === 'openai') return callOpenAI(model, profile);
-  if (provider === 'gemini') return callGemini(model, profile);
-  if (provider === 'grok')   return callGrok(model, profile);
+  if (provider === 'openai') return withRetry(() => callOpenAI(model, profile));
+  if (provider === 'gemini') return withRetry(() => callGemini(model, profile));
+  if (provider === 'grok')   return withRetry(() => callGrok(model, profile));
   throw new Error(`Unknown provider: ${provider}`);
 }

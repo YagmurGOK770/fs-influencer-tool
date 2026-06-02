@@ -3555,6 +3555,15 @@ function closePostsModal() {
   document.getElementById('pmBody').innerHTML = '';
 }
 
+// Instagram/Facebook CDN image hosts are commonly blocked by ad/tracker blockers (and carry
+// referrer/CORP quirks), so load those thumbnails via our same-origin /api/img proxy. Other CDNs
+// (YouTube/TikTok) load fine directly, so pass them through untouched.
+function bdrProxyThumb(u) {
+  if (!u) return u;
+  // base64 the target so the request URL carries no Meta-domain substring for blockers to match.
+  return /(?:cdninstagram\.com|fbcdn\.net)/i.test(u) ? `/api/img?u=${encodeURIComponent(btoa(u))}` : u;
+}
+
 function renderPostsModal(handle, posts) {
   const sub  = document.getElementById('pmSub');
   const body = document.getElementById('pmBody');
@@ -3577,7 +3586,7 @@ function renderPostsModal(handle, posts) {
     posts.map(p => {
       const shortBadge = p.is_short ? '<span style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.7);color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:100px">SHORT</span>' : '';
       const thumb = p.thumbnail_url
-        ? `<div style="position:relative;width:100%;aspect-ratio:1/1;background:#000;overflow:hidden"><img src="${p.thumbnail_url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">${shortBadge}</div>`
+        ? `<div style="position:relative;width:100%;aspect-ratio:1/1;background:#000;overflow:hidden"><img src="${bdrProxyThumb(p.thumbnail_url)}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">${shortBadge}</div>`
         : `<div style="position:relative;width:100%;aspect-ratio:1/1;background:#eef0f3;display:flex;align-items:center;justify-content:center;color:#c5cad1;font-size:26px">${p.type === 'tweet' ? '𝕏' : '▶'}${shortBadge}</div>`;
       const date = p.posted_at ? new Date(p.posted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : '';
       const cap = (p.caption || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -4090,6 +4099,7 @@ function renderPostsModal(handle, posts) {
         <button class="btn-sm" id="bdrClassifyBtn" onclick="bdrClassifyVisible()" title="Run AI classification on visible rows">✨ AI Classify</button>
         <button class="btn-sm" id="bdrClassifyTestBtn" onclick="bdrClassifyVisible(10)" title="Test: classify first 10 rows only" style="opacity:.7">✨ Test (10)</button>
         <button class="btn-sm" id="bdrReenrichBtn" onclick="bdrReenrichMissing()" title="Re-fetch missing engagement rate, followers, bio for saved profiles">🔄 Re-enrich missing</button>
+        <button class="btn-sm" id="bdrResetAiBtn" onclick="bdrResetAiResults()" title="Clear ALL AI classification + Tier for this dataset so it can be re-classified. Asks for the app password. Raw profile data (followers, bio, posts) is kept." style="border-color:#e7b3b3;color:#c0392b">🧹 Reset AI results</button>
         <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrSearchDebounced()" style="width:210px">
       </div>
     </div>
@@ -4286,6 +4296,7 @@ function renderPostsModal(handle, posts) {
           <select id="insTopEntity" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
             <option value="individual">Individual</option>
+            <option value="public_figure">Public figure</option>
             <option value="brand">Brand</option>
             <option value="unclear">Unclear</option>
           </select>
@@ -6552,9 +6563,10 @@ function bdrSeedClassFromRow(r) {
 
 // Display metadata for the enums (labels + badge colours).
 const BD_ENTITY_META = {
-  individual: { label: 'Individual', color: 'var(--text)',  bg: 'var(--surface)', t: 'A real person — keep' },
-  brand:      { label: 'Brand',      color: '#c0392b',       bg: '#fdf0ee',        t: 'Company / restaurant / publication — filter out' },
-  unclear:    { label: 'Unclear',    color: 'var(--muted)',  bg: 'var(--surface)', t: 'Not enough signal to decide' },
+  individual:   { label: 'Individual',   color: 'var(--text)', bg: 'var(--surface)', t: 'A real person — keep' },
+  public_figure:{ label: 'Public figure', color: 'var(--blue)', bg: '#eef4fc',        t: 'Real person who is also a commercial brand (celebrity / owns a named venture) — keep' },
+  brand:        { label: 'Brand',        color: '#c0392b',      bg: '#fdf0ee',        t: 'Company / restaurant / publication — filter out' },
+  unclear:      { label: 'Unclear',      color: 'var(--muted)', bg: 'var(--surface)', t: 'Not enough signal to decide' },
 };
 const BD_CAT_LABEL = {
   food: 'Food', fitness_wellness: 'Fitness', fashion_beauty: 'Fashion', travel_lifestyle: 'Travel',
@@ -7048,7 +7060,7 @@ function bdrToFilterShape(row) {
 async function loadBdResults(forceRefresh, dataset) {
   const ds = dataset || bdrDataset;
   bdrInitEngWeights(); // sync the weight inputs to saved values
-  if (bdrLoaded && !forceRefresh && ds === bdrDataset) { bdrApplyFilter(); return; }
+  if (bdrLoaded && !forceRefresh && ds === bdrDataset) { bdrApplyFilter(); return true; }
   document.getElementById('bdrLoading').style.display = '';
   document.getElementById('bdrEmpty').style.display = 'none';
   document.getElementById('bdrTableWrap').style.display = 'none';
@@ -7110,9 +7122,11 @@ async function loadBdResults(forceRefresh, dataset) {
     if (localStorage.getItem('bdr_filter_panel_collapsed') === '1') bdrToggleFilters();
     bdrUpdateStats();        // show DB state as-is on load
     bdrApplyFilter();
+    return true;
   } catch (e) {
     document.getElementById('bdrLoading').innerHTML =
       `<div style="color:var(--red);font-size:13px">Failed to load: ${e.message}</div>`;
+    return false;
   }
 }
 
@@ -7261,7 +7275,7 @@ function insDimValue(m, dim) {
 function insDimOrder(dim, keys) {
   if (dim === 'tier')      return ['T1','T2','T3','T4','Filtered','Unclassified'].filter(k => keys.has(k));
   if (dim === 'foodtype')  return [...Object.values(BD_FOODTYPE_LABEL), '(none)'].filter(k => keys.has(k));
-  if (dim === 'entity')    return ['Individual','Brand','Unclear','(none)'].filter(k => keys.has(k));
+  if (dim === 'entity')    return ['Individual','Public figure','Brand','Unclear','(none)'].filter(k => keys.has(k));
   if (dim === 'uk')        return ['UK ✓','UK partial','UK claim','non-UK','(none)'].filter(k => keys.has(k));
   if (dim === 'followers') return FOLLOWERS_ORDER.filter(k => keys.has(k));
   if (dim === 'er')        return ER_ORDER.filter(k => keys.has(k));
@@ -8043,7 +8057,7 @@ function bdrRefreshFilterDropdowns(filteredRows) {
     sel.value = [...sel.options].some(o => o.value === prev) ? prev : '';
   };
 
-  fill(entSel, 'All Entities', ['individual', 'brand', 'unclear'],
+  fill(entSel, 'All Entities', ['individual', 'public_figure', 'brand', 'unclear'],
        k => (BD_ENTITY_META[k]?.label || k), entCounts, prevEnt);
   fill(catSel, 'All Categories', null,
        k => (BD_CAT_LABEL[k] || k), catCounts, prevCat);
@@ -8670,6 +8684,42 @@ async function bdrPatchClassificationDB(patches) {
   } catch (e) {
     console.warn('[bdr] patch-classification failed:', e.message);
     return { ok: false, updated: 0, unmatched: [], errors: [], error: e.message };
+  }
+}
+
+// Clear all AI classification + Tier for the active dataset so it can be re-classified.
+// Destructive — confirms, then requires the app password to be re-entered (verified server-side).
+async function bdrResetAiResults() {
+  const dsLabel = bdrDataset === 'lifestyle' ? 'Lifestyle Bloggers' : 'Food Bloggers';
+  if (!confirm(`Reset ALL AI results for ${dsLabel}?\n\nThis clears entity type, content category, food sub-type, UK status, reasoning and Tier for every classified profile in this dataset. Raw profile data (followers, bio, posts) is NOT touched — you'll just need to run AI Classify again.\n\nThis cannot be undone.`)) return;
+  const pw = prompt('Re-enter the app password to confirm this reset:');
+  if (pw == null || pw === '') return;  // cancelled / empty
+  const btn = document.getElementById('bdrResetAiBtn');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Resetting…'; }
+  try {
+    const resp = await fetch('/api/db-save', {
+      method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'reset-classification', dataset: bdrDataset, confirmPassword: pw }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { alert(`Reset failed: ${data.error || ('HTTP ' + resp.status)}`); return; }
+    // Drop the in-memory classification cache (bdrSeedClassFromRow won't overwrite with nulls),
+    // then reload from DB so cleared rows show as Unclassified and the Tier badges recompute.
+    _bdrClassCache.clear();
+    const reloadedOk = await loadBdResults(true);
+    if (data.ok === false || (Array.isArray(data.errors) && data.errors.length)) {
+      // Partial reset — some table updates failed server-side. Don't claim success.
+      alert(`⚠ Partial reset: cleared ${data.cleared || 0}, but some updates failed:\n${(data.errors || []).join('\n')}\n\nTry running it again.`);
+    } else if (reloadedOk === false) {
+      alert(`Reset done (${data.cleared || 0} cleared), but reloading the table failed — refresh the page to see the result.`);
+    } else {
+      alert(`✓ Reset ${data.cleared || 0} classified profile(s) in ${dsLabel}.\n\nRun ✨ AI Classify to re-classify them.`);
+    }
+  } catch (e) {
+    alert(`Reset failed: ${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig || '🧹 Reset AI results'; }
   }
 }
 
