@@ -585,6 +585,10 @@ let activeBucket = '';
 let ran = false;
 let running = false;
 window.BANNED_HANDLES = new Set(); // normalised lowercase handles
+
+let insTopPage = 1;
+let insTopPageSize = 20;
+let _insTopFilterKey = '';
 let browserSession = {}; // tracks which platforms have been used this session
 
 function platClass(p) {
@@ -4277,7 +4281,7 @@ function renderPostsModal(handle, posts) {
     <!-- Top profiles list -->
     <div style="background:var(--white);border:1px solid var(--border);border-radius:10px;overflow:hidden">
       <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Top Profiles</span>
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em" id="insTopListTitle">Profiles</span>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="font-size:11px;color:var(--muted)">Sort by</span>
           <select id="insTopSort" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
@@ -4309,6 +4313,13 @@ function renderPostsModal(handle, posts) {
           <select id="insTopFoodType" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
           </select>
+          <span style="font-size:11px;color:var(--muted);margin-left:4px">Per page</span>
+          <select id="insTopPerPage" onchange="insTopPage=1;insTopPageSize=parseInt(this.value);bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
         </div>
       </div>
       <div id="insSelBar" style="display:none;padding:8px 16px;background:var(--green-bg);border-bottom:1px solid var(--green-border);align-items:center;justify-content:space-between;gap:8px">
@@ -4319,6 +4330,7 @@ function renderPostsModal(handle, posts) {
         </div>
       </div>
       <div id="insTopList" style="padding:12px 16px"></div>
+      <div id="insTopPagination" style="display:none;padding:10px 16px;border-top:1px solid var(--border);align-items:center;justify-content:space-between;gap:8px"></div>
     </div>
   </div>
 </div>
@@ -7486,7 +7498,16 @@ function bdrInsightsRender() {
   topRows.sort((a, b) => topSort === 'er'
     ? topErOf(b) - topErOf(a)
     : (Number(b.followers)||0) - (Number(a.followers)||0));
-  topRows = topRows.slice(0, 30);
+
+  // Reset to page 1 if filters changed
+  const _filterKey = [topSort, topTier, topEntity, topCat, topFt, insTopPageSize].join('|');
+  if (_filterKey !== _insTopFilterKey) { insTopPage = 1; _insTopFilterKey = _filterKey; }
+
+  const insTopTotal = topRows.length;
+  const insTopPageCount = Math.max(1, Math.ceil(insTopTotal / insTopPageSize));
+  insTopPage = Math.min(insTopPage, insTopPageCount);
+  const insTopStart = (insTopPage - 1) * insTopPageSize;
+  topRows = topRows.slice(insTopStart, insTopStart + insTopPageSize);
 
   const INS_PLAT_SVG = {
     instagram: `<svg viewBox="0 0 20 20" width="13" height="13" xmlns="http://www.w3.org/2000/svg"><rect x="2.5" y="2.5" width="15" height="15" rx="4.5" fill="none" stroke="white" stroke-width="1.8"/><circle cx="10" cy="10" r="3.8" fill="none" stroke="white" stroke-width="1.8"/><circle cx="14.8" cy="5.2" r="1.1" fill="white"/></svg>`,
@@ -7500,6 +7521,10 @@ function bdrInsightsRender() {
   };
 
   const trackedHandles = new Set(_outreachData.map(r => r.handle));
+  // Update title to show total count
+  const insTopListTitle = document.getElementById('insTopListTitle');
+  if (insTopListTitle) insTopListTitle.textContent = `Profiles (${insTopTotal})`;
+
   document.getElementById('insTopList').innerHTML = topRows.length
     ? `<table style="width:100%;border-collapse:collapse">
         <thead><tr style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em">
@@ -7579,6 +7604,43 @@ function bdrInsightsRender() {
         }).join('')}</tbody>
       </table>`
     : '<span style="font-size:12px;color:var(--muted2)">No profiles match filters.</span>';
+
+  // Render pagination bar
+  const pagEl = document.getElementById('insTopPagination');
+  if (insTopTotal <= insTopPageSize) {
+    pagEl.style.display = 'none';
+  } else {
+    pagEl.style.display = 'flex';
+    const startNum = insTopStart + 1;
+    const endNum = Math.min(insTopStart + insTopPageSize, insTopTotal);
+    const pageInfo = `<span style="font-size:12px;color:var(--muted)">Showing ${startNum}–${endNum} of ${insTopTotal}</span>`;
+
+    const btnStyle = (disabled, active) =>
+      `font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:${disabled ? 'default' : 'pointer'};border:1.5px solid ${active ? 'var(--green-border)' : 'var(--border)'};background:${active ? 'var(--green-bg)' : 'var(--white)'};color:${active ? 'var(--green)' : disabled ? 'var(--muted2)' : 'var(--text)'};margin:0 1px`;
+
+    let pageButtons = `<button onclick="insTopGoToPage(${insTopPage - 1})" ${insTopPage === 1 ? 'disabled' : ''} style="${btnStyle(insTopPage === 1, false)}">‹ Prev</button>`;
+
+    const windowSize = 5;
+    let pageStart = Math.max(1, insTopPage - Math.floor(windowSize / 2));
+    let pageEnd = Math.min(insTopPageCount, pageStart + windowSize - 1);
+    if (pageEnd - pageStart < windowSize - 1) pageStart = Math.max(1, pageEnd - windowSize + 1);
+
+    if (pageStart > 1) pageButtons += `<button onclick="insTopGoToPage(1)" style="${btnStyle(false, false)}">1</button>${pageStart > 2 ? '<span style="padding:0 4px;color:var(--muted2)">…</span>' : ''}`;
+    for (let p = pageStart; p <= pageEnd; p++) {
+      pageButtons += `<button onclick="insTopGoToPage(${p})" style="${btnStyle(false, p === insTopPage)}">${p}</button>`;
+    }
+    if (pageEnd < insTopPageCount) pageButtons += `${pageEnd < insTopPageCount - 1 ? '<span style="padding:0 4px;color:var(--muted2)">…</span>' : ''}<button onclick="insTopGoToPage(${insTopPageCount})" style="${btnStyle(false, false)}">${insTopPageCount}</button>`;
+
+    pageButtons += `<button onclick="insTopGoToPage(${insTopPage + 1})" ${insTopPage === insTopPageCount ? 'disabled' : ''} style="${btnStyle(insTopPage === insTopPageCount, false)}">Next ›</button>`;
+
+    pagEl.innerHTML = pageInfo + `<div style="display:flex;align-items:center;gap:2px">${pageButtons}</div>`;
+  }
+}
+
+function insTopGoToPage(p) {
+  insTopPage = p;
+  bdrInsightsRender();
+  document.getElementById('insTopList')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 // ── Overview → Outreach selection helpers ────────────────────────────────────
