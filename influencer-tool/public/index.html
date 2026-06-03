@@ -4315,6 +4315,10 @@ function renderPostsModal(handle, posts) {
           </select>
         </div>
       </div>
+      <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+        <input id="insTopSearch" type="text" placeholder="🔍 Search the filtered list — handle, name, bio or location…" oninput="insTopOnSearch()" style="flex:1;padding:7px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--white)">
+        <button id="insTopSearchClear" onclick="insTopClearSearch()" style="display:none;background:none;border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap">Clear</button>
+      </div>
       <div id="insSelBar" style="display:none;padding:8px 16px;background:var(--green-bg);border-bottom:1px solid var(--green-border);align-items:center;justify-content:space-between;gap:8px">
         <span id="insSelCount" style="font-size:12px;font-weight:700;color:var(--green)">0 selected</span>
         <div style="display:flex;gap:6px">
@@ -7476,6 +7480,11 @@ function bdrInsightsRender() {
   const topEntity = document.getElementById('insTopEntity').value;
   const topCat    = topCatSel.value;
   const topFt     = topFtSel.value;
+  const topSearch = (document.getElementById('insTopSearch')?.value || '').trim().toLowerCase();
+
+  // Toggle the search "Clear" button
+  const _searchClearBtn = document.getElementById('insTopSearchClear');
+  if (_searchClearBtn) _searchClearBtn.style.display = topSearch ? '' : 'none';
 
   const topErOf = m => {
     const isYT = m.platforms?.some(p => p.includes('youtube'));
@@ -7488,12 +7497,21 @@ function bdrInsightsRender() {
   if (topEntity) topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type === topEntity);
   if (topCat)    topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category === topCat);
   if (topFt)     topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_food_content_type === topFt);
+  // Free-text search — runs AFTER the dropdown filters, so it narrows within the applied filters.
+  if (topSearch) topRows = topRows.filter(m => {
+    const cls = bdrGetClass(m.handle, m.platforms?.[0]||'');
+    const hay = [m.handle, m.full_name, m.bio, m.location,
+      BD_CAT_LABEL[cls.primary_content_category] || cls.primary_content_category,
+      BD_FOODTYPE_LABEL[cls.primary_food_content_type] || cls.primary_food_content_type]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(topSearch);
+  });
   topRows.sort((a, b) => topSort === 'er'
     ? topErOf(b) - topErOf(a)
     : (Number(b.followers)||0) - (Number(a.followers)||0));
 
   // Reset to page 1 if filters changed
-  const _filterKey = [topSort, topTier, topEntity, topCat, topFt, insTopPageSize].join('|');
+  const _filterKey = [topSort, topTier, topEntity, topCat, topFt, topSearch, insTopPageSize].join('|');
   if (_filterKey !== _insTopFilterKey) { insTopPage = 1; _insTopFilterKey = _filterKey; }
 
   const insTopTotal = topRows.length;
@@ -7646,6 +7664,22 @@ function insTopGoToPage(p) {
   insTopPage = p;
   bdrInsightsRender();
   document.getElementById('insTopList')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Debounced re-render on search input — keeps typing responsive on large lists.
+// The search box lives in static HTML (not rebuilt by bdrInsightsRender), so focus
+// and caret position are preserved across re-renders.
+let _insTopSearchTimer = null;
+function insTopOnSearch() {
+  clearTimeout(_insTopSearchTimer);
+  _insTopSearchTimer = setTimeout(() => bdrInsightsRender(), 180);
+}
+
+function insTopClearSearch() {
+  const el = document.getElementById('insTopSearch');
+  if (el) el.value = '';
+  bdrInsightsRender();
+  el?.focus();
 }
 
 // ── Overview → Outreach selection helpers ────────────────────────────────────
