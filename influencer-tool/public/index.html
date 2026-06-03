@@ -6832,17 +6832,48 @@ async function bdrClassifyVisible(limit) {
 
 // ── BD Results: re-apply current filter rules ──────────────────────────
 
+// ── Cross-platform identity matching helpers ─────────────────────────────────
+// Normalize a handle: drop @, lowercase, remove . _ - and spaces. So
+// "pretty.little.london", "pretty_little_london" and "prettylittlelondon" are one key.
+function bdrNormHandle(h) {
+  return String(h || '').toLowerCase().replace(/^@+/, '').replace(/[._\-\s]+/g, '');
+}
+// Normalize a display name for the Tier-2 confirmation check: lowercase, keep only the
+// part before a tagline separator (| • · ~ – — /), strip emoji/punctuation, collapse spaces.
+// "Jordan Howlett 🍔 | Food" → "jordan howlett". Empty/whitespace names never confirm a match.
+function bdrNormName(n) {
+  let s = String(n || '').toLowerCase().split(/[|•·~–—/]/)[0];
+  s = s.replace(/[^a-z0-9\s'’-]+/g, ' ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+// Edit distance (small handle strings only).
+function bdrLev(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++)
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+// "Similar" normalized handles for Tier 2: one contains the other (≥5 chars) or ≥80%
+// edit-similarity. Identical handles are already merged by Tier 1, so a===b returns false.
+function bdrHandleSimilar(a, b) {
+  if (!a || !b || a === b) return false;
+  const long = a.length >= b.length ? a : b;
+  const short = a.length >= b.length ? b : a;
+  if (short.length >= 5 && long.includes(short)) return true;
+  return 1 - bdrLev(a, b) / long.length >= 0.8;
+}
+
 // Merge cache — keyed by array reference so it's invalidated automatically when bdrMatchingData is reassigned
 const _bdrMergeCache = new WeakMap();
 function bdrMergeByHandle(rows) {
   if (_bdrMergeCache.has(rows)) return _bdrMergeCache.get(rows);
-  const byHandle = new Map();
-  for (const r of rows) {
-    const key = (r.handle || '').toLowerCase();
-    if (!byHandle.has(key)) byHandle.set(key, []);
-    byHandle.get(key).push(r);
-  }
-  const result = Array.from(byHandle.values()).map(platformRows => {
+  const buildMerged = (platformRows) => {
     // Sort by followers desc, then deduplicate by platform key (keep highest-followers row per platform)
     const sorted  = [...platformRows].sort((a,b) => bdParseCompact(b.followers) - bdParseCompact(a.followers));
     const seenPlat = new Set();
@@ -6931,7 +6962,45 @@ function bdrMergeByHandle(rows) {
                        : null,
       _rows:           uniqueRows,
     };
+  };
+
+  // Tier 1 — group rows by normalized handle (punctuation/spacing-insensitive).
+  const groupsByNorm = new Map();
+  for (const r of rows) {
+    const nh = bdrNormHandle(r.handle);
+    let g = groupsByNorm.get(nh);
+    if (!g) { g = { rows: [], nhandle: nh, name: '' }; groupsByNorm.set(nh, g); }
+    g.rows.push(r);
+  }
+  const groups = [...groupsByNorm.values()];
+  // Representative name per group = the highest-follower row's normalized full_name.
+  groups.forEach(g => {
+    const top = [...g.rows].sort((a, b) => bdParseCompact(b.followers) - bdParseCompact(a.followers))[0];
+    g.name = bdrNormName(top && top.full_name);
   });
+
+  // Tier 2 — within a normalized-NAME bucket, union groups whose handles are SIMILAR.
+  // Name is the confirmation, never the sole trigger: two people who merely share a name
+  // (but have unrelated handles) stay separate. Blocking by name keeps this ~O(n).
+  const parent = groups.map((_, i) => i);
+  const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+  const byName = new Map();
+  groups.forEach((g, i) => { if (!g.name) return; if (!byName.has(g.name)) byName.set(g.name, []); byName.get(g.name).push(i); });
+  for (const idxs of byName.values()) {
+    for (let a = 0; a < idxs.length; a++)
+      for (let b = a + 1; b < idxs.length; b++)
+        if (bdrHandleSimilar(groups[idxs[a]].nhandle, groups[idxs[b]].nhandle)) union(idxs[a], idxs[b]);
+  }
+
+  // Collapse Tier 1 ∪ Tier 2 into final groups, then build one merged creator per group.
+  const finalGroups = new Map();
+  groups.forEach((g, i) => {
+    const root = find(i);
+    if (!finalGroups.has(root)) finalGroups.set(root, []);
+    finalGroups.get(root).push(...g.rows);
+  });
+  const result = [...finalGroups.values()].map(buildMerged);
   _bdrMergeCache.set(rows, result);
   return result;
 }
@@ -7580,12 +7649,15 @@ function bdrInsightsRender() {
             : `<td style="padding:6px 8px"><input type="checkbox" data-handle="${h}" onchange="insUpdateSelBar()" style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)"></td>`;
           const platIconLinks = m.platforms.map(p => {
             const row = m._rows?.find(r => (r.platform || r.raw_platform || '').toLowerCase().includes(p));
+            // Use this platform's OWN handle for the URL — after name-confirmed merges a
+            // platform's handle can differ from the primary creator handle.
+            const rh = (((row && row.handle) || h) || '').replace(/^@/, '');
             let platUrl = row?.profile_url || '';
             if (!platUrl) {
-              if (p.includes('instagram'))    platUrl = `https://www.instagram.com/${h}/`;
-              else if (p.includes('tiktok'))  platUrl = `https://www.tiktok.com/@${h}`;
-              else if (p.includes('youtube')) platUrl = `https://www.youtube.com/@${h}`;
-              else if (p.includes('x'))       platUrl = `https://x.com/${h}`;
+              if (p.includes('instagram'))    platUrl = `https://www.instagram.com/${rh}/`;
+              else if (p.includes('tiktok'))  platUrl = `https://www.tiktok.com/@${rh}`;
+              else if (p.includes('youtube')) platUrl = `https://www.youtube.com/@${rh}`;
+              else if (p.includes('x'))       platUrl = `https://x.com/${rh}`;
             }
             if (!platUrl) return '';
             const pKey = Object.keys(INS_PLAT_BG).find(k => p.includes(k)) || '';
@@ -8499,8 +8571,10 @@ function bdrRenderTable(rows, _skipPageSetup) {
       x:         '#000000',
     };
     const platIconLinks = m.platforms.map(p => {
-      const h = (m.handle || '').replace(/^@/, '');
       const row = m._rows.find(r => (r.platform || r.raw_platform || '').toLowerCase().includes(p));
+      // Use this platform's OWN handle for the URL — after name-confirmed merges a
+      // platform's handle can differ from the primary creator handle.
+      const h = (((row && row.handle) || m.handle) || '').replace(/^@/, '');
       let platUrl = row?.profile_url || '';
       if (!platUrl) {
         if (p.includes('instagram')) platUrl = `https://www.instagram.com/${h}/`;

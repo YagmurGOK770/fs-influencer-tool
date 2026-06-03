@@ -22,75 +22,90 @@ entity_type — decide by WHO owns and speaks for the account, NOT by what the
 content is about. Featuring, reviewing, or recommending restaurants does NOT
 make an account a brand — that is exactly what a food influencer does. An
 account is a brand only when the account itself IS a company speaking for itself.
-  "individual"    — a real, identifiable person posting first-person content
-                    ("I", "my", a single recurring personality). A food critic,
-                    reviewer, or "best places to eat" creator is an individual
-                    even if every post features commercial venues. A chef who
-                    owns a restaurant is still individual if the account is the
-                    person, not the business.
-  "public_figure" — a real person who is ALSO a commercial brand in their own
-                    right: a celebrity, or a creator/chef who runs their own
-                    named restaurant group, product line, show, or media venture
-                    and promotes it. A personal voice is present (so not a pure
-                    brand), but their own commercial scale sets them apart from a
-                    plain influencer. Merely taking sponsorships does NOT qualify
-                    — the bar is owning a named enterprise or celebrity-level
-                    recognition.
-  "brand"         — a company, restaurant, magazine, market, publication, hotel,
-                    or commercial account speaking in an institutional voice
-                    ("we", "our team", "visit us", "book now", "order from us").
-                    The account IS the business.
-  "unclear"       — not enough signal to decide.
+"individual"    — a real, identifiable person posting first-person content
+("I", "my", a single recurring personality). A food critic,
+reviewer, or "best places to eat" creator is an individual
+even if every post features commercial venues. A chef who
+owns a restaurant is still individual if the account is the
+person, not the business.
+"public_figure" — a real person who is ALSO a commercial brand in their own
+right: a celebrity, or a creator/chef who runs their own
+named restaurant group, product line, show, or media venture
+and promotes it. A personal voice is present (so not a pure
+brand), but their own commercial scale sets them apart from a
+plain influencer. Merely taking sponsorships does NOT qualify
+— the bar is owning a named enterprise or celebrity-level
+recognition.
+"brand"         — a company, restaurant, magazine, market, publication, hotel,
+or commercial account speaking in an institutional voice
+("we", "our team", "visit us", "book now", "order from us").
+The account IS the business.
+"unclear"       — not enough signal to decide.
 primary_content_category — the SINGLE dominant theme across visible posts:
-  "food"              — identity built around food
-  "fitness_wellness"  — training, nutrition, sports
-  "fashion_beauty"    — style, beauty
-  "travel_lifestyle"  — travel, weekend trips, lifestyle vlogging
-  "parenting_family"  — kids, family life
-  "business_career"   — career, business, entrepreneurship
-  "arts_culture"      — theater, music, art, cultural events
-  "general_lifestyle" — "day in my life" / personal vlogging
-  "entertainment"     — comedy, celebrity
-  "other"             — none of the above
+"food"              — identity built around food ITSELF (dishes, dining,
+takeaway, reviews). Content merely SET in a food venue,
+where the food is a backdrop and not the subject, is NOT
+"food" — judge by subject, not setting (see food_post_count).
+"fitness_wellness"  — training, nutrition, sports
+"fashion_beauty"    — style, beauty
+"travel_lifestyle"  — travel, weekend trips, lifestyle vlogging
+"parenting_family"  — kids, family life
+"business_career"   — career, business, entrepreneurship
+"arts_culture"      — theater, music, art, cultural events
+"general_lifestyle" — "day in my life" / personal vlogging
+"entertainment"     — comedy, celebrity, interview/talk formats
+"other"             — none of the above
 primary_food_content_type — IF food_post_count >= 5, the DOMINANT
 format of the food posts. Otherwise null.
-  "restaurant_lists"   — themed lists ("top 10 brunches in London")
-  "restaurant_reviews" — visiting and reviewing places
-  "food_news_culture"  — openings, trends, industry commentary
-  "chef_dishes"        — professional cooking, plated dishes
-  "travel_food"        — food while travelling
-  "recipes"            — structured recipes to cook at home
-  "home_meals"         — amateur daily cooking
-  "mukbang"            — eating large amounts on camera
-  "mixed"              — no single format dominates
-food_post_count — integer. How many of the analyzed posts are food,
-dining, or cooking related. Count generously: a fitness creator's
-meal-prep post counts as food.
+"restaurant_lists"   — themed lists ("top 10 brunches in London")
+"restaurant_reviews" — visiting AND giving an actual opinion or evaluation of
+the food or venue; visiting alone does NOT qualify
+"food_news_culture"  — openings, trends, industry commentary
+"chef_dishes"        — professional cooking, plated dishes
+"travel_food"        — food while travelling
+"recipes"            — structured recipes to cook at home
+"home_meals"         — amateur daily cooking
+"mukbang"            — eating large amounts on camera
+"mixed"              — no single format dominates
+food_post_count — integer. Count a post as food ONLY when food itself is the
+SUBJECT: a dish, a meal, cooking, takeaway, or an actual opinion/evaluation of
+food or a venue. Apply this rule in BOTH directions:
+
+INCLUDE genuine borderline cases where food really is the subject — e.g. a
+fitness creator's meal-prep post counts as food.
+EXCLUDE posts where a food venue is merely the SETTING or a recurring format
+device of non-food content — e.g. an interview, comedy, or talk show filmed
+in a restaurant does NOT count, no matter how often the venue is named.
+The presence of a food word (restaurant, cafe, "chicken shop", etc.) in a caption
+is not by itself evidence that the post is about food. In your reasoning, name the
+subject of each post you count, and note any food-venue-as-setting posts you excluded.
+
 total_posts_analyzed — integer. Number of posts visible in the input.
 uk_geography — judged PRIMARILY from post evidence. A bio or location
 field naming a UK place is a CLAIM, not proof — the posts are the proof.
 Among posts that carry ANY location signal, compute the share that is UK
-(UK city, region, neighbourhood, venue, or clear UK reference). Posts with
-no location signal are excluded from this share — they neither prove nor
-disprove UK presence.
-  "location_relevant"    — 50%+ of location-bearing posts are UK. Bio can
-                      say UK, say elsewhere, or be empty — post proof decides.
-  "location_low_proof"   — at least one UK post, but UK posts are under 50%
-                      of location-bearing posts.
-  "location_unverified"  — NO post carries a UK location signal, but the bio /
-                      location field claims the UK. A UK claim with no
-                      post-level proof — do not upgrade on the claim alone.
-  "location_irrelevant"  — NO post carries a UK location signal AND the bio /
-                      location field is empty or names somewhere outside the UK.
+(a UK city, region, neighbourhood, or venue; or a clear UK reference —
+including a distinctly British cultural term such as "chicken shop" or "the
+chippy", or a UK chain such as Greggs or Nando's). Posts with no location
+signal are excluded from this share — they neither prove nor disprove UK presence.
+"location_relevant"    — 50%+ of location-bearing posts are UK. Bio can
+say UK, say elsewhere, or be empty — post proof decides.
+"location_low_proof"   — at least one UK post, but UK posts are under 50%
+of location-bearing posts.
+"location_unverified"  — NO post carries a UK location signal, but the bio /
+location field claims the UK. A UK claim with no
+post-level proof — do not upgrade on the claim alone.
+"location_irrelevant"  — NO post carries a UK location signal AND the bio /
+location field is empty or names somewhere outside the UK.
 OUTPUT
 {
-  "entity_type": "...",
-  "primary_content_category": "...",
-  "primary_food_content_type": "..." or null,
-  "food_post_count": 0,
-  "total_posts_analyzed": 0,
-  "uk_geography": "...",
-  "reasoning": "two or three sentences; justify entity_type by who owns/speaks for the account, and uk_geography by post evidence vs the bio claim"
+"entity_type": "...",
+"primary_content_category": "...",
+"primary_food_content_type": "..." or null,
+"food_post_count": 0,
+"total_posts_analyzed": 0,
+"uk_geography": "...",
+"reasoning": "two to four sentences; justify entity_type by who owns/speaks for the account, food_post_count by naming the subject of the counted food posts (and noting any food-venue-as-setting posts you excluded), and uk_geography by post evidence vs the bio claim"
 }`;
 
 // Strip unpaired UTF-16 surrogates. Captions are truncated to 280 chars upstream, which can split
