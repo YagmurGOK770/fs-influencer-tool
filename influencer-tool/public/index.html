@@ -4313,13 +4313,6 @@ function renderPostsModal(handle, posts) {
           <select id="insTopFoodType" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
           </select>
-          <span style="font-size:11px;color:var(--muted);margin-left:4px">Per page</span>
-          <select id="insTopPerPage" onchange="insTopPage=1;insTopPageSize=parseInt(this.value);bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
-            <option value="10">10</option>
-            <option value="20" selected>20</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
         </div>
       </div>
       <div id="insSelBar" style="display:none;padding:8px 16px;background:var(--green-bg);border-bottom:1px solid var(--green-border);align-items:center;justify-content:space-between;gap:8px">
@@ -7605,35 +7598,47 @@ function bdrInsightsRender() {
       </table>`
     : '<span style="font-size:12px;color:var(--muted2)">No profiles match filters.</span>';
 
-  // Render pagination bar
+  // Render pagination bar — always shown when there are rows so the
+  // "Per page" control stays reachable even on a single page.
   const pagEl = document.getElementById('insTopPagination');
-  if (insTopTotal <= insTopPageSize) {
+  if (!insTopTotal) {
     pagEl.style.display = 'none';
   } else {
     pagEl.style.display = 'flex';
     const startNum = insTopStart + 1;
     const endNum = Math.min(insTopStart + insTopPageSize, insTopTotal);
-    const pageInfo = `<span style="font-size:12px;color:var(--muted)">Showing ${startNum}–${endNum} of ${insTopTotal}</span>`;
+
+    const perPageOpts = [10, 20, 50, 100]
+      .map(n => `<option value="${n}"${n === insTopPageSize ? ' selected' : ''}>${n}</option>`).join('');
+    const leftSide =
+      `<div style="display:flex;align-items:center;gap:10px">
+         <span style="font-size:12px;color:var(--muted)">Showing ${startNum}–${endNum} of ${insTopTotal}</span>
+         <span style="font-size:11px;color:var(--muted)">Per page</span>
+         <select onchange="insTopPage=1;insTopPageSize=parseInt(this.value);bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">${perPageOpts}</select>
+       </div>`;
 
     const btnStyle = (disabled, active) =>
       `font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:${disabled ? 'default' : 'pointer'};border:1.5px solid ${active ? 'var(--green-border)' : 'var(--border)'};background:${active ? 'var(--green-bg)' : 'var(--white)'};color:${active ? 'var(--green)' : disabled ? 'var(--muted2)' : 'var(--text)'};margin:0 1px`;
 
-    let pageButtons = `<button onclick="insTopGoToPage(${insTopPage - 1})" ${insTopPage === 1 ? 'disabled' : ''} style="${btnStyle(insTopPage === 1, false)}">‹ Prev</button>`;
+    let pageButtons = '';
+    if (insTopPageCount > 1) {
+      pageButtons = `<button onclick="insTopGoToPage(${insTopPage - 1})" ${insTopPage === 1 ? 'disabled' : ''} style="${btnStyle(insTopPage === 1, false)}">‹ Prev</button>`;
 
-    const windowSize = 5;
-    let pageStart = Math.max(1, insTopPage - Math.floor(windowSize / 2));
-    let pageEnd = Math.min(insTopPageCount, pageStart + windowSize - 1);
-    if (pageEnd - pageStart < windowSize - 1) pageStart = Math.max(1, pageEnd - windowSize + 1);
+      const windowSize = 5;
+      let pageStart = Math.max(1, insTopPage - Math.floor(windowSize / 2));
+      let pageEnd = Math.min(insTopPageCount, pageStart + windowSize - 1);
+      if (pageEnd - pageStart < windowSize - 1) pageStart = Math.max(1, pageEnd - windowSize + 1);
 
-    if (pageStart > 1) pageButtons += `<button onclick="insTopGoToPage(1)" style="${btnStyle(false, false)}">1</button>${pageStart > 2 ? '<span style="padding:0 4px;color:var(--muted2)">…</span>' : ''}`;
-    for (let p = pageStart; p <= pageEnd; p++) {
-      pageButtons += `<button onclick="insTopGoToPage(${p})" style="${btnStyle(false, p === insTopPage)}">${p}</button>`;
+      if (pageStart > 1) pageButtons += `<button onclick="insTopGoToPage(1)" style="${btnStyle(false, false)}">1</button>${pageStart > 2 ? '<span style="padding:0 4px;color:var(--muted2)">…</span>' : ''}`;
+      for (let p = pageStart; p <= pageEnd; p++) {
+        pageButtons += `<button onclick="insTopGoToPage(${p})" style="${btnStyle(false, p === insTopPage)}">${p}</button>`;
+      }
+      if (pageEnd < insTopPageCount) pageButtons += `${pageEnd < insTopPageCount - 1 ? '<span style="padding:0 4px;color:var(--muted2)">…</span>' : ''}<button onclick="insTopGoToPage(${insTopPageCount})" style="${btnStyle(false, false)}">${insTopPageCount}</button>`;
+
+      pageButtons += `<button onclick="insTopGoToPage(${insTopPage + 1})" ${insTopPage === insTopPageCount ? 'disabled' : ''} style="${btnStyle(insTopPage === insTopPageCount, false)}">Next ›</button>`;
     }
-    if (pageEnd < insTopPageCount) pageButtons += `${pageEnd < insTopPageCount - 1 ? '<span style="padding:0 4px;color:var(--muted2)">…</span>' : ''}<button onclick="insTopGoToPage(${insTopPageCount})" style="${btnStyle(false, false)}">${insTopPageCount}</button>`;
 
-    pageButtons += `<button onclick="insTopGoToPage(${insTopPage + 1})" ${insTopPage === insTopPageCount ? 'disabled' : ''} style="${btnStyle(insTopPage === insTopPageCount, false)}">Next ›</button>`;
-
-    pagEl.innerHTML = pageInfo + `<div style="display:flex;align-items:center;gap:2px">${pageButtons}</div>`;
+    pagEl.innerHTML = leftSide + `<div style="display:flex;align-items:center;gap:2px">${pageButtons}</div>`;
   }
 }
 
