@@ -6656,6 +6656,9 @@ const bdrTierRank = (t) => t.tier || (t.status === 'filtered' ? 8 : 9);
 function bdrTierOf(m) {
   const c = bdrGetClass(m.handle, m.platforms?.[0] || '');
   if (!c || c.entity_type == null) return { tier: null, status: 'unclassified', reason: 'Not classified yet' };
+  // PREREQUISITE — brands are out of scope: we want individual creators, not company/institutional
+  // accounts. Excluded regardless of followers, food density, or UK relevance.
+  if (c.entity_type === 'brand') return { tier: null, status: 'filtered', reason: 'Brand entity — out of scope' };
   const followers = bdParseCompact(m.primary_followers);
   const uk  = c.uk_geography;
   const cat = c.primary_content_category;
@@ -7533,30 +7536,101 @@ function bdrInsightsRender() {
   document.getElementById('insCrossTable').innerHTML = thead + `<tbody>${tbody}</tbody>` + tfoot;
 
   // --- Top profiles list ---
-  // Populate category filter dropdown dynamically (from the classifier's category facts)
-  const topCatSel = document.getElementById('insTopCategory');
-  const prevTopCat = topCatSel.value;
-  const allCats = [...new Set(rows.map(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category).filter(Boolean))]
-    .sort((a, b) => (BD_CAT_LABEL[a]||a).localeCompare(BD_CAT_LABEL[b]||b));
-  topCatSel.innerHTML = '<option value="">All</option>' + allCats.map(c => `<option value="${c}"${c===prevTopCat?' selected':''}>${BD_CAT_LABEL[c]||c}</option>`).join('');
-
-  // Food sub-type filter — populated from the classifier's primary_food_content_type facts
-  const topFtSel = document.getElementById('insTopFoodType');
-  const prevTopFt = topFtSel.value;
-  const allFts = [...new Set(rows.map(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_food_content_type).filter(Boolean))]
-    .sort((a, b) => (BD_FOODTYPE_LABEL[a]||a).localeCompare(BD_FOODTYPE_LABEL[b]||b));
-  topFtSel.innerHTML = '<option value="">All</option>' + allFts.map(f => `<option value="${f}"${f===prevTopFt?' selected':''}>${BD_FOODTYPE_LABEL[f]||f}</option>`).join('');
-
+  // Read current filter selections first — the dropdowns are rebuilt below, preserving them.
   const topSort   = document.getElementById('insTopSort').value;
   const topTier   = document.getElementById('insTopTier')?.value || '';
-  const topEntity = document.getElementById('insTopEntity').value;
-  const topCat    = topCatSel.value;
-  const topFt     = topFtSel.value;
+  const topEntity = document.getElementById('insTopEntity')?.value || '';
+  const topCat    = document.getElementById('insTopCategory')?.value || '';
+  const topFt     = document.getElementById('insTopFoodType')?.value || '';
   const topSearch = (document.getElementById('insTopSearch')?.value || '').trim().toLowerCase();
 
   // Toggle the search "Clear" button
   const _searchClearBtn = document.getElementById('insTopSearchClear');
   if (_searchClearBtn) _searchClearBtn.style.display = topSearch ? '' : 'none';
+
+  // ── Faceted filter dropdowns ──────────────────────────────────────────────
+  // Each dropdown lists only the values that exist given the OTHER active filters, with a
+  // live count. So selecting category=Food makes the food-type list show only the food
+  // types present within the current selection — never a dead option that returns nothing.
+  const _clsOf   = m => bdrGetClass(m.handle, m.platforms?.[0] || '');
+  const _pTier   = (m, v) => { if (!v) return true; const t = bdrEffectiveTier(m); return v === 'tiered' ? t.status === 'tier' : String(t.tier) === v; };
+  const _pEntity = (m, v) => !v || _clsOf(m).entity_type === v;
+  const _pCat    = (m, v) => !v || _clsOf(m).primary_content_category === v;
+  const _pFt     = (m, v) => !v || _clsOf(m).primary_food_content_type === v;
+  const _pSearch = (m) => {
+    if (!topSearch) return true;
+    const c = _clsOf(m);
+    const hay = [m.handle, m.full_name, m.bio, m.location,
+      BD_CAT_LABEL[c.primary_content_category] || c.primary_content_category,
+      BD_FOODTYPE_LABEL[c.primary_food_content_type] || c.primary_food_content_type]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(topSearch);
+  };
+  // Count distinct values of keyFn over rows passing pred. Returns {map, total}.
+  const _facetCounts = (pred, keyFn) => {
+    const map = new Map(); let total = 0;
+    for (const m of rows) {
+      if (!pred(m)) continue;
+      total++;
+      const v = keyFn(m);
+      if (v) map.set(v, (map.get(v) || 0) + 1);
+    }
+    return { map, total };
+  };
+  // Render a select from {value,label,count} options; hide 0-count options unless selected.
+  const _renderFacet = (sel, total, opts, selectedVal) => {
+    if (!sel) return;
+    let html = `<option value="">All (${total})</option>`;
+    for (const o of opts) {
+      if (o.count === 0 && o.value !== selectedVal) continue;
+      html += `<option value="${o.value}"${o.value === selectedVal ? ' selected' : ''}>${o.label} (${o.count})</option>`;
+    }
+    sel.innerHTML = html;
+  };
+
+  // Category — counts over rows matching the other three filters (+ search).
+  {
+    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pEntity(m, topEntity) && _pFt(m, topFt) && _pSearch(m), m => _clsOf(m).primary_content_category);
+    const opts = [...map.keys()].map(v => ({ value: v, label: BD_CAT_LABEL[v] || v, count: map.get(v) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    if (topCat && !map.has(topCat)) opts.push({ value: topCat, label: BD_CAT_LABEL[topCat] || topCat, count: 0 });
+    _renderFacet(document.getElementById('insTopCategory'), total, opts, topCat);
+  }
+  // Food type — counts over rows matching the other three filters (+ search).
+  {
+    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pEntity(m, topEntity) && _pCat(m, topCat) && _pSearch(m), m => _clsOf(m).primary_food_content_type);
+    const opts = [...map.keys()].map(v => ({ value: v, label: BD_FOODTYPE_LABEL[v] || v, count: map.get(v) }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    if (topFt && !map.has(topFt)) opts.push({ value: topFt, label: BD_FOODTYPE_LABEL[topFt] || topFt, count: 0 });
+    _renderFacet(document.getElementById('insTopFoodType'), total, opts, topFt);
+  }
+  // Entity — fixed order; counts over rows matching the other three filters (+ search).
+  {
+    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pCat(m, topCat) && _pFt(m, topFt) && _pSearch(m), m => _clsOf(m).entity_type);
+    const opts = ['individual', 'public_figure', 'brand', 'unclear']
+      .map(v => ({ value: v, label: (BD_ENTITY_META[v]?.label || v), count: map.get(v) || 0 }));
+    _renderFacet(document.getElementById('insTopEntity'), total, opts, topEntity);
+  }
+  // Tier — includes the "Tiered T1–T4" aggregate plus individual tiers, with counts.
+  {
+    const tierSel = document.getElementById('insTopTier');
+    if (tierSel) {
+      let total = 0, tiered = 0; const cT = { 1: 0, 2: 0, 3: 0, 4: 0 };
+      for (const m of rows) {
+        if (!(_pEntity(m, topEntity) && _pCat(m, topCat) && _pFt(m, topFt) && _pSearch(m))) continue;
+        total++;
+        const t = bdrEffectiveTier(m);
+        if (t.status === 'tier') { tiered++; if (cT[t.tier] != null) cT[t.tier]++; }
+      }
+      let th = `<option value="">All (${total})</option>`;
+      th += `<option value="tiered"${topTier === 'tiered' ? ' selected' : ''}>Tiered T1–T4 (${tiered})</option>`;
+      for (const t of [1, 2, 3, 4]) {
+        if (cT[t] === 0 && topTier !== String(t)) continue;
+        th += `<option value="${t}"${topTier === String(t) ? ' selected' : ''}>T${t} (${cT[t]})</option>`;
+      }
+      tierSel.innerHTML = th;
+    }
+  }
 
   const topErOf = m => {
     const isYT = m.platforms?.some(p => p.includes('youtube'));
