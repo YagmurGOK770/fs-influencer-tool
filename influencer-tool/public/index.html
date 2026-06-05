@@ -4179,7 +4179,10 @@ function renderPostsModal(handle, posts) {
           <button class="btn-sm" id="bdrDetectLangBtn" onclick="bdrDetectAllLanguages()">🌐 Detect Language</button>
           <button class="btn-sm" onclick="bdrRecoverLangFromLog()" title="Paste raw terminal text — extracts every '@handle → lang' line and saves to DB">📥 Recover Lang</button>
           <span id="bdrDetectLangStatus" style="font-size:11px;color:var(--muted);display:none"></span>
-          <button class="btn-sm" id="bdrFindPlatformsBtn" onclick="bdrFindOtherPlatforms()" title="Scan all profiles (matching first, then filtered out) for accounts on other platforms — 100 at a time">🔎 Find Other Platforms</button>
+          <button class="btn-sm" id="bdrFindPlatformsBtn" onclick="bdrFindOtherPlatforms()" title="Scan profiles for accounts on other platforms — 100 at a time">🔎 Find Other Platforms</button>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;white-space:nowrap" title="Only scan creators that currently have exactly one platform">
+            <input type="checkbox" id="bdrSinglePlatformOnly" style="cursor:pointer;accent-color:var(--green)"> single-platform only
+          </label>
           <button class="btn-sm" id="bdrFindPlatformsLogBtn" onclick="bdrViewFindPlatformsLog()" title="View disk log of all discoveries (survives DB save failures)">📂 Log</button>
           <span id="bdrFindPlatformsStatus" style="font-size:11px;color:var(--muted);display:none"></span>
           <button class="btn-sm" onclick="bdrExportCsv()">📥 Export CSV</button>
@@ -8016,14 +8019,23 @@ let _bdrFindPlatformsRunning = false;
 async function bdrFindOtherPlatforms() {
   if (_bdrFindPlatformsRunning) return;
 
-  const matchMerged = bdrMergeByHandle(bdrMatchingData);
+  const onlySingle = document.getElementById('bdrSinglePlatformOnly')?.checked;
+  let matchMerged = bdrMergeByHandle(bdrMatchingData);
+  if (onlySingle) matchMerged = matchMerged.filter(m => (m.platforms || []).length === 1);
   const totalProfiles = matchMerged.length;
-  if (!totalProfiles) { alert('No profiles loaded yet.'); return; }
+  if (!totalProfiles) {
+    alert(onlySingle
+      ? 'No single-platform creators in the loaded dataset.'
+      : 'No profiles loaded yet.');
+    return;
+  }
 
-  // Rough cost estimate — assume avg 2 missing platforms per profile, ~$0.0015 per BD call
-  const estCost = (totalProfiles * 2 * 0.0015).toFixed(2);
+  // Rough cost estimate, ~$0.0015 per BD call. Single-platform creators can be missing up
+  // to 3 platforms each; the mixed full set averages ~2 missing.
+  const avgMissing = onlySingle ? 3 : 2;
+  const estCost = (totalProfiles * avgMissing * 0.0015).toFixed(2);
   const ok = confirm(
-    `This will scan ${totalProfiles} unique creators ` +
+    `This will scan ${totalProfiles} ${onlySingle ? 'single-platform' : 'unique'} creator${totalProfiles === 1 ? '' : 's'} ` +
     `for accounts on other platforms.\n\n` +
     `• Processes 100 at a time, saving to DB after each batch\n` +
     `• Uses Bright Data — rough cost estimate: $${estCost}\n\n` +
