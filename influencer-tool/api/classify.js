@@ -10,7 +10,7 @@
 // claim. The rule-based Tier is derived from these facts (+ engagement) separately — NOT here.
 
 import { createClient } from '@supabase/supabase-js';
-import { classifyCreator } from './classify-core.js';
+import { classifyCreator } from './_classify-core.js';
 import { checkAuth, requireApiKey } from './_auth.js';
 
 let _sb = null;

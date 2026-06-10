@@ -1,5 +1,6 @@
-// GET /api/db-load
-// Returns all influencers from the DB, mapped back to frontend shape.
+// GET /api/db-load          — returns all influencers from the DB, mapped back to frontend shape.
+// GET /api/db-load?mode=changes — returns snapshot history (absorbed from db-changes.js to stay under
+//                                  Vercel Hobby 12-function cap).
 
 import { createClient } from '@supabase/supabase-js';
 import { checkAuth } from './_auth.js';
@@ -34,6 +35,77 @@ function toFrontend(row) {
     createdAt:     row.created_at,
     updatedAt:     row.updated_at,
   };
+}
+
+// ── Snapshot / changes handler ────────────────────────────────────────────────────────────────────
+const TRACKED = new Set([
+  'name', 'platform',
+  'ig_handle', 'ig_followers',
+  'tt_handle', 'tt_followers',
+  'yt_handle', 'yt_followers',
+  'x_handle', 'x_followers',
+  'followers',
+  'content_labels', 'who_they_are', 'what_they_post',
+  'location',
+]);
+
+async function serveChanges(req, res, supabase) {
+  const { data: snapshots, error } = await supabase
+    .from('influencer_snapshots')
+    .select(`
+      id,
+      handle,
+      field_name,
+      old_value,
+      new_value,
+      run_at,
+      influencer_id,
+      influencers (name, platform, ig_handle, tt_handle, followers)
+    `)
+    .order('handle', { ascending: true })
+    .order('run_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  if (!snapshots || snapshots.length === 0) return res.status(200).json({ influencers: [], total: 0 });
+
+  const byHandle = {};
+  for (const s of snapshots) {
+    if (!TRACKED.has(s.field_name)) continue;
+    if (!byHandle[s.handle]) {
+      const inf = s.influencers || {};
+      byHandle[s.handle] = {
+        handle: s.handle,
+        name: inf.name || s.handle,
+        platform: inf.platform || '',
+        igHandle: inf.ig_handle || '',
+        ttHandle: inf.tt_handle || '',
+        followers: inf.followers || '',
+        runs: {}
+      };
+    }
+    const runKey = s.run_at ? s.run_at.slice(0, 19) : 'unknown';
+    if (!byHandle[s.handle].runs[runKey]) {
+      byHandle[s.handle].runs[runKey] = { runAt: s.run_at, changes: [] };
+    }
+    byHandle[s.handle].runs[runKey].changes.push({
+      field: s.field_name,
+      oldValue: s.old_value,
+      newValue: s.new_value,
+    });
+  }
+
+  const influencers = Object.values(byHandle)
+    .map(inf => ({
+      ...inf,
+      runs: Object.values(inf.runs)
+        .filter(r => r.changes.length > 0)
+        .map(r => ({ ...r, firstSeen: r.changes.every(c => c.oldValue === null) }))
+        .sort((a, b) => new Date(b.runAt) - new Date(a.runAt))
+    }))
+    .filter(inf => inf.runs.length > 0)
+    .sort((a, b) => new Date(b.runs[0]?.runAt || 0) - new Date(a.runs[0]?.runAt || 0));
+
+  return res.status(200).json({ influencers, total: influencers.length });
 }
 
 // ── Same-origin image proxy (folded in here to stay under the Hobby-plan 12-function cap) ──────
@@ -81,6 +153,11 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     const qs = new URL(req.url, 'http://localhost').searchParams;
     if (qs.has('u') || qs.has('url')) return serveProxiedImage(req, res, qs);
+    if (qs.get('mode') === 'changes') {
+      if (!checkAuth(req, res)) return;
+      const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+      return serveChanges(req, res, supabase);
+    }
   }
 
   if (req.method !== 'GET') {

@@ -2534,7 +2534,7 @@ async function loadChanges() {
   const container = document.getElementById('clContent');
   container.innerHTML = '<div style="padding:2rem;text-align:center;color:var(--muted);font-size:13px">Loading changes…</div>';
   try {
-    const resp = await fetch('/api/db-changes', { headers: getApiHeaders() });
+    const resp = await fetch('/api/db-load?mode=changes', { headers: getApiHeaders() });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     renderChanges(data.influencers || []);
@@ -2831,7 +2831,7 @@ async function eInit() {
   }
   // Pre-load change count for badge
   try {
-    const cr = await fetch('/api/db-changes', { headers: getApiHeaders() });
+    const cr = await fetch('/api/db-load?mode=changes', { headers: getApiHeaders() });
     if (cr.ok) {
       const cd = await cr.json();
       const badge = document.getElementById('changesBadge');
@@ -4199,12 +4199,10 @@ function renderPostsModal(handle, posts) {
 
     <!-- Engagement-score weights (dynamic, cross-platform) -->
     <div id="bdrEngPanel" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px">
-      <span style="font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-size:11px">Engagement Score weights</span>
+      <span style="font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-size:11px">Engagement Rating weights</span>
       <label style="display:flex;align-items:center;gap:4px">Like <input type="number" id="bdrWLike" min="0" step="0.5" value="1" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
-      <label style="display:flex;align-items:center;gap:4px">Comment <input type="number" id="bdrWComment" min="0" step="0.5" value="4" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
-      <label style="display:flex;align-items:center;gap:4px">Save <input type="number" id="bdrWSave" min="0" step="0.5" value="5" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
-      <label style="display:flex;align-items:center;gap:4px">Share <input type="number" id="bdrWShare" min="0" step="0.5" value="5" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
-      <button class="btn-sm" onclick="bdrResetEngWeights()" title="Reset to defaults (1/4/5/5)">Reset</button>
+      <label style="display:flex;align-items:center;gap:4px">Comment <input type="number" id="bdrWComment" min="0" step="0.5" value="2" oninput="bdrOnWeightChange()" style="width:52px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
+      <button class="btn-sm" onclick="bdrResetEngWeights()" title="Reset to defaults (1/2)">Reset</button>
       <span style="width:1px;height:18px;background:var(--border)"></span>
       <label style="display:flex;align-items:center;gap:4px" title="Hide creators below this Engagement Score">Min Eng <input type="number" id="bdrMinEng" min="0" max="100" step="5" value="0" oninput="bdrApplyFilter()" style="width:56px;padding:3px 5px;border:1px solid var(--border);border-radius:5px"></label>
       <span style="color:var(--muted);font-size:11px">0–100, ranked within each platform · ⚠ = big following, low engagement</span>
@@ -4241,10 +4239,7 @@ function renderPostsModal(handle, posts) {
               <th onclick="bdrSetSort('followers')" style="cursor:pointer;user-select:none">Followers <span id="bdrSrt-followers" style="font-size:10px;opacity:1;color:var(--accent)">↓</span></th>
               <th onclick="bdrSetSort('post_count')" style="cursor:pointer;user-select:none" title="Video count (YouTube) or post count">Posts <span id="bdrSrt-post_count" style="font-size:10px;opacity:.3">⇅</span></th>
               <th title="Total views (YouTube) or avg likes">AVG ♥</th>
-              <th onclick="bdrSetSort('engagement_rate')" style="cursor:pointer;user-select:none" title="ER% for Instagram/TikTok; view rate for YouTube">ER% <span id="bdrSrt-engagement_rate" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th onclick="bdrSetSort('engScore')" style="cursor:pointer;user-select:none" title="Engagement Score 0–100: weighted engagement ÷ this platform's followers, ranked within platform">Eng <span id="bdrSrt-engScore" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th onclick="bdrSetSort('recencyScore')" style="cursor:pointer;user-select:none" title="Recency 0–100: per-day engagement of the latest 5 posts, ranked within platform">Recent <span id="bdrSrt-recencyScore" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th onclick="bdrSetSort('reachRatio')" style="cursor:pointer;user-select:none" title="Reach: avg views ÷ followers (video platforms)">Reach <span id="bdrSrt-reachRatio" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('engScore')" style="cursor:pointer;user-select:none" title="Engagement Rating 0–100: (likes + comments) ÷ followers, ranked within platform — so Instagram / TikTok / YouTube are directly comparable">Engagement <span id="bdrSrt-engScore" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('is_verified')" style="cursor:pointer;user-select:none" title="Sort by verified">✓ <span id="bdrSrt-is_verified" style="font-size:10px;opacity:.3">⇅</span></th>
               <th>Keywords matched</th>
               <th title="Recent post captions — click to expand">Posts</th>
@@ -4386,7 +4381,7 @@ function renderPostsModal(handle, posts) {
           <span style="font-size:11px;color:var(--muted)">Sort by</span>
           <select id="insTopSort" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="followers">Followers</option>
-            <option value="er">ER%</option>
+            <option value="eng">Engagement</option>
           </select>
           <span style="font-size:11px;color:var(--muted)">Filter tier</span>
           <select id="insTopTier" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);font-weight:600">
@@ -7271,30 +7266,32 @@ function bdrMergeByHandle(rows) {
 // platform's OWN follower count (primary_followers, never summed). Weights are UI-editable;
 // scores recompute live. Missing metrics (e.g. IG saves/shares) are fair because the cohort
 // is within-platform, so every peer lacks the same fields.
-const BD_ENG_WEIGHTS_KEY = 'bd_eng_weights';
+// Engagement Rating weights — likes + comments only. Key bumped to _v2 so older saved {like,comment,
+// save,share} sets don't carry over the retired save/share or the old comment=4 default.
+const BD_ENG_WEIGHTS_KEY = 'bd_eng_weights_v2';
 function bdrGetEngWeights() {
   try {
     const w = JSON.parse(localStorage.getItem(BD_ENG_WEIGHTS_KEY) || 'null');
     if (w && typeof w === 'object')
-      return { like: +w.like || 0, comment: +w.comment || 0, save: +w.save || 0, share: +w.share || 0 };
+      return { like: +w.like || 0, comment: +w.comment || 0 };
   } catch (_) {}
-  return { like: 1, comment: 4, save: 5, share: 5 };
+  return { like: 1, comment: 2 };
 }
 function bdrSetEngWeights(w) { try { localStorage.setItem(BD_ENG_WEIGHTS_KEY, JSON.stringify(w)); } catch (_) {} }
 function bdrOnWeightChange() {
   const num = (id, d) => { const v = parseFloat(document.getElementById(id)?.value); return Number.isFinite(v) && v >= 0 ? v : d; };
-  bdrSetEngWeights({ like: num('bdrWLike', 1), comment: num('bdrWComment', 4), save: num('bdrWSave', 5), share: num('bdrWShare', 5) });
+  bdrSetEngWeights({ like: num('bdrWLike', 1), comment: num('bdrWComment', 2) });
   if (typeof bdrApplyFilter === 'function') bdrApplyFilter();
 }
 function bdrResetEngWeights() {
-  bdrSetEngWeights({ like: 1, comment: 4, save: 5, share: 5 });
+  bdrSetEngWeights({ like: 1, comment: 2 });
   bdrInitEngWeights();
   if (typeof bdrApplyFilter === 'function') bdrApplyFilter();
 }
 function bdrInitEngWeights() { // sync the input boxes to the saved weights
   const w = bdrGetEngWeights();
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-  set('bdrWLike', w.like); set('bdrWComment', w.comment); set('bdrWSave', w.save); set('bdrWShare', w.share);
+  set('bdrWLike', w.like); set('bdrWComment', w.comment);
 }
 
 function _bdLowerBound(a, v) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < v) lo = m + 1; else hi = m; } return lo; }
@@ -7305,24 +7302,27 @@ function _bdPctl(sortedAsc, v) { // tie-stable midrank percentile 0-100
   return Math.round(rank / sortedAsc.length * 100);
 }
 
-// Which metrics enter a platform's weighted sum (drop ones the platform never reports, so we never
-// zero-fill an absent metric). 'x' covers twitter; default falls back to likes+comments.
+// The Engagement Rating uses the SAME two fields on every platform — likes + comments — so platforms
+// are measured identically (saves/shares are platform-specific and would skew the comparison). The
+// within-platform percentile (below) handles the different baseline engagement levels per platform.
 const BD_PLATFORM_METRICS = {
   instagram: ['likes', 'comments'],
-  tiktok:    ['likes', 'comments', 'saves', 'shares'],
-  x:         ['likes', 'comments', 'saves', 'shares'],
+  tiktok:    ['likes', 'comments'],
+  x:         ['likes', 'comments'],
   youtube:   ['likes', 'comments'],
 };
-const _BD_WEIGHT_OF = { likes: 'like', comments: 'comment', saves: 'save', shares: 'share' };
+const _BD_WEIGHT_OF = { likes: 'like', comments: 'comment' };
 
-// Attaches engScore/recencyScore/reachRatio/hype to each merged row. Pass the FULL merged set
-// for the current view so the percentile cohort = all enriched creators on that platform.
+// Attaches the Engagement Rating (engScore 0–100) + hype flag to each merged row. Pass the FULL merged
+// set for the current view so the percentile cohort = all enriched creators on that platform. Rating =
+// (weighted likes + comments) ÷ followers, ranked WITHIN the creator's own platform — so a 73 means the
+// same thing on Instagram, TikTok or YouTube (the percentile absorbs each platform's baseline level).
 function bdrComputeScores(rows) {
   const w = bdrGetEngWeights();
   const platOf = r => { const p = r.primary_platform || (r.platforms && r.platforms[0]) || ''; return p.includes('insta') ? 'instagram' : p.includes('tik') ? 'tiktok' : p.includes('you') ? 'youtube' : (p === 'x' || p.includes('twit')) ? 'x' : p; };
-  const isEnriched = r => (r.median_likes != null || r.avg_likes != null || r.median_comments != null || r.avg_comments != null || r.avg_views != null);
-  // Weighted sum over the platform's metric set; skip null (no zero-fill). `pick` chooses median
-  // (preferred) and falls back to the mean for rows enriched before medians were stored.
+  const isEnriched = r => (r.median_likes != null || r.avg_likes != null || r.median_comments != null || r.avg_comments != null);
+  // Weighted sum over the platform's metric set (likes + comments); skip null (no zero-fill). `pick`
+  // chooses median (preferred), falling back to the mean for rows enriched before medians were stored.
   const weighted = (r, metrics, pick) => {
     let sum = 0, any = false;
     for (const m of metrics) {
@@ -7334,31 +7334,23 @@ function bdrComputeScores(rows) {
     return any ? sum : null;
   };
   const overall = (r, m) => { const md = r['median_' + m]; return md != null ? md : r['avg_' + m]; };
-  const recent  = (r, m) => r['recent_daily_' + m];
   for (const r of rows) {
     const f = bdParseCompact(r.primary_followers != null ? r.primary_followers : r.followers);
     const metrics = BD_PLATFORM_METRICS[platOf(r)] || ['likes', 'comments'];
-    if (!isEnriched(r) || !f) { r.engScore = null; r.recencyScore = null; r.reachRatio = null; r.hype = false; r._er = null; r._vel = null; continue; }
+    if (!isEnriched(r) || !f) { r.engScore = null; r.hype = false; r._er = null; continue; }
     const wE = weighted(r, metrics, overall);
-    const wV = weighted(r, metrics, recent);
-    r._er  = wE != null ? wE / f : null;
-    r._vel = wV != null ? wV / f : null;
-    const views = r.median_views != null ? r.median_views : r.avg_views;          // video-only
-    r.reachRatio = (views != null) ? Number(views) / f * 100 : null;
+    r._er = wE != null ? wE / f : null;
   }
   const co = {};
   for (const r of rows) {
-    if (r._er == null && r._vel == null) continue;
-    const p = platOf(r); (co[p] || (co[p] = { er: [], vel: [] }));
-    if (r._er != null) co[p].er.push(r._er);
-    if (r._vel != null) co[p].vel.push(r._vel);
+    if (r._er == null) continue;
+    const p = platOf(r); (co[p] || (co[p] = { er: [] }));
+    co[p].er.push(r._er);
   }
-  for (const p in co) { co[p].er.sort((a, b) => a - b); co[p].vel.sort((a, b) => a - b); }
+  for (const p in co) co[p].er.sort((a, b) => a - b);
   for (const r of rows) {
-    if (r._er == null && r._vel == null) continue;
-    const c = co[platOf(r)];
-    r.engScore = _bdPctl(c.er, r._er);
-    r.recencyScore = _bdPctl(c.vel, r._vel);
+    if (r._er == null) continue;
+    r.engScore = _bdPctl(co[platOf(r)].er, r._er);
     const f = bdParseCompact(r.primary_followers != null ? r.primary_followers : r.followers);
     r.hype = f >= 25000 && r.engScore != null && r.engScore <= 25;  // big-ish audience, bottom-quartile engagement
   }
@@ -7628,6 +7620,10 @@ function bdrInsightsRender() {
   insPreloadOutreach().then(wasLoaded => { if (wasLoaded) bdrInsightsRender(); }).catch(() => {});
   insPreloadTags().then(wasLoaded => { if (wasLoaded) bdrInsightsRender(); }).catch(() => {});
   const rows = insGetRows();
+  // Attach the Engagement Rating (engScore 0–100) before the tier/search/facet filters narrow the view,
+  // so the percentile cohort = the full per-platform population (the only filter insGetRows applies is
+  // the platform pill, which leaves each platform's cohort complete).
+  bdrComputeScores(rows);
 
   // Update platform pill counts — reflect the unified (food + lifestyle) merged set
   // so what you see in the pill matches what the rest of the Overview is showing.
@@ -7913,12 +7909,6 @@ function bdrInsightsRender() {
     }
   }
 
-  const topErOf = m => {
-    const isYT = m.platforms?.some(p => p.includes('youtube'));
-    if (isYT) { const av = Number(m.avg_likes), fl = Number(m.followers); return (av > 0 && fl > 0) ? av / fl * 100 : 0; }
-    const v = Number(m.engagement_rate); return (v > 0 && v <= 200) ? v : 0;
-  };
-
   let topRows = [...rows];
   if (topTier) topRows = topRows.filter(m => { const t = bdrEffectiveTier(m); return topTier === 'tiered' ? t.status === 'tier' : String(t.tier) === topTier; });
   if (topEntity) topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type === topEntity);
@@ -7934,8 +7924,8 @@ function bdrInsightsRender() {
       .filter(Boolean).join(' ').toLowerCase();
     return hay.includes(topSearch);
   });
-  topRows.sort((a, b) => topSort === 'er'
-    ? topErOf(b) - topErOf(a)
+  topRows.sort((a, b) => topSort === 'eng'
+    ? (b.engScore ?? -1) - (a.engScore ?? -1)
     : (Number(b.followers)||0) - (Number(a.followers)||0));
 
   // Reset to page 1 if filters changed
@@ -7971,7 +7961,7 @@ function bdrInsightsRender() {
           <th style="padding:6px 8px;position:sticky;left:0;z-index:3;background:var(--white)"></th>
           <th style="padding:6px 8px;text-align:left;position:sticky;left:34px;z-index:3;background:var(--white);border-right:1px solid var(--border)">Handle</th>
           <th style="padding:6px 8px;text-align:right">Followers</th>
-          <th style="padding:6px 8px;text-align:right">ER%</th>
+          <th style="padding:6px 8px;text-align:center" title="Engagement Rating 0–100 — (likes + comments) ÷ followers, ranked within platform (comparable across IG / TikTok / YouTube)">Eng</th>
           <th style="padding:6px 8px;text-align:left">Tier</th>
           <th style="padding:6px 8px;text-align:left">Entity</th>
           <th style="padding:6px 8px;text-align:left">Category</th>
@@ -8022,11 +8012,9 @@ function bdrInsightsRender() {
           const fitCell = fm
             ? `<span title="${fitTip}" style="font-size:10px;font-weight:800;background:${fm.bg};color:${fm.color};border:1px solid ${fm.color}55;border-radius:100px;padding:2px 9px;white-space:nowrap;cursor:help">${fm.label}</span>`
             : '<span style="color:var(--muted2)">—</span>';
-          const isInsYT = m.platforms?.some(p => p.includes('youtube'));
-          const erVal2 = isInsYT
-            ? (Number(m.avg_likes) > 0 && Number(m.followers) > 0 ? Math.round((Number(m.avg_likes) / Number(m.followers)) * 10000) / 100 : null)
-            : (m.engagement_rate != null ? Number(m.engagement_rate) : null);
-          const er = erVal2 != null ? erVal2.toFixed(1)+'%' : '—';
+          const engCell = m.engScore == null
+            ? '<span style="color:var(--muted2)">—</span>'
+            : `<span style="font-weight:700;color:${m.engScore>=70?'var(--green)':m.engScore>=40?'var(--amber)':'var(--muted)'}">${m.engScore}</span>${m.hype?' <span title="≥25k followers but bottom-quartile engagement for its platform — verify before outreach" style="color:#c0392b;font-weight:700;cursor:help">⚠</span>':''}`;
           const h = (m.handle || '').replace(/^@/, '');
           const isTracked = trackedHandles.has(h);
           // Frozen left columns (checkbox + Handle): opaque per-row bg so scrolled cells don't show through.
@@ -8063,7 +8051,7 @@ function bdrInsightsRender() {
                 : `<span title="In Food DB only" style="display:inline-block;font-size:9px;font-weight:700;background:#fdf0ee;color:#c0392b;border:1px solid #c0392b40;border-radius:100px;padding:1px 6px;margin-left:6px;vertical-align:middle">🍔 Food</span>`
             }</div></td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
-            <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
+            <td style="padding:6px 8px;text-align:center;font-family:var(--mono)">${engCell}</td>
             <td style="padding:6px 8px">${tierCell}</td>
             <td style="padding:6px 8px">${entityCell}</td>
             <td style="padding:6px 8px;color:var(--muted)">${catCell}</td>
@@ -8737,14 +8725,13 @@ function bdrSetSort(col) {
     bdrSortDir = bdrSortDir === 'asc' ? 'desc' : 'asc';
   } else {
     bdrSortCol = col;
-    bdrSortDir = (col === 'followers' || col === 'engagement_rate' || col === 'fetched_at' || col === 'is_verified'
-                  || col === 'engScore' || col === 'recencyScore' || col === 'reachRatio') ? 'desc' : 'asc';
+    bdrSortDir = (col === 'followers' || col === 'fetched_at' || col === 'is_verified' || col === 'engScore') ? 'desc' : 'asc';
   }
   bdrApplyFilter();
 }
 
 function bdrUpdateSortIndicators() {
-  const sortable = ['handle','full_name','platform','is_verified','followers','engagement_rate','engScore','recencyScore','reachRatio','location','entity','category','uk','tier','fetched_at','language'];
+  const sortable = ['handle','full_name','platform','is_verified','followers','engScore','location','entity','category','uk','tier','fetched_at','language'];
   for (const c of sortable) {
     const el = document.getElementById('bdrSrt-' + c);
     if (!el) continue;
@@ -8847,10 +8834,7 @@ function bdrApplyFilter() {
         case 'platform':        av=a.platforms.join(',');           bv=b.platforms.join(',');           break;
         case 'is_verified':     av=a.is_verified?1:0;              bv=b.is_verified?1:0;              break;
         case 'followers':       av=Number(a.followers)||0;         bv=Number(b.followers)||0;         break;
-        case 'engagement_rate': av=Number(a.engagement_rate)||0;   bv=Number(b.engagement_rate)||0;   break;
         case 'engScore':        av=a.engScore??-1;                 bv=b.engScore??-1;                 break;
-        case 'recencyScore':    av=a.recencyScore??-1;             bv=b.recencyScore??-1;             break;
-        case 'reachRatio':      av=a.reachRatio??-1;               bv=b.reachRatio??-1;               break;
         case 'location':        av=(a.location||'').toLowerCase(); bv=(b.location||'').toLowerCase(); break;
         case 'entity':          av=bdrGetClass(a.handle,a.platforms?.[0]||'').entity_type||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').entity_type||'zzz'; break;
         case 'category':        av=bdrGetClass(a.handle,a.platforms?.[0]||'').primary_content_category||'zzz'; bv=bdrGetClass(b.handle,b.platforms?.[0]||'').primary_content_category||'zzz'; break;
@@ -9043,14 +9027,6 @@ function bdrRenderTable(rows, _skipPageSetup) {
           : `<span style="font-size:11px">${bdFormatCompact(avgNum)}</span>`)
       : `<span style="color:var(--muted2);font-size:10px">${isYTrow ? 'n/a' : '—'}</span>`;
 
-    const erVal = isYTrow
-      ? (avgNum > 0 && Number(m.followers) > 0 ? Math.round((avgNum / Number(m.followers)) * 10000) / 100 : null)
-      : (m.engagement_rate != null ? Number(m.engagement_rate) : null);
-    const er = erVal != null
-      ? `<span title="${isYTrow ? 'View rate: avg views per video ÷ subscribers' : 'Engagement rate'}">${erVal.toFixed(1)}%</span>`
-      : '—';
-    const erColor = erVal != null && erVal >= 3 ? 'var(--green)' : erVal != null && erVal >= 1 ? 'var(--amber)' : 'var(--muted)';
-
     const kws = m.matched_keywords.length
       ? m.matched_keywords.map(k => `<span style="display:inline-block;background:var(--green-bg);color:var(--green);padding:1px 6px;border-radius:8px;margin:1px 2px 0 0;font-size:10px">${k}</span>`).join('')
       : '<span style="color:var(--muted2)">—</span>';
@@ -9149,10 +9125,7 @@ function bdrRenderTable(rows, _skipPageSetup) {
       <td>${totalHtml}</td>
       <td style="white-space:nowrap">${postCountHtml}</td>
       <td style="white-space:nowrap">${avgHtml}</td>
-      <td style="font-family:var(--mono);font-size:12px;font-weight:600;color:${erColor}">${er}</td>
       <td style="text-align:center;font-family:var(--mono)"${m.posts_sampled?` title="Scored on ${m.posts_sampled} post${m.posts_sampled==1?'':'s'}"`:''}>${m.engScore==null?'<span style="color:var(--muted2)">—</span>':`<span style="font-weight:700;color:${m.engScore>=70?'var(--green)':m.engScore>=40?'var(--amber)':'var(--muted)'}">${m.engScore}</span>`}${m.hype?' <span title="≥25k followers but bottom-quartile engagement for its platform — verify before outreach" style="color:#c0392b;font-weight:700;cursor:help">⚠</span>':''}</td>
-      <td style="text-align:center;font-family:var(--mono)">${m.recencyScore==null?'<span style="color:var(--muted2)">—</span>':`<span style="font-weight:700;color:${m.recencyScore>=70?'var(--green)':m.recencyScore>=40?'var(--amber)':'var(--muted)'}">${m.recencyScore}</span>`}</td>
-      <td style="white-space:nowrap;font-size:11px;font-family:var(--mono)">${m.reachRatio==null?'<span style="color:var(--muted2)">—</span>':(m.reachRatio>=100?Math.round(m.reachRatio):m.reachRatio.toFixed(1))+'%'}</td>
       <td style="text-align:center">${m.is_verified?'<span style="color:var(--blue);font-weight:700">✓</span>':'<span style="color:var(--muted2)">—</span>'}</td>
       <td style="max-width:160px">${kws}</td>
       <td style="white-space:nowrap">${postsCell}</td>
@@ -9451,7 +9424,7 @@ function bdrExportCsv() {
   // classification (keyed on the primary platform) to every row so it exports on each platform line.
   const rows = merged.flatMap(m => { const cls = bdrGetClass(m.handle, m.platforms?.[0] || ''); const t = bdrEffectiveTier(m); return m._rows.map(r => ({ ...r, _cls: cls, _tier: t })); });
 
-  const cols = ['handle','full_name','platform','followers','engagement_rate','is_verified',
+  const cols = ['handle','full_name','platform','followers','engagement_rate','engScore','is_verified',
                 'matched_keywords','post_captions','post_locations','bio','location','country',
                 'post_count','avg_likes','avg_comments','hashtag_posts','profile_url','fetched_at',
                 'tier','entity_type','primary_content_category','primary_food_content_type','food_service_type','food_post_count',
