@@ -73,7 +73,14 @@ const server = http.createServer(async (req, res) => {
   let filePath = path.join(PUBLIC, url.pathname === '/' ? 'index.html' : url.pathname);
   if (!fs.existsSync(filePath)) filePath = path.join(PUBLIC, 'index.html');
   const ext = path.extname(filePath);
-  res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain' });
+  // Dev server: never let the browser cache static files, so an edit is always reflected on the next
+  // request (no stale index.html). Avoids the "I changed the file but the browser shows the old UI" trap.
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] || 'text/plain',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+  });
   res.end(await readFile(filePath));
 });
 

@@ -58,7 +58,10 @@ async function serveProxiedImage(req, res, qs) {
     res.status(403).end('host not allowed'); return;
   }
   try {
-    const up = await fetch(target.href, { headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'image/*,*/*' } });
+    // TikTok's image CDN is hotlink-protected — send a tiktok.com Referer so the fetch isn't 403'd.
+    const headers = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'image/*,*/*' };
+    if (/tiktokcdn(-us)?\.com$/i.test(target.hostname)) headers['Referer'] = 'https://www.tiktok.com/';
+    const up = await fetch(target.href, { headers });
     if (!up.ok) { res.status(up.status).end('upstream ' + up.status); return; }
     const ct = up.headers.get('content-type') || '';
     if (!ct.startsWith('image/')) { res.status(415).end('not an image'); return; }

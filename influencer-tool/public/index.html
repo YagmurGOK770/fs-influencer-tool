@@ -263,6 +263,14 @@ tbody td:nth-child(2){left:32px}
 tbody td:nth-child(3){left:78px;border-right:1.5px solid var(--border)}
 tbody tr:hover td:nth-child(1),tbody tr:hover td:nth-child(2),tbody tr:hover td:nth-child(3){background:var(--surface)}
 tbody tr.isnew td:nth-child(1),tbody tr.isnew td:nth-child(2),tbody tr.isnew td:nth-child(3){background:#f0faf4}
+/* The global nth-child(1..3) sticky rules above target the column-filtered DATA table (in .table-wrap).
+   They leak into the Overview profiles table (#insTopList), freezing its 3rd column (Followers) at
+   left:78px so it overlaps the Handle. Neutralise the leak for that table — it manages its own frozen
+   columns (checkbox + Handle) via inline position:sticky, which still wins over this reset. */
+#insTopList table thead th:nth-child(-n+3), #insTopList table tbody td:nth-child(-n+3),
+#outreachTable thead th:nth-child(-n+3), #outreachTable tbody td:nth-child(-n+3){position:static;left:auto;min-width:0}
+#insTopList table thead th:nth-child(3), #insTopList table tbody td:nth-child(3),
+#outreachTable thead th:nth-child(3), #outreachTable tbody td:nth-child(3){border-right:none}
 tbody tr.isnew:hover td:nth-child(1),tbody tr.isnew:hover td:nth-child(2),tbody tr.isnew:hover td:nth-child(3){background:#e8f7ee}
 tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
 tbody tr:hover{background:var(--surface)}
@@ -3559,14 +3567,87 @@ function closePostsModal() {
   document.getElementById('pmBody').innerHTML = '';
 }
 
+// Show ALL AI-classification fields for one creator (the Results table only surfaces a few),
+// plus the recent post images the classifier was fed. Reuses the posts-modal shell.
+async function bdrViewClass(handle, platform) {
+  const h = (handle || '').replace(/^@/, '');
+  const modal = document.getElementById('postsModal');
+  if (modal.parentElement !== document.body) document.body.appendChild(modal);
+  const cls = bdrGetClass(handle, platform);
+  document.getElementById('pmTitle').textContent = '@' + h + ' — AI classification';
+  document.getElementById('pmSub').textContent = platform ? `Classified on ${platform}` : '';
+  const esc = v => String(v == null ? '' : v).replace(/</g, '&lt;');
+  const badge = (meta, val) => {
+    const mm = meta[val];
+    return mm
+      ? `<span style="font-size:11px;font-weight:700;background:${mm.bg};color:${mm.color};border:1px solid ${mm.color}40;border-radius:100px;padding:2px 10px">${mm.label}</span>`
+      : '<span style="color:#9ca3af">—</span>';
+  };
+  const plain = (label) => label ? `<span style="font-size:12.5px">${esc(label)}</span>` : '<span style="color:#9ca3af">—</span>';
+  const txt   = (t) => t ? `<div style="font-size:12.5px;line-height:1.5;color:#374151;white-space:pre-wrap">${esc(t)}</div>` : '<span style="color:#9ca3af">—</span>';
+  const row   = (k, v) => `<div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid #eee"><div style="width:130px;flex-shrink:0;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.04em">${k}</div><div style="flex:1">${v}</div></div>`;
+  // Strip of the recent post images the classifier is fed (filled in async below).
+  const imagesSection = `<div style="padding:14px 20px 4px">
+      <div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px">Post images the classifier uses (3 most recent)</div>
+      <div id="bdrClassImages" style="display:flex;gap:8px;flex-wrap:wrap"><span style="color:#9ca3af;font-size:12px">Loading…</span></div>
+    </div>`;
+  let body;
+  if (!cls || cls.entity_type == null) {
+    body = '<div style="padding:24px 20px;text-align:center;color:#9ca3af;font-size:13px">Not classified yet — run ✨ AI Classify.</div>';
+  } else {
+    const foodN = cls.food_post_count != null
+      ? `${cls.food_post_count}${cls.total_posts_analyzed != null ? ' of ' + cls.total_posts_analyzed : ''} posts are food`
+      : '';
+    body = `<div style="padding:14px 20px">
+      ${row('Entity', badge(BD_ENTITY_META, cls.entity_type))}
+      ${row('Category', plain(BD_CAT_LABEL[cls.primary_content_category] || cls.primary_content_category))}
+      ${row('Food type', plain(cls.primary_food_content_type ? (BD_FOODTYPE_LABEL[cls.primary_food_content_type] || cls.primary_food_content_type) : ''))}
+      ${row('Service', badge(BD_SERVICE_META, cls.food_service_type))}
+      ${row('Food posts', plain(foodN))}
+      ${row('UK', badge(BD_UK_META, cls.uk_geography))}
+      ${row('Dietary', badge(BD_DIETARY_META, cls.dietary_focus))}
+      ${row('FoodStyles fit', badge(BD_FIT_META, cls.foodstyles_fit))}
+      ${row('Fit reasoning', txt(cls.fit_reasoning))}
+      ${row('Reasoning', txt(cls.reasoning))}
+    </div>`;
+  }
+  document.getElementById('pmBody').innerHTML = imagesSection + body;
+  modal.style.display = 'flex';
+
+  // Load the post images the classifier uses: re-hosted (permanent) thumbnails preferred, else newest.
+  try {
+    const resp = await fetch('/api/db-save', { method: 'POST', headers: getApiHeaders(),
+      body: JSON.stringify({ action: 'load-posts', handle: h, platform: platform || undefined }) });
+    const data = await resp.json().catch(() => ({}));
+    // Guard against a stale fill if the user opened another creator's modal meanwhile.
+    if (document.getElementById('pmTitle').textContent !== '@' + h + ' — AI classification') return;
+    const posts = Array.isArray(data.posts) ? data.posts : [];
+    const cand = posts
+      .map(pp => ({ u: pp.thumbnail_url || (Array.isArray(pp.media_urls) ? pp.media_urls[0] : '') || '', cap: pp.caption || '', url: pp.post_url || '' }))
+      .filter(x => x.u);
+    const perm = u => u.includes('/storage/v1/object/public/');   // re-hosted, never expires
+    cand.sort((a, b) => (perm(a.u) ? 0 : 1) - (perm(b.u) ? 0 : 1)); // permanent first (stable keeps recency)
+    const imgs = cand.slice(0, 3);
+    const strip = document.getElementById('bdrClassImages');
+    if (strip) strip.innerHTML = imgs.length
+      ? imgs.map(x => `<a href="${x.url || '#'}" target="_blank" rel="noopener" title="${(x.cap || '').replace(/"/g, '&#39;').slice(0, 300)}"><img src="${bdrProxyThumb(x.u)}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;display:block" onerror="this.style.opacity='.25';this.title='image failed to load'"></a>`).join('')
+      : '<span style="color:#9ca3af;font-size:12px">No recent post images for this platform.</span>';
+  } catch {
+    const strip = document.getElementById('bdrClassImages');
+    if (strip) strip.innerHTML = '<span style="color:#9ca3af;font-size:12px">Could not load post images.</span>';
+  }
+}
+
 // Instagram/Facebook CDN image hosts are commonly blocked by ad/tracker blockers (and carry
 // referrer/CORP quirks), so load those thumbnails via our same-origin /api/img proxy. Other CDNs
 // (YouTube/TikTok) load fine directly, so pass them through untouched.
 function bdrProxyThumb(u) {
   if (!u) return u;
-  // base64 the target so the request URL carries no Meta-domain substring for blockers to match.
-  // Proxy lives on /api/db-load (folded in to stay under Vercel's Hobby-plan 12-function cap).
-  return /(?:cdninstagram\.com|fbcdn\.net)/i.test(u) ? `/api/db-load?u=${encodeURIComponent(btoa(u))}` : u;
+  // Route through the same-origin proxy (/api/db-load) for hosts that fail a direct browser <img>
+  // load: Instagram/Facebook (ad-blockers + referrer/CORP) and TikTok (hotlink-protected). base64 the
+  // target so the request URL carries no blockable substring. YouTube/Twitter load fine directly.
+  return /(?:cdninstagram\.com|fbcdn\.net|tiktokcdn\.com|tiktokcdn-us\.com)/i.test(u)
+    ? `/api/db-load?u=${encodeURIComponent(btoa(u))}` : u;
 }
 
 function renderPostsModal(handle, posts) {
@@ -4105,6 +4186,13 @@ function renderPostsModal(handle, posts) {
         <button class="btn-sm" id="bdrClassifyTestBtn" onclick="bdrClassifyVisible(10)" title="Test: classify first 10 rows only" style="opacity:.7">✨ Test (10)</button>
         <button class="btn-sm" id="bdrReenrichBtn" onclick="bdrReenrichMissing()" title="Re-fetch missing engagement rate, followers, bio for saved profiles">🔄 Re-enrich missing</button>
         <button class="btn-sm" id="bdrResetAiBtn" onclick="bdrResetAiResults()" title="Clear ALL AI classification + Tier for this dataset so it can be re-classified. Asks for the app password. Raw profile data (followers, bio, posts) is kept." style="border-color:#e7b3b3;color:#c0392b">🧹 Reset AI results</button>
+        <span style="width:1px;height:20px;background:var(--border)"></span>
+        <select id="bdrSampleSize" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)" title="How many creators to put in the test sample">
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+        </select>
+        <button class="btn-sm" id="bdrSampleResetBtn" onclick="bdrResetSample()" title="Clear AI classification for the first N creators in the current view (database + screen), then show ONLY those N so you can re-run AI Classify and review every field. Destructive: deletes existing classification for those N." style="border-color:#e7b3b3;color:#c0392b">🧪 Reset &amp; test sample</button>
         <input type="text" class="search-box" id="bdrSearch" placeholder="Search handle, name, bio…" oninput="bdrSearchDebounced()" style="width:210px">
       </div>
     </div>
@@ -4135,6 +4223,12 @@ function renderPostsModal(handle, posts) {
       <div style="font-size:12.5px">Run a search in the <strong>BrightData Enrich</strong> tab and click <strong>Save filtered results to DB</strong>.</div>
     </div>
 
+    <!-- Test-sample banner (shown only while a reset-sample filter is active) -->
+    <div id="bdrSampleBanner" style="display:none;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;padding:8px 14px;background:#fdf6ec;border:1px solid var(--amber);border-radius:8px;font-size:12.5px;color:#92400e">
+      <span id="bdrSampleBannerText">🧪 Test sample</span>
+      <button class="btn-sm" onclick="bdrExitSample()" title="Drop the test-sample filter and show the full dataset again">✕ Exit test sample</button>
+    </div>
+
     <!-- Results table -->
     <div id="bdrTableWrap" style="display:none">
       <div class="table-wrap" style="max-height:70vh">
@@ -4159,7 +4253,7 @@ function renderPostsModal(handle, posts) {
               <th onclick="bdrSetSort('entity')" style="cursor:pointer;user-select:none" title="individual (keep) vs brand (filter out) — from the classifier">Entity <span id="bdrSrt-entity" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('category')" style="cursor:pointer;user-select:none" title="Primary content category + dominant food-content type">Category <span id="bdrSrt-category" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('uk')" style="cursor:pointer;user-select:none" title="UK relevance judged from post-level location evidence">UK <span id="bdrSrt-uk" style="font-size:10px;opacity:.3">⇅</span></th>
-              <th onclick="bdrSetSort('tier')" style="cursor:pointer;user-select:none" title="Rule-based outreach tier (T1 bullseye → T4 stretch; derived from the facts + followers)">Tier <span id="bdrSrt-tier" style="font-size:10px;opacity:.3">⇅</span></th>
+              <th onclick="bdrSetSort('tier')" style="cursor:pointer;user-select:none" title="Rule-based outreach tier (T1 reach-out-first → T5 out-of-scope; derived from the AI fit + guardrails)">Tier <span id="bdrSrt-tier" style="font-size:10px;opacity:.3">⇅</span></th>
               <th title="Classifier reasoning">Reason</th>
               <th onclick="bdrSetSort('language')" style="cursor:pointer;user-select:none" title="Detected language (ISO code)">Lang <span id="bdrSrt-language" style="font-size:10px;opacity:.3">⇅</span></th>
               <th onclick="bdrSetSort('fetched_at')" style="cursor:pointer;user-select:none">Saved <span id="bdrSrt-fetched_at" style="font-size:10px;opacity:.3">⇅</span></th>
@@ -4182,6 +4276,9 @@ function renderPostsModal(handle, posts) {
           <button class="btn-sm" id="bdrFindPlatformsBtn" onclick="bdrFindOtherPlatforms()" title="Scan profiles for accounts on other platforms — 100 at a time">🔎 Find Other Platforms</button>
           <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);cursor:pointer;white-space:nowrap" title="Only scan creators that currently have exactly one platform">
             <input type="checkbox" id="bdrSinglePlatformOnly" style="cursor:pointer;accent-color:var(--green)"> single-platform only
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);white-space:nowrap" title="Skip creators below this follower count (0 = no minimum). Cuts the scan down to higher-value accounts.">
+            min followers <input type="number" id="bdrFindMinFollowers" value="5000" min="0" step="1000" style="width:74px;padding:3px 5px;border:1px solid var(--border);border-radius:5px;font-size:11px">
           </label>
           <button class="btn-sm" id="bdrFindPlatformsLogBtn" onclick="bdrViewFindPlatformsLog()" title="View disk log of all discoveries (survives DB save failures)">📂 Log</button>
           <span id="bdrFindPlatformsStatus" style="font-size:11px;color:var(--muted);display:none"></span>
@@ -4294,17 +4391,18 @@ function renderPostsModal(handle, posts) {
           <span style="font-size:11px;color:var(--muted)">Filter tier</span>
           <select id="insTopTier" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white);font-weight:600">
             <option value="">All</option>
-            <option value="tiered">Tiered T1–T4</option>
+            <option value="tiered">Tiered T1–T5</option>
             <option value="1">T1</option>
             <option value="2">T2</option>
             <option value="3">T3</option>
             <option value="4">T4</option>
+            <option value="5">T5</option>
           </select>
           <span style="font-size:11px;color:var(--muted)">Filter entity</span>
           <select id="insTopEntity" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
             <option value="individual">Individual</option>
-            <option value="public_figure">Public figure</option>
+            <option value="public_figure">Celebrity</option>
             <option value="brand">Brand</option>
             <option value="unclear">Unclear</option>
           </select>
@@ -4314,6 +4412,10 @@ function renderPostsModal(handle, posts) {
           </select>
           <span style="font-size:11px;color:var(--muted)">Filter food type</span>
           <select id="insTopFoodType" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
+            <option value="">All</option>
+          </select>
+          <span style="font-size:11px;color:var(--muted)">Filter tag</span>
+          <select id="insTopTags" onchange="bdrInsightsRender()" style="padding:4px 7px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:var(--white)">
             <option value="">All</option>
           </select>
         </div>
@@ -4329,9 +4431,11 @@ function renderPostsModal(handle, posts) {
           <button onclick="insClearSelection()" style="background:none;border:1px solid var(--green-border);color:var(--green);border-radius:7px;padding:5px 10px;font-size:12px;font-weight:700;cursor:pointer">Clear</button>
         </div>
       </div>
-      <div id="insTopList" style="padding:12px 16px"></div>
+      <div id="insTopList" style="padding:12px 0;overflow-x:auto"></div>
       <div id="insTopPagination" style="display:none;padding:10px 16px;border-top:1px solid var(--border);align-items:center;justify-content:space-between;gap:8px"></div>
     </div>
+    <!-- Shared tag suggestions for every inline tag editor (Overview + Outreach). Populated by bdrRenderTagDatalist(). -->
+    <datalist id="bdrTagVocab"></datalist>
   </div>
 </div>
 
@@ -4359,11 +4463,12 @@ function renderPostsModal(handle, posts) {
               <th style="padding:8px 12px;text-align:left">Deal</th>
               <th style="padding:8px 12px;text-align:left">First post</th>
               <th style="padding:8px 12px;text-align:left">Agency</th>
+              <th style="padding:8px 12px;text-align:left">Tags</th>
               <th style="padding:8px 12px"></th>
             </tr>
           </thead>
           <tbody id="outreachTbody">
-            <tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted2);font-size:12px">Loading…</td></tr>
+            <tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted2);font-size:12px">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -6555,29 +6660,50 @@ function bdrUpdateModelSel() {
 // the table/filters/insights read one source. No localStorage — the reasoning strings are large and
 // the facts always live in the DB, reloaded with the rows.
 const _bdrClassCache = new Map();
+// Person-level fallback, keyed by NORMALIZED handle. Classification is one-per-person (saved under
+// the top-follower platform), but a merged creator's primary platform — m.platforms[0] — can differ
+// (cross-dataset "Both" creators, or after a name-confirmed merge). Without this fallback the
+// exact `platform:handle` lookup misses and the row reads as unclassified in the Overview.
+const _bdrClassByHandle = new Map();
 const bdrClassKey = (handle, platform) => `${platform || ''}:${handle || ''}`;
-function bdrGetClass(handle, platform) { return _bdrClassCache.get(bdrClassKey(handle, platform)) || {}; }
-function bdrSetClass(handle, platform, facts) { _bdrClassCache.set(bdrClassKey(handle, platform), facts || {}); }
+function bdrGetClass(handle, platform) {
+  const exact = _bdrClassCache.get(bdrClassKey(handle, platform));
+  if (exact) return exact;
+  return _bdrClassByHandle.get(bdrNormHandle(handle)) || {};
+}
+function bdrSetClass(handle, platform, facts) {
+  _bdrClassCache.set(bdrClassKey(handle, platform), facts || {});
+  // Only index real classifications by handle (never an empty object) so the fallback can't
+  // shadow a genuine entry with a blank one.
+  if (facts && facts.entity_type != null) _bdrClassByHandle.set(bdrNormHandle(handle), facts);
+}
 function bdrSeedClassFromRow(r) {
   if (!r || !r.handle || !r.platform) return;
   if (r.entity_type == null && r.primary_content_category == null && r.uk_geography == null && r.tier == null) return;
-  _bdrClassCache.set(bdrClassKey(r.handle, r.platform), {
+  const _facts = {
     entity_type:               r.entity_type               ?? null,
     primary_content_category:  r.primary_content_category  ?? null,
     primary_food_content_type: r.primary_food_content_type ?? null,
+    food_service_type:         r.food_service_type          ?? null,
     food_post_count:           r.food_post_count            ?? null,
     total_posts_analyzed:      r.total_posts_analyzed       ?? null,
     uk_geography:              r.uk_geography               ?? null,
+    dietary_focus:             r.dietary_focus              ?? null,
     reasoning:                 r.classification_reasoning   ?? null,
+    foodstyles_fit:            r.foodstyles_fit             ?? null,
+    fit_reasoning:             r.fit_reasoning              ?? null,
     tier:                      r.tier                       ?? null,   // persisted effective tier (1–4 | null)
     tier_manual:               r.tier_manual === true,                 // true = hand-picked override
-  });
+  };
+  _bdrClassCache.set(bdrClassKey(r.handle, r.platform), _facts);
+  // Also index by normalized handle so lookups via a different (e.g. higher-follower) platform resolve.
+  if (_facts.entity_type != null) _bdrClassByHandle.set(bdrNormHandle(r.handle), _facts);
 }
 
 // Display metadata for the enums (labels + badge colours).
 const BD_ENTITY_META = {
   individual:   { label: 'Individual',   color: 'var(--text)', bg: 'var(--surface)', t: 'A real person — keep' },
-  public_figure:{ label: 'Public figure', color: 'var(--blue)', bg: '#eef4fc',        t: 'Real person who is also a commercial brand (celebrity / owns a named venture) — keep' },
+  public_figure:{ label: 'Celebrity',     color: 'var(--blue)', bg: '#eef4fc',        t: 'Real person who is also a commercial brand (celebrity / owns a named venture) — keep' },
   brand:        { label: 'Brand',        color: '#c0392b',      bg: '#fdf0ee',        t: 'Company / restaurant / publication — filter out' },
   unclear:      { label: 'Unclear',      color: 'var(--muted)', bg: 'var(--surface)', t: 'Not enough signal to decide' },
 };
@@ -6597,6 +6723,26 @@ const BD_UK_META = {
   location_unverified: { label: 'UK claim',    short: 'unverified', color: 'var(--muted)', bg: 'var(--surface)',  t: 'Bio/location claims UK, but no post-level proof' },
   location_irrelevant: { label: 'non-UK',      short: 'irrelevant', color: '#c0392b',      bg: '#fdf0ee',         t: 'No UK signal in posts, bio empty or non-UK' },
 };
+// Dining mode the food content drives (null unless >=5 food posts).
+const BD_SERVICE_META = {
+  dine_in:  { label: '🍽 Dine-in',  color: 'var(--blue)',  bg: '#eef4fc',         t: 'Drives sit-down / eat-at-venue decisions' },
+  takeaway: { label: '🥡 Takeaway', color: '#b45309',      bg: '#fef8ec',         t: 'Drives food-to-go / collection / delivery decisions' },
+  both:     { label: 'Both',        color: 'var(--green)', bg: 'var(--green-bg)', t: 'Meaningful coverage of both dine-in and takeaway' },
+  unclear:  { label: 'Unclear',     color: 'var(--muted)', bg: 'var(--surface)',  t: 'Food posts present but none signal a mode' },
+};
+// Dietary / allergen engagement — FoodStyles' standout feature.
+const BD_DIETARY_META = {
+  strong: { label: 'Strong', color: 'var(--green)', bg: 'var(--green-bg)', t: 'Dietary / allergen angle is central to the account' },
+  some:   { label: 'Some',   color: 'var(--blue)',  bg: '#eef4fc',         t: 'Dietary needs surface across posts but are not the main angle' },
+  none:   { label: 'None',   color: 'var(--muted)', bg: 'var(--surface)',  t: 'No visible dietary / allergen / restriction angle' },
+};
+// Outreach recommendation. The per-row tooltip uses the model's fit_reasoning when present.
+const BD_FIT_META = {
+  strong_fit:   { label: 'Strong',    color: 'var(--green)', bg: 'var(--green-bg)', t: 'Reviewer/list-maker driving UK dining-out choices — strong FoodStyles fit' },
+  possible_fit: { label: 'Possible',  color: 'var(--blue)',  bg: '#eef4fc',         t: 'On-format food creator with one caveat (UK proof, secondary food, or mode mismatch)' },
+  weak_fit:     { label: 'Weak',      color: 'var(--amber)', bg: '#fef8ec',         t: 'Tangential — food minor, home-cooking lean, or UK only claimed' },
+  not_a_fit:    { label: 'Not a fit', color: '#c0392b',      bg: '#fdf0ee',         t: 'Not a food account, home-cooking only, or not UK-relevant' },
+};
 
 // ── Rule-based outreach Tier ───────────────────────────────────────────────────────────────
 // Pure function of the classifier facts (entity ignored, per decision) + the CLASSIFIED platform's
@@ -6614,14 +6760,15 @@ const BD_UK_META = {
 //                           | groupB{general_lifestyle,entertainment} density≥25% ).
 // FILTERED everything else (≤10k, location_irrelevant, non-food without relevant, 'other', low density).
 const BD_TIER_META = {
-  1: { label: 'T1', color: 'var(--green)', bg: '#edf7f1', t: 'Bullseye: restaurant-focused food, 50%+ food density, UK-relevant' },
-  2: { label: 'T2', color: 'var(--blue)',  bg: '#eef4fc', t: 'Close to perfect: strong food creator' },
-  3: { label: 'T3', color: 'var(--amber)', bg: '#fef8ec', t: 'Food-engaged: secondary paid-campaign pool' },
-  4: { label: 'T4', color: '#7c3aed',      bg: '#f3effe', t: 'Non-food creator with enough food content, UK-relevant' },
+  1: { label: 'T1', color: 'var(--green)', bg: '#edf7f1', t: 'Reach out first — strong fit, dining-out reviewer/list-maker, UK-proven' },
+  2: { label: 'T2', color: 'var(--blue)',  bg: '#eef4fc', t: 'Approach soon — strong fit (non-review format) or possible fit with only UK low-proof' },
+  3: { label: 'T3', color: 'var(--amber)', bg: '#fef8ec', t: 'Worth a look — possible fit (food secondary / partial dining mode), or takeaway-capped' },
+  4: { label: 'T4', color: '#7c3aed',      bg: '#f3effe', t: 'Situational — weak fit (tangential / home-cooking / UK unverified)' },
+  5: { label: 'T5', color: '#c0392b',      bg: '#fdf0ee', t: 'Not a fit / out of scope — brand, <10k followers, inactive (>6mo), or non-UK' },
 };
-// Count effective Tiers across a MERGED creator set → { 1,2,3,4, filtered, unclassified }.
+// Count effective Tiers across a MERGED creator set → { 1,2,3,4,5, unclassified }.
 function bdTierCounts(merged) {
-  const c = { 1: 0, 2: 0, 3: 0, 4: 0, filtered: 0, unclassified: 0 };
+  const c = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unclassified: 0 };
   for (const m of merged) {
     const t = bdrEffectiveTier(m);
     if (t.status === 'tier') c[t.tier]++; else c[t.status] = (c[t.status] || 0) + 1;
@@ -6629,14 +6776,14 @@ function bdTierCounts(merged) {
   return c;
 }
 
-// Render a row of coloured count badges for T1–T4 / Filtered / Unclassified.
+// Render a row of coloured count badges for T1–T5 / Unclassified.
 function bdTierBadgeRow(c) {
   const defs = [
     { k: 1,              label: 'Tier 1',       bg: '#edf7f1',       color: 'var(--green)' },
     { k: 2,              label: 'Tier 2',       bg: '#eef4fc',       color: 'var(--blue)' },
     { k: 3,              label: 'Tier 3',       bg: '#fef8ec',       color: 'var(--amber)' },
     { k: 4,              label: 'Tier 4',       bg: '#f3effe',       color: '#7c3aed' },
-    { k: 'filtered',     label: 'Filtered out', bg: '#fdf0ee',       color: '#c0392b' },
+    { k: 5,              label: 'Tier 5',       bg: '#fdf0ee',       color: '#c0392b' },
     { k: 'unclassified', label: 'Unclassified', bg: 'var(--surface)', color: 'var(--muted)' },
   ];
   return defs.map(d => `
@@ -6646,61 +6793,54 @@ function bdTierBadgeRow(c) {
     </div>`).join('');
 }
 
-const _BD_RESTAURANT_FT = new Set(['restaurant_lists', 'restaurant_reviews', 'food_news_culture']);
-const _BD_T4_GROUP_A    = new Set(['fitness_wellness', 'fashion_beauty', 'travel_lifestyle', 'parenting_family', 'business_career', 'arts_culture']);
-const _BD_T4_GROUP_B    = new Set(['general_lifestyle', 'entertainment']);
-// Orderable rank for sorting: T1<T2<T3<T4<filtered<unclassified.
+const _BD_T1_FORMATS = new Set(['restaurant_lists', 'restaurant_reviews']); // T1 = dining-out reviewer / list-maker
+const _SIX_MONTHS_MS = 1000 * 60 * 60 * 24 * 183;                            // inactivity guardrail (~6 months)
+// Orderable rank for sorting: T1<T2<T3<T4<T5<filtered(legacy)<unclassified.
 const bdrTierRank = (t) => t.tier || (t.status === 'filtered' ? 8 : 9);
 
-// returns { tier: 1|2|3|4|null, status: 'tier'|'filtered'|'unclassified', reason: string }
+// Fit-driven Tier (T1–T5). The classifier's `foodstyles_fit` is the primary signal; code adds the
+// hard guardrails (brand / ≤10k / inactive / non-UK → T5), the T1 reviewer-format gate, and the
+// takeaway cap (takeaway-led creators can't sit in T1/T2). T5 is a SHOWN tier, not hidden.
+// returns { tier: 1|2|3|4|5|null, status: 'tier'|'unclassified', reason: string }
 function bdrTierOf(m) {
   const c = bdrGetClass(m.handle, m.platforms?.[0] || '');
-  if (!c || c.entity_type == null) return { tier: null, status: 'unclassified', reason: 'Not classified yet' };
-  // PREREQUISITE — brands are out of scope: we want individual creators, not company/institutional
-  // accounts. Excluded regardless of followers, food density, or UK relevance.
-  if (c.entity_type === 'brand') return { tier: null, status: 'filtered', reason: 'Brand entity — out of scope' };
-  const followers = bdParseCompact(m.primary_followers);
+  // Needs both an entity AND the foodstyles_fit signal — rows classified before fit existed re-classify.
+  if (!c || c.entity_type == null || c.foodstyles_fit == null)
+    return { tier: null, status: 'unclassified', reason: 'Not classified yet (run AI Classify)' };
+
+  const fit = c.foodstyles_fit;
   const uk  = c.uk_geography;
-  const cat = c.primary_content_category;
   const ft  = c.primary_food_content_type;
-  const tp  = Number(c.total_posts_analyzed) || 0;
-  const fc  = Number(c.food_post_count) || 0;
-  const density = tp > 0 ? fc / tp : 0;
-  const pct = Math.round(density * 100);
-  const ukShort = BD_UK_META[uk]?.short || uk || 'unknown';
-  const ftLabel = ft ? (BD_FOODTYPE_LABEL[ft] || ft) : 'general food';
+  const followers = bdParseCompact(m.primary_followers);
+  const lastPost  = m.last_post_at ? Date.parse(m.last_post_at) : NaN;
+  const inactive  = Number.isFinite(lastPost) && (Date.now() - lastPost) > _SIX_MONTHS_MS; // unknown date ⇒ not inactive
 
-  // PREREQUISITE
-  if (!(followers > 10000)) return { tier: null, status: 'filtered', reason: `≤10k followers (${bdFormatCompact(followers)} on classified platform)` };
-  if (uk === 'location_irrelevant') return { tier: null, status: 'filtered', reason: 'No UK relevance (location_irrelevant)' };
+  // GUARDRAILS → T5 (override fit). Out-of-scope is a shown tier, not hidden.
+  if (c.entity_type === 'brand')    return { tier: 5, status: 'tier', reason: 'Brand — out of scope' };
+  if (!(followers > 10000))         return { tier: 5, status: 'tier', reason: `≤10k followers (${bdFormatCompact(followers)})` };
+  if (inactive)                     return { tier: 5, status: 'tier', reason: 'Inactive — last post over 6 months ago' };
+  if (uk === 'location_irrelevant') return { tier: 5, status: 'tier', reason: 'No UK relevance (non-UK)' };
 
-  const restaurant = _BD_RESTAURANT_FT.has(ft);
+  // FIT → tier
+  let tier, reason;
+  if (fit === 'not_a_fit')          { tier = 5; reason = 'Not a fit'; }
+  else if (fit === 'weak_fit')      { tier = 4; reason = 'Weak fit — tangential / home-cooking / UK unverified'; }
+  else if (fit === 'possible_fit')  {
+    if (uk === 'location_low_proof') { tier = 2; reason = 'Possible fit, UK only low-proof — approach soon'; }
+    else                             { tier = 3; reason = 'Possible fit — food secondary or dining mode partial'; }
+  }
+  else if (fit === 'strong_fit')    {
+    if (_BD_T1_FORMATS.has(ft))      { tier = 1; reason = 'Strong fit — dining-out reviewer / list-maker'; }
+    else                             { tier = 2; reason = 'Strong fit, but not a reviewer/list format — approach soon'; }
+  }
+  else                              { tier = 5; reason = `Unrecognised fit (${fit})`; }
 
-  if (cat === 'food') {
-    // TIER 1
-    if (restaurant && density >= 0.5 && uk === 'location_relevant')
-      return { tier: 1, status: 'tier', reason: `${ftLabel}, ${pct}% food density, UK-relevant` };
-    // TIER 2
-    if (restaurant && density >= 0.25 && density < 0.5 && uk === 'location_relevant')
-      return { tier: 2, status: 'tier', reason: `Restaurant-focused (${ftLabel}), ${pct}% density, UK-relevant` };
-    if (restaurant && density >= 0.5 && (uk === 'location_low_proof' || uk === 'location_unverified'))
-      return { tier: 2, status: 'tier', reason: `Restaurant-focused (${ftLabel}), ${pct}% density, UK ${ukShort}` };
-    if ((ft === 'chef_dishes' || ft === 'travel_food' || ft === 'mixed') && density >= 0.5 && uk === 'location_relevant')
-      return { tier: 2, status: 'tier', reason: `${ftLabel}, ${pct}% density, UK-relevant` };
-    // TIER 3 — any other food creator past the prerequisite
-    return { tier: 3, status: 'tier', reason: `Food creator (${ftLabel}, ${pct}% density, UK ${ukShort})` };
+  // TAKEAWAY CAP — takeaway-led creators can't sit in T1/T2.
+  if (c.food_service_type === 'takeaway' && (tier === 1 || tier === 2)) {
+    tier = 3; reason = `Takeaway-led — capped at T3 · ${reason}`;
   }
 
-  // NON-FOOD → TIER 4 only, and only with confirmed UK
-  if (uk !== 'location_relevant')
-    return { tier: null, status: 'filtered', reason: `Non-food without confirmed UK (UK ${ukShort})` };
-  if (!cat || cat === 'other')
-    return { tier: null, status: 'filtered', reason: `'other' / unclear category` };
-  if (_BD_T4_GROUP_A.has(cat) && density >= 0.15)
-    return { tier: 4, status: 'tier', reason: `${BD_CAT_LABEL[cat] || cat} with ${pct}% food content, UK-relevant` };
-  if (_BD_T4_GROUP_B.has(cat) && density >= 0.25)
-    return { tier: 4, status: 'tier', reason: `${BD_CAT_LABEL[cat] || cat} with ${pct}% food content, UK-relevant` };
-  return { tier: null, status: 'filtered', reason: `Non-food (${BD_CAT_LABEL[cat] || cat}), only ${pct}% food content — below threshold` };
+  return { tier, status: 'tier', reason };
 }
 
 // Effective tier shown/used everywhere: a manual override (persisted, tier_manual=true) wins;
@@ -6708,9 +6848,8 @@ function bdrTierOf(m) {
 function bdrEffectiveTier(m) {
   const c = bdrGetClass(m.handle, m.platforms?.[0] || '');
   if (c && c.tier_manual && c.tier) return { tier: c.tier, status: 'tier', reason: 'Manually set tier (override)', manual: true };
-  // Manual "Filtered" override: tier_manual flagged but no tier = hand-marked out of scope
-  // (replaces the old "mark irrelevant" → excluded-table flow).
-  if (c && c.tier_manual && c.tier == null) return { tier: null, status: 'filtered', reason: 'Manually marked filtered (irrelevant)', manual: true };
+  // Legacy manual out-of-scope (tier_manual flagged, no tier) → now surfaces as a shown T5.
+  if (c && c.tier_manual && c.tier == null) return { tier: 5, status: 'tier', reason: 'Manually marked out of scope', manual: true };
   const t = bdrTierOf(m);
   t.manual = false;
   return t;
@@ -6774,10 +6913,14 @@ async function bdrClassifyVisible(limit) {
           entity_type:               r.entity_type               ?? null,
           primary_content_category:  r.primary_content_category  ?? null,
           primary_food_content_type: r.primary_food_content_type ?? null,
+          food_service_type:         r.food_service_type          ?? null,
           food_post_count:           r.food_post_count            ?? null,
           total_posts_analyzed:      r.total_posts_analyzed       ?? null,
           uk_geography:              r.uk_geography               ?? null,
+          dietary_focus:             r.dietary_focus              ?? null,
           reasoning:                 r.reasoning                  ?? null,
+          foodstyles_fit:            r.foodstyles_fit             ?? null,
+          fit_reasoning:             r.fit_reasoning              ?? null,
         };
         bdrSetClass(r.handle, r.platform, facts);          // facts first, so bdrTierOf can read them
         // Compute + persist the rule-based tier alongside the facts. Preserve a pre-existing manual
@@ -6794,10 +6937,14 @@ async function bdrClassifyVisible(limit) {
           entity_type:               r.entity_type               ?? null,
           primary_content_category:  r.primary_content_category  ?? null,
           primary_food_content_type: r.primary_food_content_type ?? null,
+          food_service_type:         r.food_service_type          ?? null,
           food_post_count:           r.food_post_count            ?? null,
           total_posts_analyzed:      r.total_posts_analyzed       ?? null,
           uk_geography:              r.uk_geography               ?? null,
+          dietary_focus:             r.dietary_focus              ?? null,
           classification_reasoning:  r.reasoning                  ?? null,
+          foodstyles_fit:            r.foodstyles_fit             ?? null,
+          fit_reasoning:             r.fit_reasoning              ?? null,
           tier,
           tier_manual,
         });
@@ -6873,6 +7020,114 @@ function bdrHandleSimilar(a, b) {
   const short = a.length >= b.length ? b : a;
   if (short.length >= 5 && long.includes(short)) return true;
   return 1 - bdrLev(a, b) / long.length >= 0.8;
+}
+
+// ── Custom influencer tags ───────────────────────────────────────────────────
+// Person-level, keyed by the NORMALIZED handle (so punctuation variants share tags, matching the
+// cross-platform merge). Loaded once via the 'tags-load' action into _tagsByHandle; the dropdown
+// vocabulary is the union of all tags in use. Edited inline (chips + a datalist combobox) in both
+// the Overview and Outreach tabs; every change auto-saves via the 'tags-save' action.
+let _tagsByHandle = new Map();   // bdrNormHandle(handle) -> [tag, ...]
+let _tagsVocab = [];             // sorted union of all tags (datalist suggestions + facet options)
+let _tagsLoaded = false;
+let _tagsLoading = false;        // in-flight guard so a rapid double-render doesn't double-fetch
+
+function bdrGetTags(handle) { return _tagsByHandle.get(bdrNormHandle(handle)) || []; }
+
+// Silently load all tags so Overview + Outreach can show/edit them. Returns true on a first load
+// (caller can re-render), false if already loaded or on error. Never throws.
+async function insPreloadTags() {
+  if (_tagsLoaded || _tagsLoading) return false;
+  _tagsLoading = true;
+  try {
+    const resp = await fetch('/api/db-save', { method: 'POST', headers: getApiHeaders(), body: JSON.stringify({ action: 'tags-load' }) });
+    if (resp.ok) {
+      const d = await resp.json();
+      _tagsByHandle = new Map();
+      for (const row of (d.tags || [])) _tagsByHandle.set(bdrNormHandle(row.handle), Array.isArray(row.tags) ? row.tags : []);
+      _tagsVocab = Array.isArray(d.vocabulary) ? d.vocabulary : [];
+      _tagsLoaded = true;
+      bdrRenderTagDatalist();
+      return true;
+    }
+  } catch (_) {}
+  finally { _tagsLoading = false; }
+  return false;
+}
+
+// Repopulate the shared <datalist> that every tag input draws its suggestions from.
+function bdrRenderTagDatalist() {
+  const dl = document.getElementById('bdrTagVocab');
+  if (dl) dl.innerHTML = _tagsVocab.map(t => `<option value="${escapeHtml(t)}"></option>`).join('');
+}
+
+// Inline editor markup: removable chips + a combobox input (type a new tag or pick an existing one).
+// `view` ('overview' | 'outreach') tells the change handlers which surface to re-render afterwards.
+function bdrTagEditorHtml(handle, view) {
+  const nh = bdrNormHandle(handle);
+  const chips = bdrGetTags(handle).map(t =>
+    `<span data-nh="${nh}" data-tag="${escapeHtml(t)}" data-view="${view}" onclick="bdrTagRemove(this)" title="Remove tag" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;font-weight:700;background:var(--surface);color:var(--accent);border:1px solid var(--border);border-radius:100px;padding:1px 7px;cursor:pointer;white-space:nowrap">${escapeHtml(t)} <span style="opacity:.55">×</span></span>`
+  ).join(' ');
+  const input = `<input list="bdrTagVocab" data-nh="${nh}" data-view="${view}" placeholder="+ tag" onchange="bdrTagAdd(this)" onkeydown="if(event.key==='Enter'){event.preventDefault();bdrTagAdd(this);}" style="width:60px;font-size:10px;padding:1px 4px;border:1px dashed var(--border);border-radius:4px;background:transparent">`;
+  return `<div style="display:flex;flex-wrap:wrap;gap:3px;align-items:center;max-width:220px">${chips}${input}</div>`;
+}
+
+// Rebuild the dropdown vocabulary from the current in-memory tags, so suggestions always reflect the
+// real state (a failed add must not leave a phantom suggestion behind). Case-insensitive unique, sorted.
+function bdrRecomputeTagVocab() {
+  const seen = new Map();
+  for (const arr of _tagsByHandle.values()) for (const t of (arr || [])) { const k = String(t).toLowerCase(); if (!seen.has(k)) seen.set(k, t); }
+  _tagsVocab = [...seen.values()].sort((a, b) => a.localeCompare(b));
+  bdrRenderTagDatalist();
+}
+
+// Persist a person's tags (handle already normalized; the optimistic change is applied by the caller).
+// On success, reconcile with the server's normalized result; on failure, ROLL BACK to `prev` so the UI
+// never shows a tag that wasn't persisted (important before the migration runs, when every save 500s).
+async function bdrSaveTagsForHandle(nh, tags, view, prev) {
+  bdrRecomputeTagVocab();
+  try {
+    const resp = await fetch('/api/db-save', { method: 'POST', headers: getApiHeaders(), body: JSON.stringify({ action: 'tags-save', handle: nh, tags }) });
+    const d = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(d.error || ('HTTP ' + resp.status));
+    if (Array.isArray(d.tags)) { if (d.tags.length) _tagsByHandle.set(nh, d.tags); else _tagsByHandle.delete(nh); }
+    bdrRecomputeTagVocab();
+    bdrTagRerender(view);
+  } catch (e) {
+    if (prev && prev.length) _tagsByHandle.set(nh, prev); else _tagsByHandle.delete(nh);
+    bdrRecomputeTagVocab();
+    bdrTagRerender(view);
+    alert('Tag save failed: ' + e.message);
+  }
+}
+
+// Add the typed/selected tag (case-insensitive de-dupe), update optimistically, re-render, then persist.
+function bdrTagAdd(el) {
+  const nh = el.dataset.nh, view = el.dataset.view;
+  const val = (el.value || '').trim();
+  el.value = '';
+  if (!val) return;
+  const prev = _tagsByHandle.has(nh) ? _tagsByHandle.get(nh).slice() : undefined; // snapshot for rollback
+  const cur = (prev || []).slice();
+  if (!cur.some(t => t.toLowerCase() === val.toLowerCase())) cur.push(val);
+  _tagsByHandle.set(nh, cur);
+  bdrTagRerender(view);
+  bdrSaveTagsForHandle(nh, cur, view, prev);
+}
+
+// Remove the clicked chip's tag, update optimistically, re-render, then persist.
+function bdrTagRemove(el) {
+  const nh = el.dataset.nh, view = el.dataset.view, tag = el.dataset.tag;
+  const prev = _tagsByHandle.has(nh) ? _tagsByHandle.get(nh).slice() : undefined; // snapshot for rollback
+  const cur = (prev || []).filter(t => t.toLowerCase() !== String(tag).toLowerCase());
+  if (cur.length) _tagsByHandle.set(nh, cur); else _tagsByHandle.delete(nh);
+  bdrTagRerender(view);
+  bdrSaveTagsForHandle(nh, cur, view, prev);
+}
+
+function bdrTagRerender(view) {
+  if (view === 'outreach') { if (typeof outreachRender === 'function') outreachRender(); }
+  else bdrInsightsRender();
 }
 
 // Merge cache — keyed by array reference so it's invalidated automatically when bdrMatchingData is reassigned
@@ -7301,7 +7556,7 @@ function insGetRows() {
     const inFood = m._rows?.some(r => r._dataset === 'food')      || false;
     const inLife = m._rows?.some(r => r._dataset === 'lifestyle') || false;
     if (!inFood && !inLife) continue;
-    if (bdrEffectiveTier(m).status === 'filtered') continue; // out of scope — skip from Overview
+    // T5 (out of scope) is a shown tier now — no rows are dropped here; use the tier filter to hide them.
     m.source = inFood && inLife ? 'both' : inFood ? 'food' : 'lifestyle';
     out.push(m);
   }
@@ -7314,7 +7569,7 @@ function insTierLabel(tier) {
 }
 
 function insTierColor(tier) {
-  return { 1:'var(--green)', 2:'var(--blue)', 3:'var(--amber)', 4:'#c0392b', 0:'var(--muted)' }[tier||0];
+  return { 1:'var(--green)', 2:'var(--blue)', 3:'var(--amber)', 4:'#7c3aed', 5:'#c0392b', 0:'var(--muted)' }[tier||0];
 }
 
 function insFollowersBucket(followers) {
@@ -7358,9 +7613,9 @@ function insDimValue(m, dim) {
 }
 
 function insDimOrder(dim, keys) {
-  if (dim === 'tier')      return ['T1','T2','T3','T4','Filtered','Unclassified'].filter(k => keys.has(k));
+  if (dim === 'tier')      return ['T1','T2','T3','T4','T5','Unclassified'].filter(k => keys.has(k));
   if (dim === 'foodtype')  return [...Object.values(BD_FOODTYPE_LABEL), '(none)'].filter(k => keys.has(k));
-  if (dim === 'entity')    return ['Individual','Public figure','Brand','Unclear','(none)'].filter(k => keys.has(k));
+  if (dim === 'entity')    return ['Individual','Celebrity','Brand','Unclear','(none)'].filter(k => keys.has(k));
   if (dim === 'uk')        return ['UK ✓','UK partial','UK claim','non-UK','(none)'].filter(k => keys.has(k));
   if (dim === 'followers') return FOLLOWERS_ORDER.filter(k => keys.has(k));
   if (dim === 'er')        return ER_ORDER.filter(k => keys.has(k));
@@ -7371,6 +7626,7 @@ function insDimOrder(dim, keys) {
 function bdrInsightsRender() {
   if (document.getElementById('mainInsights').style.display === 'none') return;
   insPreloadOutreach().then(wasLoaded => { if (wasLoaded) bdrInsightsRender(); }).catch(() => {});
+  insPreloadTags().then(wasLoaded => { if (wasLoaded) bdrInsightsRender(); }).catch(() => {});
   const rows = insGetRows();
 
   // Update platform pill counts — reflect the unified (food + lifestyle) merged set
@@ -7410,7 +7666,7 @@ function bdrInsightsRender() {
   const erRows = rows.map(m => erOf(m)).filter(v => v != null);
   const avgEr  = erRows.length ? erRows.reduce((s, v) => s + v, 0) / erRows.length : 0;
   const classOf   = m => bdrGetClass(m.handle, m.platforms?.[0]||'');
-  const tierCount = {1:0,2:0,3:0,4:0};
+  const tierCount = {1:0,2:0,3:0,4:0,5:0};
   rows.forEach(m => { const t = bdrEffectiveTier(m); if (t.status === 'tier') tierCount[t.tier]++; });
   const ukRelevant = rows.filter(m => classOf(m).uk_geography === 'location_relevant').length;
   const classified = rows.filter(m => classOf(m).entity_type).length;
@@ -7542,6 +7798,7 @@ function bdrInsightsRender() {
   const topEntity = document.getElementById('insTopEntity')?.value || '';
   const topCat    = document.getElementById('insTopCategory')?.value || '';
   const topFt     = document.getElementById('insTopFoodType')?.value || '';
+  const topTags   = document.getElementById('insTopTags')?.value || '';
   const topSearch = (document.getElementById('insTopSearch')?.value || '').trim().toLowerCase();
 
   // Toggle the search "Clear" button
@@ -7557,6 +7814,7 @@ function bdrInsightsRender() {
   const _pEntity = (m, v) => !v || _clsOf(m).entity_type === v;
   const _pCat    = (m, v) => !v || _clsOf(m).primary_content_category === v;
   const _pFt     = (m, v) => !v || _clsOf(m).primary_food_content_type === v;
+  const _pTags   = (m, v) => !v || bdrGetTags(m.handle).includes(v);
   const _pSearch = (m) => {
     if (!topSearch) return true;
     const c = _clsOf(m);
@@ -7590,7 +7848,7 @@ function bdrInsightsRender() {
 
   // Category — counts over rows matching the other three filters (+ search).
   {
-    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pEntity(m, topEntity) && _pFt(m, topFt) && _pSearch(m), m => _clsOf(m).primary_content_category);
+    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pEntity(m, topEntity) && _pFt(m, topFt) && _pTags(m, topTags) && _pSearch(m), m => _clsOf(m).primary_content_category);
     const opts = [...map.keys()].map(v => ({ value: v, label: BD_CAT_LABEL[v] || v, count: map.get(v) }))
       .sort((a, b) => a.label.localeCompare(b.label));
     if (topCat && !map.has(topCat)) opts.push({ value: topCat, label: BD_CAT_LABEL[topCat] || topCat, count: 0 });
@@ -7598,7 +7856,7 @@ function bdrInsightsRender() {
   }
   // Food type — counts over rows matching the other three filters (+ search).
   {
-    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pEntity(m, topEntity) && _pCat(m, topCat) && _pSearch(m), m => _clsOf(m).primary_food_content_type);
+    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pEntity(m, topEntity) && _pCat(m, topCat) && _pTags(m, topTags) && _pSearch(m), m => _clsOf(m).primary_food_content_type);
     const opts = [...map.keys()].map(v => ({ value: v, label: BD_FOODTYPE_LABEL[v] || v, count: map.get(v) }))
       .sort((a, b) => a.label.localeCompare(b.label));
     if (topFt && !map.has(topFt)) opts.push({ value: topFt, label: BD_FOODTYPE_LABEL[topFt] || topFt, count: 0 });
@@ -7606,29 +7864,52 @@ function bdrInsightsRender() {
   }
   // Entity — fixed order; counts over rows matching the other three filters (+ search).
   {
-    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pCat(m, topCat) && _pFt(m, topFt) && _pSearch(m), m => _clsOf(m).entity_type);
+    const { map, total } = _facetCounts(m => _pTier(m, topTier) && _pCat(m, topCat) && _pFt(m, topFt) && _pTags(m, topTags) && _pSearch(m), m => _clsOf(m).entity_type);
     const opts = ['individual', 'public_figure', 'brand', 'unclear']
       .map(v => ({ value: v, label: (BD_ENTITY_META[v]?.label || v), count: map.get(v) || 0 }));
     _renderFacet(document.getElementById('insTopEntity'), total, opts, topEntity);
   }
-  // Tier — includes the "Tiered T1–T4" aggregate plus individual tiers, with counts.
+  // Tier — includes the "Tiered T1–T5" aggregate plus individual tiers, with counts.
   {
     const tierSel = document.getElementById('insTopTier');
     if (tierSel) {
-      let total = 0, tiered = 0; const cT = { 1: 0, 2: 0, 3: 0, 4: 0 };
+      let total = 0, tiered = 0; const cT = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
       for (const m of rows) {
-        if (!(_pEntity(m, topEntity) && _pCat(m, topCat) && _pFt(m, topFt) && _pSearch(m))) continue;
+        if (!(_pEntity(m, topEntity) && _pCat(m, topCat) && _pFt(m, topFt) && _pTags(m, topTags) && _pSearch(m))) continue;
         total++;
         const t = bdrEffectiveTier(m);
         if (t.status === 'tier') { tiered++; if (cT[t.tier] != null) cT[t.tier]++; }
       }
       let th = `<option value="">All (${total})</option>`;
-      th += `<option value="tiered"${topTier === 'tiered' ? ' selected' : ''}>Tiered T1–T4 (${tiered})</option>`;
-      for (const t of [1, 2, 3, 4]) {
+      th += `<option value="tiered"${topTier === 'tiered' ? ' selected' : ''}>Tiered T1–T5 (${tiered})</option>`;
+      for (const t of [1, 2, 3, 4, 5]) {
         if (cT[t] === 0 && topTier !== String(t)) continue;
         th += `<option value="${t}"${topTier === String(t) ? ' selected' : ''}>T${t} (${cT[t]})</option>`;
       }
       tierSel.innerHTML = th;
+    }
+  }
+  // Tags — multi-value facet: each row contributes to the count of EVERY tag it carries; counts
+  // respect the other active filters (+ search). Free-text values are escaped for the option HTML;
+  // the raw value round-trips through the option's value attribute for the predicate comparison.
+  {
+    const tagSel = document.getElementById('insTopTags');
+    if (tagSel) {
+      const map = new Map(); let total = 0;
+      for (const m of rows) {
+        if (!(_pTier(m, topTier) && _pEntity(m, topEntity) && _pCat(m, topCat) && _pFt(m, topFt) && _pSearch(m))) continue;
+        total++;
+        for (const t of bdrGetTags(m.handle)) map.set(t, (map.get(t) || 0) + 1);
+      }
+      const keys = [...map.keys()].sort((a, b) => a.localeCompare(b));
+      if (topTags && !map.has(topTags)) keys.push(topTags);
+      let th = `<option value="">All (${total})</option>`;
+      for (const t of keys) {
+        const c = map.get(t) || 0;
+        if (c === 0 && t !== topTags) continue;
+        th += `<option value="${escapeHtml(t)}"${t === topTags ? ' selected' : ''}>${escapeHtml(t)} (${c})</option>`;
+      }
+      tagSel.innerHTML = th;
     }
   }
 
@@ -7643,6 +7924,7 @@ function bdrInsightsRender() {
   if (topEntity) topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').entity_type === topEntity);
   if (topCat)    topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_content_category === topCat);
   if (topFt)     topRows = topRows.filter(m => bdrGetClass(m.handle, m.platforms?.[0]||'').primary_food_content_type === topFt);
+  if (topTags)   topRows = topRows.filter(m => bdrGetTags(m.handle).includes(topTags));
   // Free-text search — runs AFTER the dropdown filters, so it narrows within the applied filters.
   if (topSearch) topRows = topRows.filter(m => {
     const cls = bdrGetClass(m.handle, m.platforms?.[0]||'');
@@ -7657,7 +7939,7 @@ function bdrInsightsRender() {
     : (Number(b.followers)||0) - (Number(a.followers)||0));
 
   // Reset to page 1 if filters changed
-  const _filterKey = [topSort, topTier, topEntity, topCat, topFt, topSearch, insTopPageSize].join('|');
+  const _filterKey = [topSort, topTier, topEntity, topCat, topFt, topTags, topSearch, insTopPageSize].join('|');
   if (_filterKey !== _insTopFilterKey) { insTopPage = 1; _insTopFilterKey = _filterKey; }
 
   const insTopTotal = topRows.length;
@@ -7683,29 +7965,41 @@ function bdrInsightsRender() {
   if (insTopListTitle) insTopListTitle.textContent = `Profiles (${insTopTotal})`;
 
   document.getElementById('insTopList').innerHTML = topRows.length
-    ? `<table style="width:100%;border-collapse:collapse">
+    ? `<table style="width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;min-width:1394px">
+        <colgroup><col style="width:34px"><col style="width:210px"><col style="width:86px"><col style="width:58px"><col style="width:112px"><col style="width:92px"><col style="width:110px"><col style="width:110px"><col style="width:92px"><col style="width:76px"><col style="width:86px"><col style="width:86px"><col style="width:172px"><col></colgroup>
         <thead><tr style="font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.05em">
-          <th style="padding:6px 8px;width:28px"></th>
-          <th style="padding:6px 8px;text-align:left">Handle</th>
+          <th style="padding:6px 8px;position:sticky;left:0;z-index:3;background:var(--white)"></th>
+          <th style="padding:6px 8px;text-align:left;position:sticky;left:34px;z-index:3;background:var(--white);border-right:1px solid var(--border)">Handle</th>
           <th style="padding:6px 8px;text-align:right">Followers</th>
           <th style="padding:6px 8px;text-align:right">ER%</th>
           <th style="padding:6px 8px;text-align:left">Tier</th>
           <th style="padding:6px 8px;text-align:left">Entity</th>
           <th style="padding:6px 8px;text-align:left">Category</th>
           <th style="padding:6px 8px;text-align:left">Food type</th>
+          <th style="padding:6px 8px;text-align:left">Service</th>
+          <th style="padding:6px 8px;text-align:left">Dietary</th>
           <th style="padding:6px 8px;text-align:left">UK</th>
+          <th style="padding:6px 8px;text-align:left">Fit</th>
+          <th style="padding:6px 8px;text-align:left">Tags</th>
           <th style="padding:6px 8px;width:28px"></th>
         </tr></thead>
         <tbody>${topRows.map((m,i) => {
           const cls = bdrGetClass(m.handle, m.platforms?.[0]||'');
           const em  = BD_ENTITY_META[cls.entity_type];
           const um  = BD_UK_META[cls.uk_geography];
-          const ti  = bdrEffectiveTier(m); const tm = BD_TIER_META[ti.tier];
-          const tierCell = tm
-            ? `<span title="${(ti.reason||'').replace(/"/g,"'")}" style="font-size:10.5px;font-weight:800;background:${tm.bg};color:${tm.color};border:1px solid ${tm.color}55;border-radius:100px;padding:2px 9px;white-space:nowrap">${tm.label}</span>`
-            : ti.status === 'filtered'
-              ? `<span title="${(ti.reason||'').replace(/"/g,"'")}" style="font-size:10px;color:var(--muted2)">filtered</span>`
-              : '<span style="color:var(--muted2)">—</span>';
+          const ti  = bdrEffectiveTier(m);
+          const ruleTi = bdrTierOf(m);
+          const ruleLbl = ruleTi.status === 'tier' ? `T${ruleTi.tier}` : 'unset';
+          const tm  = BD_TIER_META[ti.tier];
+          // Editable Tier — Auto (live rule) or a persisted manual T1–T5 override (same handler as Results).
+          const tierSelStyle = tm
+            ? `background:${tm.bg};color:${tm.color};border:1px solid ${tm.color}55;font-weight:800`
+            : `background:var(--white);color:var(--muted2);border:1px solid var(--border)`;
+          const tierTip = ti.manual ? 'Manual override — pick Auto to revert to the rule' : (ti.reason || '');
+          const tierOpt = (v, lbl) => `<option value="${v}"${((ti.manual && String(ti.tier) === v) || (!ti.manual && v === 'auto')) ? ' selected' : ''}>${lbl}</option>`;
+          const tierCell = (!ti.manual && ruleTi.status === 'unclassified')
+            ? `<span title="Not classified yet — run AI Classify" style="color:var(--muted2)">—</span>`
+            : `<select onchange="bdrSaveTierOverride(this)" data-handle="${m.handle}" data-platform="${m.platforms?.[0]||''}" title="${tierTip.replace(/"/g,"'")}" style="font-size:10.5px;border-radius:100px;padding:2px 6px;cursor:pointer;${tierSelStyle}">${tierOpt('auto',`Auto · ${ruleLbl}`)}${tierOpt('1','T1')}${tierOpt('2','T2')}${tierOpt('3','T3')}${tierOpt('4','T4')}${tierOpt('5','T5')}</select>${ti.manual ? '<span title="Manual override" style="color:var(--accent);font-weight:800;margin-left:3px">•</span>' : ''}`;
           const entityCell = em
             ? `<span title="${em.t}" style="font-size:10px;font-weight:700;background:${em.bg};color:${em.color};border:1px solid ${em.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${em.label}</span>`
             : '<span style="color:var(--muted2)">—</span>';
@@ -7714,6 +8008,20 @@ function bdrInsightsRender() {
           const ukCell  = um
             ? `<span title="${um.t}" style="font-size:10px;font-weight:700;background:${um.bg};color:${um.color};border:1px solid ${um.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${um.label}</span>`
             : '<span style="color:var(--muted2)">—</span>';
+          const svc = BD_SERVICE_META[cls.food_service_type];
+          const serviceCell = svc
+            ? `<span title="${svc.t}" style="font-size:10px;font-weight:700;background:${svc.bg};color:${svc.color};border:1px solid ${svc.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${svc.label}</span>`
+            : '<span style="color:var(--muted2)">—</span>';
+          const dm2 = BD_DIETARY_META[cls.dietary_focus];
+          const dietaryCell = dm2
+            ? `<span title="${dm2.t}" style="font-size:10px;font-weight:700;background:${dm2.bg};color:${dm2.color};border:1px solid ${dm2.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap">${dm2.label}</span>`
+            : '<span style="color:var(--muted2)">—</span>';
+          const fm = BD_FIT_META[cls.foodstyles_fit];
+          // Hover shows the model's fit_reasoning when present, else the generic enum explanation.
+          const fitTip = (cls.fit_reasoning || (fm ? fm.t : '')).replace(/"/g, "'");
+          const fitCell = fm
+            ? `<span title="${fitTip}" style="font-size:10px;font-weight:800;background:${fm.bg};color:${fm.color};border:1px solid ${fm.color}55;border-radius:100px;padding:2px 9px;white-space:nowrap;cursor:help">${fm.label}</span>`
+            : '<span style="color:var(--muted2)">—</span>';
           const isInsYT = m.platforms?.some(p => p.includes('youtube'));
           const erVal2 = isInsYT
             ? (Number(m.avg_likes) > 0 && Number(m.followers) > 0 ? Math.round((Number(m.avg_likes) / Number(m.followers)) * 10000) / 100 : null)
@@ -7721,9 +8029,11 @@ function bdrInsightsRender() {
           const er = erVal2 != null ? erVal2.toFixed(1)+'%' : '—';
           const h = (m.handle || '').replace(/^@/, '');
           const isTracked = trackedHandles.has(h);
+          // Frozen left columns (checkbox + Handle): opaque per-row bg so scrolled cells don't show through.
+          const stickyBg = i % 2 === 0 ? 'var(--white)' : 'var(--surface)';
           const checkCell = isTracked
-            ? `<td style="padding:6px 8px"><span title="Already in Outreach" style="font-size:11px;font-weight:700;color:var(--green)">✓</span></td>`
-            : `<td style="padding:6px 8px"><input type="checkbox" data-handle="${h}" onchange="insUpdateSelBar()" style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)"></td>`;
+            ? `<td style="padding:6px 8px;position:sticky;left:0;z-index:1;background:${stickyBg}"><span title="Already in Outreach" style="font-size:11px;font-weight:700;color:var(--green)">✓</span></td>`
+            : `<td style="padding:6px 8px;position:sticky;left:0;z-index:1;background:${stickyBg}"><input type="checkbox" data-handle="${h}" onchange="insUpdateSelBar()" style="width:14px;height:14px;cursor:pointer;accent-color:var(--green)"></td>`;
           const platIconLinks = m.platforms.map(p => {
             const row = m._rows?.find(r => (r.platform || r.raw_platform || '').toLowerCase().includes(p));
             // Use this platform's OWN handle for the URL — after name-confirmed merges a
@@ -7745,21 +8055,25 @@ function bdrInsightsRender() {
           const rowBg = i % 2 === 0 ? '' : 'background:var(--surface)';
           return `<tr style="font-size:12px;${rowBg}">
             ${checkCell}
-            <td style="padding:6px 8px;font-weight:600">@${m.handle}${platIconLinks}${
+            <td style="padding:6px 8px;font-weight:600;position:sticky;left:34px;z-index:1;background:${stickyBg};border-right:1px solid var(--border)"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:2px;overflow:hidden">@${m.handle}${platIconLinks}${
               m.source === 'both'
                 ? `<span title="Present in both Food DB and Lifestyle DB" style="display:inline-block;font-size:9px;font-weight:700;background:#fef3c7;color:#92400e;border:1px solid #f59e0b40;border-radius:100px;padding:1px 6px;margin-left:6px;vertical-align:middle">🍔🌿 Both</span>`
               : m.source === 'lifestyle'
                 ? `<span title="In Lifestyle DB only" style="display:inline-block;font-size:9px;font-weight:700;background:#ecfdf5;color:#059669;border:1px solid #05966940;border-radius:100px;padding:1px 6px;margin-left:6px;vertical-align:middle">🌿 Lifestyle</span>`
                 : `<span title="In Food DB only" style="display:inline-block;font-size:9px;font-weight:700;background:#fdf0ee;color:#c0392b;border:1px solid #c0392b40;border-radius:100px;padding:1px 6px;margin-left:6px;vertical-align:middle">🍔 Food</span>`
-            }</td>
+            }</div></td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${bdFormatCompact(Number(m.followers)||0)}</td>
             <td style="padding:6px 8px;text-align:right;font-family:var(--mono)">${er}</td>
             <td style="padding:6px 8px">${tierCell}</td>
             <td style="padding:6px 8px">${entityCell}</td>
             <td style="padding:6px 8px;color:var(--muted)">${catCell}</td>
             <td style="padding:6px 8px;color:var(--muted)">${ftCell}</td>
+            <td style="padding:6px 8px">${serviceCell}</td>
+            <td style="padding:6px 8px">${dietaryCell}</td>
             <td style="padding:6px 8px">${ukCell}</td>
-            <td style="padding:6px 8px;text-align:right;white-space:nowrap"><button onclick="bdrViewPosts('${h}','${m.platforms?.[0]||''}')" title="View recent posts with engagement, thumbnails &amp; links" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4;margin-right:4px" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">🖼</button><button onclick="insExcludeProfile('${h}')" title="Mark as Filtered (irrelevant) — sets a manual out-of-scope Tier; revert via the Tier dropdown" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
+            <td style="padding:6px 8px">${fitCell}</td>
+            <td style="padding:6px 8px">${bdrTagEditorHtml(m.handle,'overview')}</td>
+            <td style="padding:6px 8px;text-align:right;white-space:nowrap"><button onclick="bdrViewPosts('${h}','${m.platforms?.[0]||''}')" title="View recent posts with engagement, thumbnails &amp; links" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4;margin-right:4px" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">🖼</button><button onclick="insExcludeProfile('${h}')" title="Mark as Tier 5 (out of scope) — sets a manual override; revert via the Tier dropdown" style="background:none;border:1px solid var(--border);border-radius:5px;padding:2px 7px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4" onmouseover="this.style.borderColor='#e55';this.style.color='#e55'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">✕</button></td>
           </tr>`;
         }).join('')}</tbody>
       </table>`
@@ -7894,18 +8208,17 @@ async function insAddToOutreach() {
   }
 }
 
-// Mark a creator out of scope via a manual "Filtered" Tier override (tier=null,
-// tier_manual=true), persisted through patch-classification. Replaces the old
-// excluded-table "mark irrelevant" flow now that there's one table.
+// Mark a creator out of scope via a manual Tier 5 override (tier=5, tier_manual=true), persisted
+// through patch-classification. T5 is the shown out-of-scope tier.
 async function insExcludeProfile(handle) {
-  if (!confirm(`Mark @${handle} as Filtered (irrelevant)?\n\nThey'll be set out of scope (Tier: Filtered) regardless of the rule-based tier. You can revert to Auto anytime.`)) return;
+  if (!confirm(`Mark @${handle} as Tier 5 (out of scope)?\n\nThey'll be set to Tier 5 regardless of the rule-based tier. You can revert to Auto anytime.`)) return;
   const rows = bdrMatchingData.filter(r => r.handle === handle);
   if (!rows.length) return;
   const platforms = [...new Set(rows.map(r => r.platform).filter(Boolean))];
   const patches = platforms.map(platform => {
     const existing = bdrGetClass(handle, platform);
-    bdrSetClass(handle, platform, { ...existing, tier: null, tier_manual: true });
-    return { handle, platform, tier: null, tier_manual: true };
+    bdrSetClass(handle, platform, { ...existing, tier: 5, tier_manual: true });
+    return { handle, platform, tier: 5, tier_manual: true };
   });
   bdrInsightsRender();
   const res = await bdrPatchClassificationDB(patches);
@@ -8094,12 +8407,16 @@ async function bdrFindOtherPlatforms() {
   if (_bdrFindPlatformsRunning) return;
 
   const onlySingle = document.getElementById('bdrSinglePlatformOnly')?.checked;
+  const minFollowers = Math.max(0, Number(document.getElementById('bdrFindMinFollowers')?.value) || 0);
   let matchMerged = bdrMergeByHandle(bdrMatchingData);
   if (onlySingle) matchMerged = matchMerged.filter(m => (m.platforms || []).length === 1);
+  // Follower threshold. For a single-platform creator the merged total IS that one platform's
+  // count, so this is exactly "above N followers on their single platform".
+  if (minFollowers > 0) matchMerged = matchMerged.filter(m => bdParseCompact(m.followers) >= minFollowers);
   const totalProfiles = matchMerged.length;
   if (!totalProfiles) {
     alert(onlySingle
-      ? 'No single-platform creators in the loaded dataset.'
+      ? `No single-platform creators${minFollowers > 0 ? ` with ≥${bdFormatCompact(minFollowers)} followers` : ''} in the loaded dataset.`
       : 'No profiles loaded yet.');
     return;
   }
@@ -8109,7 +8426,8 @@ async function bdrFindOtherPlatforms() {
   const avgMissing = onlySingle ? 3 : 2;
   const estCost = (totalProfiles * avgMissing * 0.0015).toFixed(2);
   const ok = confirm(
-    `This will scan ${totalProfiles} ${onlySingle ? 'single-platform' : 'unique'} creator${totalProfiles === 1 ? '' : 's'} ` +
+    `This will scan ${totalProfiles} ${onlySingle ? 'single-platform' : 'unique'} creator${totalProfiles === 1 ? '' : 's'}` +
+    `${minFollowers > 0 ? ` with ≥${bdFormatCompact(minFollowers)} followers` : ''} ` +
     `for accounts on other platforms.\n\n` +
     `• Processes 100 at a time, saving to DB after each batch\n` +
     `• Uses Bright Data — rough cost estimate: $${estCost}\n\n` +
@@ -8271,7 +8589,7 @@ function bdrRefreshFilterDropdowns(filteredRows) {
   const prevLang = langSel?.value || '';
 
   // Count tier / entity / category / uk / language across the currently-visible (post-filter) rows
-  const tierCounts = { 1:0, 2:0, 3:0, 4:0, filtered:0, unclassified:0 };
+  const tierCounts = { 1:0, 2:0, 3:0, 4:0, 5:0, filtered:0, unclassified:0 };
   const entCounts = {}, catCounts = {}, ukCounts = {}, langCounts = {};
   filteredRows.forEach(m => {
     const t = bdrEffectiveTier(m);
@@ -8285,13 +8603,13 @@ function bdrRefreshFilterDropdowns(filteredRows) {
     else      langCounts['(none)'] = (langCounts['(none)'] || 0) + 1;
   });
 
-  // Tier dropdown — fixed order with a composite "Tiered (T1–T4)" shortcut
+  // Tier dropdown — fixed order with a composite "Tiered (T1–T5)" shortcut
   if (tierSel) {
-    const tieredTotal = tierCounts[1] + tierCounts[2] + tierCounts[3] + tierCounts[4];
+    const tieredTotal = tierCounts[1] + tierCounts[2] + tierCounts[3] + tierCounts[4] + tierCounts[5];
     tierSel.innerHTML = '<option value="">All Tiers</option>';
     const addOpt = (val, label, n) => { if (!n) return; const o = document.createElement('option'); o.value = val; o.textContent = `${label} (${n})`; tierSel.appendChild(o); };
-    addOpt('tiered', 'Tiered T1–T4', tieredTotal);
-    [1, 2, 3, 4].forEach(n => addOpt(String(n), `T${n}`, tierCounts[n]));
+    addOpt('tiered', 'Tiered T1–T5', tieredTotal);
+    [1, 2, 3, 4, 5].forEach(n => addOpt(String(n), `T${n}`, tierCounts[n]));
     addOpt('filtered', 'Filtered', tierCounts.filtered);
     addOpt('unclassified', 'Unclassified', tierCounts.unclassified);
     tierSel.value = [...tierSel.options].some(o => o.value === prevTier) ? prevTier : '';
@@ -8448,6 +8766,11 @@ function bdrSearchDebounced() {
   _bdrSearchTimer = setTimeout(bdrApplyFilter, 200);
 }
 
+// Test-sample state — a prompt-testing harness. When active, bdrApplyFilter shows ONLY the
+// creators whose classification was just reset (see bdrResetSample), so you can re-run AI
+// Classify on exactly that sample and review every returned field.
+let _bdrSampleKeys = new Set();  // bdrClassKey(handle, platform) of the sampled creators
+let _bdrSampleMode = false;
 function bdrApplyFilter() {
   const src = bdrMatchingData;
   const q        = (document.getElementById('bdrSearch')?.value || '').toLowerCase().trim();
@@ -8510,6 +8833,10 @@ function bdrApplyFilter() {
   if (langFilt) {
     merged = merged.filter(m => langFilt === 'none' ? !m.language : m.language === langFilt);
   }
+  // Test-sample mode: narrow to exactly the creators in the active sample (composes with sort).
+  if (_bdrSampleMode && _bdrSampleKeys.size) {
+    merged = merged.filter(m => _bdrSampleKeys.has(bdrClassKey(m.handle, m.platforms?.[0] || '')));
+  }
 
   if (bdrSortCol) {
     merged = [...merged].sort((a, b) => {
@@ -8541,6 +8868,16 @@ function bdrApplyFilter() {
 
   bdrUpdateSortIndicators();
   document.getElementById('bdrLoading').style.display = 'none';
+
+  // Test-sample banner (shown whenever sample mode is on, even if filters leave 0 visible).
+  const _sampleBanner = document.getElementById('bdrSampleBanner');
+  if (_sampleBanner) {
+    _sampleBanner.style.display = _bdrSampleMode ? 'flex' : 'none';
+    if (_bdrSampleMode) {
+      const _bt = document.getElementById('bdrSampleBannerText');
+      if (_bt) _bt.textContent = `🧪 Test sample — ${_bdrSampleKeys.size} cleared creator(s) shown. Run ✨ AI Classify, then click 🔬 on a row to review every field.`;
+    }
+  }
 
   if (!merged.length) {
     document.getElementById('bdrEmpty').style.display = '';
@@ -8749,27 +9086,23 @@ function bdrRenderTable(rows, _skipPageSetup) {
     const ukHtml = um
       ? `<span title="${um.t}" style="font-size:10px;font-weight:700;background:${um.bg};color:${um.color};border:1px solid ${um.color}40;border-radius:100px;padding:2px 8px;white-space:nowrap;cursor:help">${um.label}</span>`
       : muted;
-    // Outreach Tier — editable dropdown (Auto = live rule, or a manual T1–T4 override that persists).
+    // Outreach Tier — editable dropdown (Auto = live rule, or a manual T1–T5 override that persists).
     const ti = bdrEffectiveTier(m);
     const ruleTi = bdrTierOf(m);
-    const ruleLbl = ruleTi.status === 'tier' ? `T${ruleTi.tier}` : (ruleTi.status === 'filtered' ? 'filtered' : 'unset');
+    const ruleLbl = ruleTi.status === 'tier' ? `T${ruleTi.tier}` : 'unset';
     const tm = BD_TIER_META[ti.tier];
     const selStyle = tm
       ? `background:${tm.bg};color:${tm.color};border:1px solid ${tm.color}55;font-weight:800`
-      : ti.status === 'filtered'
-        ? `background:var(--white);color:var(--muted2);border:1px dashed var(--border);font-weight:600`
-        : `background:var(--white);color:var(--muted2);border:1px solid var(--border)`;
+      : `background:var(--white);color:var(--muted2);border:1px solid var(--border)`;
     const tierTip = ti.manual ? 'Manual override — pick Auto to revert to the rule' : (ti.reason || '');
     const opt = (v, lbl) => `<option value="${v}"${
-      (ti.manual && ti.status === 'filtered' && v === 'filtered') ||
-      (ti.manual && ti.status !== 'filtered' && String(ti.tier) === v) ||
+      (ti.manual && String(ti.tier) === v) ||
       (!ti.manual && v === 'auto') ? ' selected' : ''}>${lbl}</option>`;
     const tierHtml = (!ti.manual && ruleTi.status === 'unclassified')
       ? `<span title="Not classified yet — run AI Classify" style="color:var(--muted2)">—</span>`
       : `<select onchange="bdrSaveTierOverride(this)" data-handle="${safeHandle}" data-platform="${m.platforms[0]||''}" title="${tierTip.replace(/"/g,"'")}" style="font-size:10.5px;border-radius:100px;padding:2px 6px;cursor:pointer;${selStyle}">
            ${opt('auto', `Auto · ${ruleLbl}`)}
-           ${opt('1','T1')}${opt('2','T2')}${opt('3','T3')}${opt('4','T4')}
-           ${opt('filtered','✕ Filtered')}
+           ${opt('1','T1')}${opt('2','T2')}${opt('3','T3')}${opt('4','T4')}${opt('5','T5')}
          </select>${ti.manual ? '<span title="Manual override" style="color:var(--accent);font-weight:800;margin-left:3px">•</span>' : ''}`;
     const reasonTxt  = cls.reasoning || '';
     const reasonHtml = reasonTxt
@@ -8829,7 +9162,7 @@ function bdrRenderTable(rows, _skipPageSetup) {
       <td style="max-width:170px">${categoryHtml}</td>
       <td style="white-space:nowrap">${ukHtml}</td>
       <td style="white-space:nowrap;text-align:center">${tierHtml}</td>
-      <td style="max-width:200px">${reasonHtml}</td>
+      <td style="max-width:200px">${reasonHtml} <button onclick="bdrViewClass('${safeHandle}','${m.platforms[0]||''}')" title="View ALL AI fields + full reasoning &amp; fit reasoning" style="background:none;border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:11px;color:var(--muted);cursor:pointer;line-height:1.4;vertical-align:middle" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">🔬</button></td>
       <td style="white-space:nowrap">${m.language
         ? `<span style="font-size:10px;font-weight:700;background:${m.language==='en'?'var(--green-bg)':'#fef8ec'};color:${m.language==='en'?'var(--green)':'var(--amber)'};border:1px solid ${m.language==='en'?'var(--green)':'var(--amber)'}40;border-radius:100px;padding:2px 9px;text-transform:uppercase">${m.language}</span>`
         : `<button onclick="bdrDetectOneLang('${safeHandle}','${m.platforms[0]||''}')" style="font-size:10px;padding:1px 8px;border:1px solid var(--border);border-radius:100px;background:var(--white);cursor:pointer;color:var(--muted2)" title="Detect language">?</button>`
@@ -8985,11 +9318,68 @@ async function bdrResetAiResults() {
   }
 }
 
+// Prompt-testing harness: clear the AI classification for the first N creators in the CURRENT view
+// (DB + both in-memory caches), then filter the view to show only those N so you can re-run AI
+// Classify and review every field. Destructive to the DB classification of those N (raw data kept).
+async function bdrResetSample() {
+  const N = Number(document.getElementById('bdrSampleSize')?.value) || 10;
+  const sample = (bdrCurrentRows || []).slice(0, N);
+  if (!sample.length) { alert('No profiles in the current view to sample.'); return; }
+  const n = sample.length;
+  if (!confirm(`Reset & test sample\n\nThis permanently DELETES the existing AI classification for the first ${n} creator(s) in the CURRENT VIEW from the database (raw profile data — followers, bio, posts — is kept), then shows only those ${n} so you can re-run ✨ AI Classify and review every field.\n\nContinue?`)) return;
+  const btn = document.getElementById('bdrSampleResetBtn');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Resetting…'; }
+  try {
+    const patches = sample.map(m => ({
+      handle: m.handle, platform: m.platforms?.[0] || '',
+      entity_type: null, primary_content_category: null, primary_food_content_type: null,
+      food_service_type: null, food_post_count: null, total_posts_analyzed: null,
+      uk_geography: null, dietary_focus: null, classification_reasoning: null,
+      foodstyles_fit: null, fit_reasoning: null,
+      tier: null, tier_manual: false,
+    }));
+    const res = await bdrPatchClassificationDB(patches);
+    // Clear BOTH caches so the rows read as unclassified — bdrGetClass falls back to the
+    // normalized-handle map, so clearing only _bdrClassCache would leave them looking classified.
+    for (const m of sample) {
+      _bdrClassCache.delete(bdrClassKey(m.handle, m.platforms?.[0] || ''));
+      _bdrClassByHandle.delete(bdrNormHandle(m.handle));
+    }
+    _bdrSampleKeys = new Set(sample.map(m => bdrClassKey(m.handle, m.platforms?.[0] || '')));
+    _bdrSampleMode = true;
+    // Clear classification-based view filters — the sampled creators were just un-classified, so a
+    // lingering Tier/Entity/Category/UK filter would hide the very rows we want to review. The
+    // sample-key filter alone then shows exactly the N (dropdowns honestly read "All").
+    ['bdrFilterTier', 'bdrFilterEntity', 'bdrFilterCategory', 'bdrFilterUk'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    bdrApplyFilter();
+    if (res && (res.ok === false || (res.errors && res.errors.length) || (res.unmatched && res.unmatched.length))) {
+      alert(`⚠ Cleared on screen, but the database update had issues:\n${res.error || ''}\n${(res.errors || []).join('\n')}${(res.unmatched || []).length ? '\nUnmatched rows: ' + res.unmatched.length : ''}\n\nThese may re-appear classified after a page reload — try the reset again.`);
+    }
+  } catch (e) {
+    alert(`Reset sample failed: ${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig || '🧪 Reset & test sample'; }
+  }
+}
+
+// Leave test-sample mode — drops the view filter only. The sampled creators stay cleared in the DB.
+function bdrExitSample() {
+  _bdrSampleMode = false;
+  _bdrSampleKeys.clear();
+  bdrApplyFilter();
+}
+
 // Manual Tier override from the inline dropdown — saves automatically to the DB. "auto" reverts to
-// the live rule-based tier (tier_manual=false); T1–T4 set a persisted override (tier_manual=true).
+// the live rule-based tier (tier_manual=false); T1–T5 set a persisted override (tier_manual=true).
 async function bdrSaveTierOverride(sel) {
   const handle = sel.dataset.handle, platform = sel.dataset.platform;
-  const m = (bdrCurrentRows || []).find(x => x.handle === handle && (x.platforms?.[0] || '') === platform);
+  // Find the merged row for the rule-tier calc on "auto" — from the Results set or, when invoked from
+  // the Overview tab's tier dropdown, the merged Overview rows (which span both datasets).
+  const m = (bdrCurrentRows || []).find(x => x.handle === handle && (x.platforms?.[0] || '') === platform)
+         || (typeof insGetRows === 'function' ? insGetRows().find(x => x.handle === handle) : null);
   const existing = bdrGetClass(handle, platform);
   let tier, tier_manual;
   if (sel.value === 'auto') {
@@ -9064,8 +9454,8 @@ function bdrExportCsv() {
   const cols = ['handle','full_name','platform','followers','engagement_rate','is_verified',
                 'matched_keywords','post_captions','post_locations','bio','location','country',
                 'post_count','avg_likes','avg_comments','hashtag_posts','profile_url','fetched_at',
-                'tier','entity_type','primary_content_category','primary_food_content_type','food_post_count',
-                'total_posts_analyzed','uk_geography','classification_reasoning'];
+                'tier','entity_type','primary_content_category','primary_food_content_type','food_service_type','food_post_count',
+                'total_posts_analyzed','uk_geography','dietary_focus','classification_reasoning','foodstyles_fit','fit_reasoning'];
   const esc  = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
   const csv  = [
     cols.join(','),
@@ -9079,10 +9469,14 @@ function bdrExportCsv() {
         c === 'entity_type'              ? esc(cl.entity_type) :
         c === 'primary_content_category' ? esc(cl.primary_content_category) :
         c === 'primary_food_content_type'? esc(cl.primary_food_content_type) :
+        c === 'food_service_type'        ? esc(cl.food_service_type) :
         c === 'food_post_count'          ? esc(cl.food_post_count) :
         c === 'total_posts_analyzed'     ? esc(cl.total_posts_analyzed) :
         c === 'uk_geography'             ? esc(cl.uk_geography) :
+        c === 'dietary_focus'            ? esc(cl.dietary_focus) :
         c === 'classification_reasoning' ? esc(cl.reasoning) :
+        c === 'foodstyles_fit'           ? esc(cl.foodstyles_fit) :
+        c === 'fit_reasoning'            ? esc(cl.fit_reasoning) :
         (c === 'matched_keywords' || c === 'post_captions' || c === 'post_locations')
           ? esc(Array.isArray(r[c]) ? r[c].join(' | ') : (r[c] || '')) :
         esc(r[c])
@@ -9104,9 +9498,9 @@ let _outreachEditHandle = null; // null = add mode, string = edit mode
 
 async function loadOutreach(forceRefresh) {
   // Tab switches re-call this — skip the network round-trip if already loaded.
-  if (_outreachLoaded && !forceRefresh) { outreachRender(); return; }
+  if (_outreachLoaded && !forceRefresh) { await insPreloadTags(); outreachRender(); return; }
   document.getElementById('outreachTbody').innerHTML =
-    '<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted2);font-size:12px">Loading…</td></tr>';
+    '<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted2);font-size:12px">Loading…</td></tr>';
   try {
     const resp = await fetch('/api/db-save', {
       method: 'POST', headers: getApiHeaders(),
@@ -9116,10 +9510,11 @@ async function loadOutreach(forceRefresh) {
     if (!resp.ok) throw new Error(data.error || resp.statusText);
     _outreachData = data.data || [];
     _outreachLoaded = true;
+    await insPreloadTags();
     outreachRender();
   } catch (e) {
     document.getElementById('outreachTbody').innerHTML =
-      `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--red);font-size:12px">Failed to load: ${e.message}</td></tr>`;
+      `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--red);font-size:12px">Failed to load: ${e.message}</td></tr>`;
   }
 }
 
@@ -9151,7 +9546,7 @@ function outreachRender() {
   // Table rows
   const tbody = document.getElementById('outreachTbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="padding:32px;text-align:center;color:var(--muted2);font-size:13px">No influencers tracked yet — click <strong>+ Add influencer</strong> to start.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="padding:32px;text-align:center;color:var(--muted2);font-size:13px">No influencers tracked yet — click <strong>+ Add influencer</strong> to start.</td></tr>';
     return;
   }
 
@@ -9194,6 +9589,7 @@ function outreachRender() {
       <td style="padding:8px 12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">${r.deal_agreed || '—'}</td>
       <td style="padding:8px 12px;color:var(--muted)">${outreachFormatDate(r.first_post_date)}</td>
       <td style="padding:8px 12px;text-align:center">${r.requires_agency ? '<span title="Requires agency/sponsor" style="font-size:13px">🏢</span>' : '—'}</td>
+      <td style="padding:8px 12px">${bdrTagEditorHtml(r.handle,'outreach')}</td>
       <td style="padding:8px 12px;text-align:right">
         <button onclick="outreachOpenForm('${r.handle}')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">Edit</button>
       </td>

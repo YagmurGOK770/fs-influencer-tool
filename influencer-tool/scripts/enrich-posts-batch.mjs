@@ -11,8 +11,24 @@
 //   node scripts/enrich-posts-batch.mjs                      # everything not yet enriched
 //   node scripts/enrich-posts-batch.mjs --dry-run            # plan only: counts + platform split, no fetch/write
 //   node scripts/enrich-posts-batch.mjs --limit 20           # cap people processed (test run)
-//   node scripts/enrich-posts-batch.mjs --only instagram     # one platform only (instagram|tiktok|x|youtube)
+//   node scripts/enrich-posts-batch.mjs --only instagram     # one platform only (comma-sep ok: instagram,tiktok)
 //   node scripts/enrich-posts-batch.mjs --force              # re-enrich even if posts already exist
+//   node scripts/enrich-posts-batch.mjs --replace            # full re-crawl: replace the stored post set with the fresh
+//                                                            # fetch (prune stale rows) + refresh aggregates (use with --force)
+//   node scripts/enrich-posts-batch.mjs --min-followers 10000 # only people with >= N followers (accepts 10k / 1m)
+//   node scripts/enrich-posts-batch.mjs --only instagram,tiktok --posts 3 --force
+//                                                            # THUMBNAIL REFRESH: over-fetches a buffer (posts are returned
+//                                                            # pinned/jumbled), keeps the LATEST 3 by date, re-hosts their
+//                                                            # images to Storage; leaves captions + aggregates intact
+//   node scripts/enrich-posts-batch.mjs --force --replace --posts 30 --only instagram,tiktok --min-followers 10000
+//                                                            # FULL RE-CRAWL: refetch the latest 30 IG/TikTok posts for every
+//                                                            # creator >=10k, REPLACE the stored set (prune stale rows ->
+//                                                            # exactly the fresh 30), refresh aggregates + last_post_at, and
+//                                                            # re-host thumbnails to Storage
+//   node scripts/enrich-posts-batch.mjs --force --replace --posts 30 --only instagram,tiktok --min-followers 10000 --resume
+//                                                            # RESUME the above after a mid-run stop: skips the accounts this
+//                                                            # pass already completed (since the last run-start marker), so no
+//                                                            # account is re-fetched / re-charged. Re-run as often as needed.
 //   node scripts/enrich-posts-batch.mjs --ig-batch 50        # profiles per Apify run for ig/tiktok (default 50)
 //   node scripts/enrich-posts-batch.mjs --concurrency 8      # concurrent calls for x/youtube loops
 //
@@ -23,7 +39,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
-import { fetchPostsForPlatform, postToRow, computeAggregates, isHardLimit } from '../api/post-enrich.js';
+import { fetchPostsForPlatform, postToRow, computeAggregates, isHardLimit, persistThumbnails } from '../api/post-enrich.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -44,7 +60,23 @@ const hasFlag = (name) => args.includes(name);
 const DRY_RUN     = hasFlag('--dry-run');
 const FORCE       = hasFlag('--force');
 const LIMIT       = Number(getFlag('--limit')) || Infinity;
-const ONLY        = getFlag('--only');            // instagram | tiktok | x | youtube
+const ONLY        = getFlag('--only');            // instagram | tiktok | x | youtube (comma-separated ok)
+const POSTS       = Number(getFlag('--posts')) || null;  // keep the latest N posts/profile for ig/tiktok (e.g. 3 to refresh just the LLM images)
+// Full re-crawl: replace the stored post set with the fresh fetch (prune stale rows) and recompute
+// aggregates. Distinguishes a 30-post re-crawl from a small --posts thumbnail refresh (use with --force).
+const REPLACE     = hasFlag('--replace');
+// Only enrich people whose top-platform follower count is >= this (accepts 10000 / "10k" / "1m"). 0 = all.
+const MIN_FOLLOWERS = getFlag('--min-followers') ? parseFollowers(getFlag('--min-followers')) : 0;
+// Resumable re-crawl: --resume skips handles already processed SINCE THE LAST run-start marker (each
+// fresh, non-resume run drops one in the log). Applies even under --force, so re-running after a mid-run
+// stop (e.g. an Apify usage limit) continues where it left off instead of re-fetching — and re-charging —
+// the accounts already done. Marker-scoped (not a wall-clock window), so unrelated recent runs don't
+// cause it to skip accounts this pass hasn't reached yet. JSONL-only, no DB cost.
+const RESUME = hasFlag('--resume');
+// Actors return pinned/jumbled order. For a SMALL keep-count the pins dominate the result, so over-fetch
+// a buffer then keep the latest N by date. For a full re-crawl (N>=30) the few pins are a minor fraction
+// and sort below the recent posts by date, so fetch exactly N (no costly buffer).
+const REFRESH_FETCH = POSTS ? (POSTS < 30 ? POSTS + 12 : POSTS) : null;
 const IG_BATCH    = Number(getFlag('--ig-batch')) || 50;
 const CONCURRENCY = Number(getFlag('--concurrency')) || 8;
 // Re-attempt handles previously logged with 0 posts. Use this to recover creators whose earlier
@@ -162,25 +194,85 @@ function loadAttemptedFromLog() {
   return set;
 }
 
+// Handles with a SUCCESSFUL (posts) log entry AFTER the most recent run-start marker. Powers --resume:
+// a fresh run drops a {recrawl_marker} line, then logs each completed handle; on a later --resume run
+// this returns exactly the handles this pass already finished, so they're skipped (no re-fetch / re-
+// charge). Marker-scoped — not a time window — so it's robust to multiple resumes and to unrelated
+// recent runs. JSONL-only, no DB cost. Empty set if there's no marker yet (→ nothing skipped).
+function loadDoneSinceMarker() {
+  const set = new Set();
+  try {
+    if (!fs.existsSync(LOG_PATH)) return set;
+    const lines = fs.readFileSync(LOG_PATH, 'utf8').split('\n').filter(l => l.trim());
+    let markerTs = 0;
+    for (const l of lines) { try { const e = JSON.parse(l); if (e.recrawl_marker && Date.parse(e.ts)) markerTs = Date.parse(e.ts); } catch {} }
+    if (!markerTs) return set;
+    for (const l of lines) { try { const e = JSON.parse(l); if (e.handle && typeof e.posts === 'number' && Date.parse(e.ts) >= markerTs) set.add(lc(e.handle)); } catch {} }
+  } catch {}
+  return set;
+}
+
 // ── 2. persist one person's posts + refresh aggregates ──────────────────────
 async function persistPerson(person, posts) {
+  // --posts refresh: actors return pinned/jumbled order, so we over-fetched a buffer — now keep only
+  // the LATEST POSTS by date, so the re-hosted thumbnails are genuinely the most recent posts.
+  if (POSTS) posts = [...posts].sort((a, b) => (Date.parse(b.postedAt) || 0) - (Date.parse(a.postedAt) || 0)).slice(0, POSTS);
   // Dedupe by post_id — some scrapers (notably the X actor) return the same post twice in one
   // result set; a single upsert batch can't touch the same (handle,platform,post_id) row twice
   // ("ON CONFLICT DO UPDATE command cannot affect row a second time").
   const byId = new Map();
   for (const p of posts) { const r = postToRow(person.handle, person.platform, p); if (r.post_id) byId.set(r.post_id, r); }
   const rows = [...byId.values()];
+
+  // --replace re-crawl: decide whether the fresh fetch looks COMPLETE before we let it overwrite
+  // history. The Apify actor can under-return for a single profile (private / rate-limited / pagination
+  // cutoff) on a run that otherwise SUCCEEDS — returning e.g. 5 of a creator's 30 posts. Pruning to
+  // those 5 (and recomputing aggregates from them) would silently delete good rows from a prior full
+  // crawl and corrupt last_post_at / engagement. So if the fresh set is much smaller than what's
+  // already stored, treat it as partial and leave the existing posts + metrics untouched. The count
+  // is read BEFORE the upsert, so it reflects the prior crawl, not the rows we're about to write.
+  let replacePartial = false;
+  if (REPLACE && rows.length) {
+    const { count: priorCount, error: cErr } = await supabase.from('profile_posts')
+      .select('post_id', { count: 'exact', head: true })
+      .eq('handle', person.handle).eq('platform', person.platform);
+    if (cErr) { console.warn(`[replace] ${person.handle}: prior-count check failed (${cErr.message}) — skipping prune to be safe`); replacePartial = true; }
+    else if (priorCount && rows.length < priorCount * 0.5) {
+      console.warn(`[replace] ${person.handle}: fresh ${rows.length} << stored ${priorCount} — likely a partial fetch; keeping existing posts/metrics`);
+      replacePartial = true;
+    }
+  }
+
   if (rows.length) {
+    await persistThumbnails(supabase, rows);   // re-host expiring IG/TikTok thumbnails before saving
     for (let i = 0; i < rows.length; i += 300) {
       const { error } = await supabase.from('profile_posts')
         .upsert(rows.slice(i, i + 300), { onConflict: 'handle,platform,post_id' });
       if (error) throw new Error(`profile_posts upsert: ${error.message}`);
     }
+    // --replace (full re-crawl): the fresh rows now define the stored set. The upsert ran FIRST (so the
+    // creator never has zero posts even if this prune fails), so now delete any stale rows for this
+    // (handle, platform) that aren't in the fresh set. Skipped on an empty fetch (rows.length === 0,
+    // whole block) or a suspected partial fetch (above), so we NEVER wipe a good prior crawl. The
+    // keep-list reuses the EXACT upserted post_id strings (each double-quoted; postgrest-js URL-encodes
+    // the value, so commas/parens are safe; a quote in an id — never for IG/TikTok/X/YT — would only
+    // make PostgREST reject the filter → caught below → no deletion). A prune error is non-fatal:
+    // leftover stale rows are harmless (readers take the latest N by date), so just warn.
+    if (REPLACE && !replacePartial) {
+      const keep = '(' + rows.map(r => `"${String(r.post_id)}"`).join(',') + ')';
+      const { error: delErr } = await supabase.from('profile_posts')
+        .delete().eq('handle', person.handle).eq('platform', person.platform)
+        .not('post_id', 'in', keep);
+      if (delErr) console.warn(`[replace] ${person.handle}: prune stale rows failed: ${delErr.message}`);
+    }
   }
-  // Refresh source-row aggregates only when we actually got posts — never clobber previously
-  // computed metrics with nulls from an empty/failed fetch. Match the canonical platform
-  // (same value used for profile_posts), consistent with the verify.js path.
-  if (posts.length) {
+  // Refresh source-row aggregates only when we got a TRUSTWORTHY full set — never clobber previously
+  // computed metrics with values from an empty / failed / partial fetch. Recompute on: normal enrichment
+  // (no --posts) OR a --replace re-crawl that wasn't flagged partial. A small --posts refresh WITHOUT
+  // --replace (e.g. --posts 3 for LLM thumbnails) skips it: metrics from a few posts are worse than the
+  // existing full-set values and would clobber last_post_at (used by the tier rule). Match the canonical
+  // platform (same value used for profile_posts), consistent with the verify.js path.
+  if (posts.length && (!POSTS || REPLACE) && !replacePartial) {
     const agg = computeAggregates(posts, person.followers);
     const { error: aggErr } = await supabase.from(person.table)
       .update(agg).eq('handle', person.handle).eq('platform', person.platform);
@@ -200,7 +292,14 @@ async function persistPerson(person, posts) {
   for (const p of people) split[p.platform] = (split[p.platform] || 0) + 1;
   console.log(`[enrich] ${total} distinct people. Platform split: ${JSON.stringify(split)}`);
 
-  if (ONLY) people = people.filter(p => p.platform === ONLY);
+  const onlySet = ONLY ? new Set(ONLY.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)) : null;
+  if (onlySet) people = people.filter(p => onlySet.has(p.platform));
+
+  if (MIN_FOLLOWERS) {
+    const before = people.length;
+    people = people.filter(p => p.followers >= MIN_FOLLOWERS);
+    console.log(`[enrich] follower filter >=${MIN_FOLLOWERS}: ${before} -> ${people.length}`);
+  }
 
   if (!FORCE) {
     const enriched = await loadEnrichedHandles();   // handles with profile_posts rows
@@ -209,6 +308,14 @@ async function persistPerson(person, posts) {
     const before = people.length;
     people = people.filter(p => !skip.has(p.handle));
     console.log(`[enrich] skipping ${before - people.length} already-attempted (${enriched.size} with posts, ${attempted.size} from log); ${people.length} remaining`);
+  }
+
+  // Resume support: drop handles already processed since the last run-start marker (even under --force).
+  if (RESUME) {
+    const done = loadDoneSinceMarker();
+    const before = people.length;
+    people = people.filter(p => !done.has(p.handle));
+    console.log(`[enrich] --resume: skipping ${before - people.length} already processed since last run-start; ${people.length} remaining`);
   }
 
   if (people.length > LIMIT) people = people.slice(0, LIMIT);
@@ -225,6 +332,10 @@ async function persistPerson(person, posts) {
     }
     process.exit(0);
   }
+
+  // Drop a run-start marker so a later --resume run knows which handles THIS pass has completed. Skipped
+  // on a --resume run (it continues the existing pass and must keep referencing the original marker).
+  if (!RESUME) log({ recrawl_marker: true });
 
   const byHandle = new Map(people.map(p => [p.handle, p]));
   let processed = 0, postsWritten = 0;
@@ -243,7 +354,7 @@ async function persistPerson(person, posts) {
       let map;
       try {
         map = await fetchPostsForPlatform(plat, chunk.map(p => ({ handle: p.handle, profileUrl: p.profileUrl })),
-          { onProgress: ({ itemCount }) => process.stdout.write(`\r  …${itemCount} items`) });
+          { postsPerProfile: REFRESH_FETCH || undefined, onProgress: ({ itemCount }) => process.stdout.write(`\r  …${itemCount} items`) });
         process.stdout.write('\n');
       } catch (e) {
         console.warn(`[enrich:${plat}] chunk fetch failed: ${e.message}`);

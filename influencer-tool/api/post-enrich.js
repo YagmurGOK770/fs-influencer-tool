@@ -101,13 +101,13 @@ export async function runApifyActor(actorSlug, input, { onProgress, maxWaitMs = 
 }
 
 // ── Instagram (apify/instagram-scraper) ─────────────────────────────────────
-async function fetchInstagram(profiles, onProgress) {
+async function fetchInstagram(profiles, onProgress, limit = POSTS_PER_PROFILE) {
   const usernames = profiles.map(p => lc(p.handle)).filter(Boolean);
   if (!usernames.length) return new Map();
   const items = await runApifyActor('apify/instagram-scraper', {
     directUrls: usernames.map(u => `https://www.instagram.com/${u}/`),
     resultsType: 'posts',
-    resultsLimit: POSTS_PER_PROFILE,
+    resultsLimit: limit,
     addParentData: false,
   }, { onProgress });
 
@@ -143,12 +143,12 @@ async function fetchInstagram(profiles, onProgress) {
 }
 
 // ── TikTok (clockworks/tiktok-scraper) ──────────────────────────────────────
-async function fetchTikTok(profiles, onProgress) {
+async function fetchTikTok(profiles, onProgress, limit = POSTS_PER_PROFILE) {
   const usernames = profiles.map(p => lc(p.handle)).filter(Boolean);
   if (!usernames.length) return new Map();
   const items = await runApifyActor('clockworks/tiktok-scraper', {
     profiles: usernames,
-    resultsPerPage: POSTS_PER_PROFILE,
+    resultsPerPage: limit,
     shouldDownloadVideos: false,
     shouldDownloadCovers: false,
     shouldDownloadSubtitles: false,
@@ -380,10 +380,10 @@ async function fetchYouTube(profiles, onProgress, concurrency = 8) {
 // platform: 'instagram' | 'tiktok' | 'x' | 'youtube'
 // profiles: [{ handle, profileUrl }]
 // returns Map<handleLower, post[]>
-export async function fetchPostsForPlatform(platform, profiles, { onProgress, concurrency } = {}) {
+export async function fetchPostsForPlatform(platform, profiles, { onProgress, concurrency, postsPerProfile } = {}) {
   switch (platform) {
-    case 'instagram': return fetchInstagram(profiles, onProgress);
-    case 'tiktok':    return fetchTikTok(profiles, onProgress);
+    case 'instagram': return fetchInstagram(profiles, onProgress, postsPerProfile || POSTS_PER_PROFILE);
+    case 'tiktok':    return fetchTikTok(profiles, onProgress, postsPerProfile || POSTS_PER_PROFILE);
     case 'x':         return fetchX(profiles, onProgress, concurrency ?? 6);
     case 'youtube':   return fetchYouTube(profiles, onProgress, concurrency ?? 8);
     default: throw new Error(`Unsupported platform: ${platform}`);
@@ -417,6 +417,53 @@ export function postToRow(handle, platform, post) {
     raw: post.raw,
     fetched_at: new Date().toISOString(),
   };
+}
+
+// Instagram/TikTok sign their CDN thumbnail URLs with a short expiry, so stored links 403 weeks
+// later (black thumbnails in the UI + missing classifier vision input). At enrich time the URL is
+// still fresh, so we download the bytes and re-host them in a public Supabase Storage bucket, then
+// rewrite the row's thumbnail_url to the PERMANENT public URL. YouTube/X URLs are stable — skipped.
+const _EXPIRING_THUMB_HOST = /(^|\.)(cdninstagram\.com|fbcdn\.net|tiktokcdn\.com|tiktokcdn-us\.com)$/i;
+const THUMB_BUCKET = process.env.THUMB_BUCKET || 'profile-thumbs';
+async function _fetchImageBytes(url) {
+  let host = ''; try { host = new URL(url).hostname; } catch { return null; }
+  const headers = { 'User-Agent': 'Mozilla/5.0', 'Accept': 'image/*,*/*' };
+  if (/tiktokcdn(-us)?\.com$/i.test(host)) headers['Referer'] = 'https://www.tiktok.com/';
+  try {
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return null;
+    const ct = (r.headers.get('content-type') || '').split(';')[0].trim();
+    if (!ct.startsWith('image/')) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > 5_000_000) return null;
+    return { buf, ct };
+  } catch { return null; }
+}
+// Mutates each row's thumbnail_url in place. Best-effort & idempotent: a row whose image can't be
+// fetched keeps its original URL; an already-rehosted (non-expiring host) URL is left untouched.
+export async function persistThumbnails(supabase, rows, { bucket = THUMB_BUCKET, concurrency = 4 } = {}) {
+  if (!supabase || !Array.isArray(rows)) return 0;
+  const targets = rows.filter(r => {
+    if (!r || !r.thumbnail_url || !r.post_id) return false;
+    let host = ''; try { host = new URL(r.thumbnail_url).hostname; } catch { return false; }
+    return _EXPIRING_THUMB_HOST.test(host);
+  });
+  let i = 0, ok = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, async () => {
+    while (i < targets.length) {
+      const r = targets[i++];
+      const img = await _fetchImageBytes(r.thumbnail_url);
+      if (!img) continue;
+      const ext = img.ct.includes('png') ? 'png' : img.ct.includes('webp') ? 'webp' : 'jpg';
+      const safe = (s) => String(s).replace(/[^a-z0-9._-]/gi, '_');
+      const path = `${r.platform}/${safe(r.handle)}/${safe(r.post_id)}.${ext}`;
+      const up = await supabase.storage.from(bucket).upload(path, img.buf, { contentType: img.ct, upsert: true });
+      if (up.error) continue;
+      const pub = supabase.storage.from(bucket).getPublicUrl(path);
+      if (pub?.data?.publicUrl) { r.thumbnail_url = pub.data.publicUrl; ok++; }
+    }
+  }));
+  return ok;
 }
 
 // Profile-level aggregates from a post array. engagement_rate needs followers (caller supplies).

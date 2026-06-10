@@ -50,22 +50,23 @@ function ruleTierForRow(r) {
     entity_type: r.entity_type, primary_content_category: r.primary_content_category,
     primary_food_content_type: r.primary_food_content_type, food_post_count: r.food_post_count,
     total_posts_analyzed: r.total_posts_analyzed, uk_geography: r.uk_geography,
+    foodstyles_fit: r.foodstyles_fit, food_service_type: r.food_service_type,
   };
-  const t = bdrTierOf({ handle: r.handle, platforms: [r.platform], primary_followers: r.followers });
-  return t.status === 'tier' ? t.tier : null; // 1–4 | null (filtered/unclassified)
+  const t = bdrTierOf({ handle: r.handle, platforms: [r.platform], primary_followers: r.followers, last_post_at: r.last_post_at });
+  return t.status === 'tier' ? t.tier : null; // 1–5 | null (unclassified, e.g. no foodstyles_fit yet)
 }
 
 const TABLES = ['brightdata_profiles', 'lifestyle_bloggers'];
 async function mapPool(items, n, worker) { let i = 0; await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const k = i++; await worker(items[k]); } })); }
 
 (async () => {
-  const dist = { 1: 0, 2: 0, 3: 0, 4: 0, filtered: 0 };
+  const dist = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, unclassified: 0 };
   let updated = 0, skippedManual = 0, unchanged = 0, total = 0;
   for (const table of (ONLY ? [ONLY] : TABLES)) {
     const rows = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await sb.from(table)
-        .select('handle, platform, followers, entity_type, primary_content_category, primary_food_content_type, food_post_count, total_posts_analyzed, uk_geography, tier, tier_manual')
+        .select('handle, platform, followers, entity_type, primary_content_category, primary_food_content_type, food_post_count, total_posts_analyzed, uk_geography, foodstyles_fit, food_service_type, last_post_at, tier, tier_manual')
         .not('entity_type', 'is', null).range(from, from + 999);
       if (error) throw new Error(`${table}: ${error.message}`);
       rows.push(...(data || [])); if (!data || data.length < 1000) break;
@@ -74,7 +75,7 @@ async function mapPool(items, n, worker) { let i = 0; await Promise.all(Array.fr
     await mapPool(rows, 10, async (r) => {
       total++;
       const t = ruleTierForRow(r);
-      dist[t == null ? 'filtered' : t]++;
+      dist[t == null ? 'unclassified' : t]++;
       if (r.tier_manual === true) { skippedManual++; return; }     // never clobber a manual override
       if (r.tier === t) { unchanged++; return; }
       if (DRY_RUN) { updated++; return; }

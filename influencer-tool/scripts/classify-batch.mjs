@@ -32,6 +32,14 @@ const PROVIDER = getFlag('--provider') || 'anthropic';
 const MODEL = getFlag('--model') || 'claude-haiku-4-5-20251001';
 const CONCURRENCY = Number(getFlag('--concurrency')) || 8;
 const CAPTIONS_PER = Number(getFlag('--captions')) || 30;
+// Scope to a subset (e.g. the creators just refreshed by the 30-post re-crawl): only classify people
+// whose TOP-follower platform is in --only (comma-sep) and whose followers are >= --min-followers.
+const ONLY = getFlag('--only');                                    // instagram | tiktok | youtube | x (comma-sep ok)
+const MIN_FOLLOWERS = getFlag('--min-followers') ? parseFollowers(getFlag('--min-followers')) : 0;
+// Resume: skip handles already SUCCESSFULLY classified in this pass (a log entry with `entity` in the
+// last N hours, default 12), so a re-launch after an interruption doesn't re-classify / re-charge them.
+const RESUME = hasFlag('--resume');
+const RESUME_HOURS = Number(getFlag('--resume-hours')) || 12;
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY;
@@ -89,11 +97,60 @@ async function loadCaptions(handle, platform) {
   }).filter(s => s.trim());
 }
 
+const POST_IMAGES = 3, IMG_CANDIDATES = 30;   // scan whole post set; re-hosted (permanent) thumbnails preferred
+const _isPermImg = (u) => typeof u === 'string' && u.includes('/storage/v1/object/public/');
+// Fetch a post image and inline it as a base64 data URI (CDN URLs are often signed/expiring, so we
+// send bytes, not a URL the model would have to fetch). Best-effort: returns null on any failure.
+async function fetchDataUri(url) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const ct = (r.headers.get('content-type') || '').split(';')[0].trim();
+    if (!ct.startsWith('image/')) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length || buf.length > 3_000_000) return null;
+    return `data:${ct};base64,${buf.toString('base64')}`;
+  } catch { return null; }
+}
+// Up to POST_IMAGES post images for the enriched platform, inlined as data URIs. Re-hosted (permanent)
+// thumbnails are tried first — expiring CDN URLs 403, and re-hosted ones may rank older by posted_at.
+async function loadPostImages(handle, platform) {
+  const { data, error } = await sb.from('profile_posts')
+    .select('thumbnail_url, media_urls, posted_at').eq('handle', lc(handle)).eq('platform', platform)
+    .order('posted_at', { ascending: false, nullsFirst: false }).limit(IMG_CANDIDATES);
+  if (error) { console.warn(`[post-images] ${handle}: ${error.message}`); return []; }
+  const urls = (data || [])
+    .map(r => r.thumbnail_url || (Array.isArray(r.media_urls) ? r.media_urls[0] : null))
+    .filter(Boolean);
+  urls.sort((a, b) => (_isPermImg(b) ? 1 : 0) - (_isPermImg(a) ? 1 : 0));
+  const out = [];
+  for (const u of urls) {
+    const d = await fetchDataUri(u);
+    if (d) out.push(d);
+    if (out.length >= POST_IMAGES) break;
+  }
+  return out;
+}
+
 (async () => {
   console.log('[classify] loading people…');
   let people = await buildPeople();
   console.log(`[classify] ${people.length} distinct people`);
+  const onlySet = ONLY ? new Set(ONLY.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)) : null;
+  if (onlySet || MIN_FOLLOWERS) {
+    const before = people.length;
+    people = people.filter(p => (!onlySet || onlySet.has(p.platform)) && p.followers >= MIN_FOLLOWERS);
+    console.log(`[classify] scope (${onlySet ? [...onlySet].join('+') : 'any platform'}, >=${MIN_FOLLOWERS} followers): ${before} -> ${people.length}`);
+  }
   if (!FORCE) { const before = people.length; people = people.filter(p => !p.classified); console.log(`[classify] skipping ${before - people.length} already classified; ${people.length} remaining`); }
+  if (RESUME) {
+    const cutoff = Date.now() - RESUME_HOURS * 3600 * 1000;
+    const done = new Set();
+    try { for (const line of fs.readFileSync(LOG_PATH, 'utf8').split('\n')) { if (!line.trim()) continue; try { const e = JSON.parse(line); if (e.handle && e.entity && Date.parse(e.ts) >= cutoff) done.add(lc(e.handle)); } catch {} } } catch {}
+    const before = people.length;
+    people = people.filter(p => !done.has(lc(p.handle)));
+    console.log(`[classify] --resume: skipping ${before - people.length} classified in last ${RESUME_HOURS}h; ${people.length} remaining`);
+  }
   if (people.length > LIMIT) people = people.slice(0, LIMIT);
 
   if (DRY_RUN) {
@@ -106,18 +163,25 @@ async function loadCaptions(handle, platform) {
   let done = 0, ok = 0;
   await mapPool(people, CONCURRENCY, async (person) => {
     try {
-      const captions = await loadCaptions(person.handle, person.platform);
+      const [captions, image_urls] = await Promise.all([
+        loadCaptions(person.handle, person.platform),
+        loadPostImages(person.handle, person.platform),
+      ]);
       const facts = await classifyCreator(
-        { bio: person.bio, full_name: person.full_name, location: person.location, platform: person.platform, captions },
+        { bio: person.bio, full_name: person.full_name, location: person.location, platform: person.platform, captions, image_urls },
         { provider: PROVIDER, model: MODEL });
       const { error } = await sb.from(person.table).update({
         entity_type: facts.entity_type,
         primary_content_category: facts.primary_content_category,
         primary_food_content_type: facts.primary_food_content_type,
+        food_service_type: facts.food_service_type,
         food_post_count: facts.food_post_count,
         total_posts_analyzed: facts.total_posts_analyzed,
         uk_geography: facts.uk_geography,
+        dietary_focus: facts.dietary_focus,
         classification_reasoning: facts.reasoning,
+        foodstyles_fit: facts.foodstyles_fit,
+        fit_reasoning: facts.fit_reasoning,
       }).eq('handle', person.handle).eq('platform', person.platform);
       if (error) throw new Error(error.message);
       ok++; log({ handle: person.handle, platform: person.platform, entity: facts.entity_type, cat: facts.primary_content_category, uk: facts.uk_geography });

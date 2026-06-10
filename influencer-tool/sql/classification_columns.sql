@@ -10,9 +10,13 @@ begin
     execute format('alter table %I add column if not exists entity_type               text',    t);
     execute format('alter table %I add column if not exists primary_content_category   text',    t);
     execute format('alter table %I add column if not exists primary_food_content_type  text',    t);
+    execute format('alter table %I add column if not exists food_service_type          text',    t);
     execute format('alter table %I add column if not exists food_post_count            integer', t);
     execute format('alter table %I add column if not exists total_posts_analyzed       integer', t);
     execute format('alter table %I add column if not exists uk_geography               text',    t);
+    execute format('alter table %I add column if not exists dietary_focus              text',    t);
     execute format('alter table %I add column if not exists classification_reasoning   text',    t);
+    execute format('alter table %I add column if not exists foodstyles_fit             text',    t);
+    execute format('alter table %I add column if not exists fit_reasoning              text',    t);
   end loop;
 end $$;

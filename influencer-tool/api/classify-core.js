@@ -67,6 +67,21 @@ the food or venue; visiting alone does NOT qualify
 "home_meals"         — amateur daily cooking
 "mukbang"            — eating large amounts on camera
 "mixed"              — no single format dominates
+food_service_type — IF food_post_count >= 5, whether the food content drives
+DINE-IN or TAKEAWAY decisions. Otherwise null. Judge by how the food is shown
+being consumed, NOT by venue type alone — many venues do both.
+"dine_in"   — predominantly sit-down / eat-at-venue: restaurant experiences,
+              brunch, the occasion of going out, table service, ambience as
+              part of the draw.
+"takeaway"  — predominantly food-to-go, collection, or delivery: takeout
+              reviews, "best [dish] to grab", chippy / kebab runs framed as
+              taking away, delivery hauls.
+"both"      — meaningful coverage of BOTH modes (a broad reviewer covering
+              sit-down restaurants AND takeaway spots).
+"unclear"   — food posts present but none signal a mode.
+A venue that is overwhelmingly one mode counts as that mode by default (a
+chippy → takeaway); judge ambiguous venues (chicken shops, food markets) by
+how the post shows the food being eaten.
 food_post_count — integer. Count a post as food ONLY when food itself is the
 SUBJECT: a dish, a meal, cooking, takeaway, or an actual opinion/evaluation of
 food or a venue. Apply this rule in BOTH directions:
@@ -97,15 +112,68 @@ location field claims the UK. A UK claim with no
 post-level proof — do not upgrade on the claim alone.
 "location_irrelevant"  — NO post carries a UK location signal AND the bio /
 location field is empty or names somewhere outside the UK.
+dietary_focus — does the creator meaningfully engage with dietary preferences,
+allergens, or restrictions (vegan, vegetarian, plant-based, gluten-free, halal,
+kosher, dairy-free, nut-free, low-FODMAP, etc.)? Judge from bio AND posts: a bio
+label counts, but recurring dietary framing across posts is stronger. This is
+FoodStyles' standout feature, so a creator already serving that audience is an
+especially authentic match. ALWAYS set (never null) — use "none" when absent.
+"strong" — the dietary angle is central to the account (e.g. a vegan or
+           gluten-free reviewer; most posts framed around a diet/restriction).
+"some"   — dietary needs surface across multiple posts but are not the main
+           angle (an omnivore reviewer who regularly flags vegan or GF options).
+"none"   — no visible dietary / allergen / restriction angle.
+foodstyles_fit — a recommendation: is this creator worth approaching for
+FoodStyles outreach? A strategic judgment, not a neutral fact, and ALWAYS set
+(never null). Derive it from the extracted fields, NOT from guesses about
+follower count, engagement, or audience you cannot see. The creators FoodStyles
+wants are restaurant/food REVIEWERS and LIST-MAKERS — people whose format lets
+them authentically say "here's how/why I used FoodStyles to find a place to eat,
+or a meal that fits my diet." So fit asks two things together: (1) does the
+content format support that kind of integration, and (2) is it aimed at a UK
+dining-out/takeaway audience. Cooking-at-home content (recipes, home_meals)
+fails (1) no matter how food-heavy — you cannot demo a dining-discovery app
+while cooking at home.
+"strong_fit"   — a reviewer or list-maker (primary_food_content_type of
+                 restaurant_reviews or restaurant_lists; food_news_culture or
+                 standout-dish content can also qualify) whose posts drive
+                 dining-out choices, AND uk_geography is
+                 location_relevant. A creator with a strong dietary_focus is the
+                nice to have but not must, since that is the app's strongest feature.
+"possible_fit" — on-format food creator (reviews / lists / food news), but with
+                 one caveat: uk_geography is location_low_proof, OR food is a
+                 strong but secondary theme, OR the dining mode only partly
+                 matches.
+"weak_fit"     — tangential: food is a minor part of the account, OR the food
+                 leans home-cooking, OR uk_geography is location_unverified.
+"not_a_fit"    — fails the core purpose: not a food account, OR purely
+                 recipes / home cooking (cannot host a dining-discovery
+                 integration), OR uk_geography is location_irrelevant.
+fit_reasoning — ONE sentence, two at most, concise and in plain language: would this creator
+be a good FoodStyles partner and why? Say whether their format lets them
+naturally show "how I use FoodStyles to find where to eat" (reviewer /
+list-maker = yes; home cook = no), and flag a dietary / allergen angle if
+present. Keep it easy to read — no jargon, and do NOT re-list the enum decisions
+(that belongs in "reasoning").
+post images — when images are attached, they are a few of the creator's recent post images /
+thumbnails. Use them to see what the content actually shows: judge primary_content_category and
+corroborate food_post_count (food / dishes / dining visible vs non-food), foodstyles_fit, and UK
+signals (£ prices, UK venue branding), plus entity_type (uniform branded product / menu shots →
+brand; personal, varied, first-person content → individual / public_figure). If an image fails to
+load or shows no useful content, IGNORE it and judge from the text.
 OUTPUT
 {
 "entity_type": "...",
 "primary_content_category": "...",
 "primary_food_content_type": "..." or null,
+"food_service_type": "..." or null,
 "food_post_count": 0,
 "total_posts_analyzed": 0,
 "uk_geography": "...",
-"reasoning": "two to four sentences; justify entity_type by who owns/speaks for the account, food_post_count by naming the subject of the counted food posts (and noting any food-venue-as-setting posts you excluded), and uk_geography by post evidence vs the bio claim"
+"dietary_focus": "...",
+"reasoning": "two to four sentences; justify entity_type by who owns/speaks for the account, food_post_count by naming the subject of the counted food posts (and noting any food-venue-as-setting posts you excluded), food_service_type by how those posts show the food being consumed, and uk_geography by post evidence vs the bio claim",
+"foodstyles_fit": "...",
+"fit_reasoning": "..."
 }`;
 
 // Strip unpaired UTF-16 surrogates. Captions are truncated to 280 chars upstream, which can split
@@ -115,20 +183,32 @@ const stripLoneSurrogates = (s) => String(s == null ? '' : s)
   .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')   // high surrogate with no following low
   .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');  // low surrogate with no preceding high
 
+// Public image URLs to attach to the request (profile screenshot / YouTube banner / avatar).
+// Accepts profile.image_urls[] or a single profile.screenshot_url. Capped at 4 to bound token cost.
+export function profileImageUrls(p) {
+  const arr = Array.isArray(p.image_urls) ? p.image_urls : (p.screenshot_url ? [p.screenshot_url] : []);
+  // Accept public http(s) URLs and inline base64 data URIs (post images are sent inline).
+  return arr.filter(u => typeof u === 'string' && /^(https?:\/\/|data:image\/[a-z0-9.+-]+;base64,)/i.test(u)).slice(0, 4);
+}
+
 export function buildUserPrompt(p) {
   const caps = Array.isArray(p.captions) ? p.captions.filter(Boolean) : [];
+  const hasImg = profileImageUrls(p).length > 0;
   return stripLoneSurrogates(`INPUT
 Bio: ${p.bio || '(none)'}
 Display name: ${p.full_name || '(none)'}
 Location field: ${p.location || '(none)'}
 Platform: ${p.platform || '(unknown)'}
-Recent post captions: ${caps.length ? caps.join('\n---\n') : '(no posts)'}`);
+Recent post captions: ${caps.length ? caps.join('\n---\n') : '(no posts)'}${hasImg ? '\nProfile image: attached below.' : ''}`);
 }
 
 // Enum guards — never let an out-of-list value through (prompt says so, but coerce defensively).
 const ENTITY = ['individual', 'public_figure', 'brand', 'unclear'];
 const CATEGORY = ['food', 'fitness_wellness', 'fashion_beauty', 'travel_lifestyle', 'parenting_family', 'business_career', 'arts_culture', 'general_lifestyle', 'entertainment', 'other'];
 const FOOD_TYPE = ['restaurant_lists', 'restaurant_reviews', 'food_news_culture', 'chef_dishes', 'travel_food', 'recipes', 'home_meals', 'mukbang', 'mixed'];
+const FOOD_SERVICE = ['dine_in', 'takeaway', 'both', 'unclear'];
+const DIETARY = ['strong', 'some', 'none'];
+const FIT = ['strong_fit', 'possible_fit', 'weak_fit', 'not_a_fit'];
 const GEO = ['location_relevant', 'location_low_proof', 'location_unverified', 'location_irrelevant'];
 const oneOf = (v, list, fallback = null) => (list.includes(v) ? v : fallback);
 const toInt = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= 0 ? n : null; };
@@ -140,16 +220,23 @@ function parseResult(text) {
   return {
     entity_type: oneOf(j.entity_type, ENTITY, 'unclear'),
     primary_content_category: oneOf(j.primary_content_category, CATEGORY, 'other'),
-    // Spec: food type only meaningful when >=5 food posts; otherwise null.
+    // Spec: food type + service mode only meaningful when >=5 food posts; otherwise null.
     primary_food_content_type: foodCount >= 5 ? oneOf(j.primary_food_content_type, FOOD_TYPE, 'mixed') : null,
+    food_service_type: foodCount >= 5 ? oneOf(j.food_service_type, FOOD_SERVICE, 'unclear') : null,
     food_post_count: foodCount,
     total_posts_analyzed: toInt(j.total_posts_analyzed) ?? 0,
     uk_geography: oneOf(j.uk_geography, GEO, 'location_irrelevant'),
+    // Spec: dietary_focus + foodstyles_fit are ALWAYS set (never null) — fall back conservatively.
+    dietary_focus: oneOf(j.dietary_focus, DIETARY, 'none'),
     reasoning: typeof j.reasoning === 'string' ? j.reasoning.slice(0, 600) : '',
+    foodstyles_fit: oneOf(j.foodstyles_fit, FIT, 'not_a_fit'),
+    fit_reasoning: typeof j.fit_reasoning === 'string' ? j.fit_reasoning.slice(0, 400) : '',
   };
 }
 
-const MAX_TOKENS = 500;
+// Bumped from 500: the output now carries two free-text fields (reasoning + fit_reasoning)
+// plus the extra enum fields, so a tight cap risks truncating the JSON and failing the parse.
+const MAX_TOKENS = 800;
 
 // ── Transient-failure retry (429 rate-limits + 5xx) with exponential backoff + jitter ──────────
 // Lets the shared classifier run at high concurrency on any provider: a rate-limited or briefly
@@ -181,25 +268,49 @@ async function withRetry(fn, { tries = 5, baseMs = 1000, maxMs = 30000 } = {}) {
   }
 }
 
+// Anthropic image block: base64 data URIs use a base64 source; plain URLs use a url source.
+function claudeImageBlock(u) {
+  const m = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(u);
+  return m
+    ? { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } }
+    : { type: 'image', source: { type: 'url', url: u } };
+}
 async function callClaude(client, model, profile) {
+  const imgs = profileImageUrls(profile);
+  const content = imgs.length
+    ? [{ type: 'text', text: buildUserPrompt(profile) }, ...imgs.map(claudeImageBlock)]
+    : buildUserPrompt(profile);
   const msg = await client.messages.create({
     model, max_tokens: MAX_TOKENS, system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildUserPrompt(profile) }],
+    messages: [{ role: 'user', content }],
   });
   return parseResult(msg.content[0].text);
 }
 async function callOpenAI(model, profile) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error('OPENAI_API_KEY not set');
+  const imgs = profileImageUrls(profile);
+  const userContent = imgs.length
+    ? [{ type: 'text', text: buildUserPrompt(profile) }, ...imgs.map(url => ({ type: 'image_url', image_url: { url } }))]
+    : buildUserPrompt(profile);
+  const body = {
+    model, max_completion_tokens: MAX_TOKENS,
+    messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: userContent }],
+  };
+  // GPT-5 models support a `verbosity` control (low|medium|high). Force "low" so the free-text
+  // fields (reasoning, fit_reasoning) stay terse. Only sent for gpt-5* — older models 400 on it.
+  if (/gpt-5/i.test(model)) body.verbosity = 'low';
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, max_completion_tokens: MAX_TOKENS, messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: buildUserPrompt(profile) }] }),
+    body: JSON.stringify(body),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw httpError(`OpenAI HTTP ${r.status}`, r, d);
   return parseResult(d.choices[0].message.content);
 }
 async function callGemini(model, profile) {
+  // NOTE: text-only. Gemini needs base64 `inlineData` for images (no URL source), and the key
+  // isn't set, so the profile image is not attached here. Add inlineData if Gemini is enabled.
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY not set');
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
@@ -213,9 +324,13 @@ async function callGemini(model, profile) {
 async function callGrok(model, profile) {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) throw new Error('XAI_API_KEY not set');
+  const imgs = profileImageUrls(profile);
+  const userContent = imgs.length
+    ? [{ type: 'text', text: buildUserPrompt(profile) }, ...imgs.map(url => ({ type: 'image_url', image_url: { url } }))]
+    : buildUserPrompt(profile);
   const r = await fetch('https://api.x.ai/v1/chat/completions', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: buildUserPrompt(profile) }] }),
+    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: userContent }] }),
   });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw httpError(`xAI HTTP ${r.status}`, r, d);
@@ -223,7 +338,8 @@ async function callGrok(model, profile) {
 }
 
 let _anthropic = null;
-// profile: { bio, full_name, location, platform, captions: string[] }
+// profile: { bio, full_name, location, platform, captions: string[], image_urls?: string[] | screenshot_url?: string }
+// image_urls/screenshot_url (public URLs) are attached as vision input for anthropic/openai/grok.
 export async function classifyCreator(profile, { provider = 'anthropic', model = 'claude-haiku-4-5-20251001' } = {}) {
   if (provider === 'anthropic') {
     _anthropic = _anthropic || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

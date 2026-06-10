@@ -8,7 +8,7 @@
 import { checkAuth } from './_auth.js';
 import { createClient } from '@supabase/supabase-js';
 import { ProxyAgent, fetch as undiciFetch } from 'undici';
-import { fetchPostsForPlatform, postToRow, computeAggregates, runApifyActor } from './post-enrich.js';
+import { fetchPostsForPlatform, postToRow, computeAggregates, runApifyActor, persistThumbnails } from './post-enrich.js';
 
 // Lazy Supabase client (service key) for server-side persistence of scanned posts.
 let _sb = null;
@@ -1256,6 +1256,7 @@ async function handleBdScanPosts(req, res) {
             for (const p of posts) { const r = postToRow(h, plat, p); if (r.post_id) byId.set(r.post_id, r); }
             const rows = [...byId.values()];
             if (rows.length) {
+              await persistThumbnails(supabase, rows);   // re-host expiring IG/TikTok thumbnails before saving
               const { error } = await supabase.from('profile_posts').upsert(rows, { onConflict: 'handle,platform,post_id' });
               if (error) console.log(`[scan-posts] profile_posts upsert ${h}: ${error.message}`);
             }
